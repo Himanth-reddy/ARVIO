@@ -7,13 +7,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.jan.supabase.gotrue.SessionManager
 import io.github.jan.supabase.gotrue.user.UserSession
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.arflix.tv.util.AppLogger
-import com.arflix.tv.util.sanitizeEmail
 
 /**
  * DataStore-backed SessionManager for Supabase Auth.
@@ -40,10 +38,11 @@ class DataStoreSessionManager(
                 }
                 // Verify the save was successful
                 val verified = dataStore.data.first()[sessionKey]
-                if (verified != null) {
-                } else {
+                if (verified == null) {
+                    AppLogger.w(TAG, "Saved session verified as null.")
                 }
             } catch (e: Exception) {
+                AppLogger.e(TAG, "Failed to save session", e)
             }
         }
     }
@@ -58,10 +57,12 @@ class DataStoreSessionManager(
                 val session = json.decodeFromString(UserSession.serializer(), raw)
                 session
             } catch (e: Exception) {
+                AppLogger.e(TAG, "Failed to load session", e)
                 // Clear corrupted data
                 try {
                     dataStore.edit { prefs -> prefs.remove(sessionKey) }
                 } catch (clearError: Exception) {
+                    AppLogger.e(TAG, "Failed to clear corrupted session data", clearError)
                 }
                 null
             }
@@ -73,6 +74,7 @@ class DataStoreSessionManager(
             try {
                 dataStore.edit { prefs -> prefs.remove(sessionKey) }
             } catch (e: Exception) {
+                AppLogger.e(TAG, "Failed to delete session", e)
             }
         }
     }

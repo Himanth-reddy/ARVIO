@@ -8,6 +8,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.LinkedHashMap
 
 /**
  * Resolves MyAnimeList community scores for anime titles.
@@ -32,11 +33,19 @@ class AnimeScoreRepository @Inject constructor(
 ) {
     // Map<imdbId, malId?> \u2014 nulls cached to avoid re-hitting ARM for negative results.
     private val malIdCache: MutableMap<String, Int?> =
-        Collections.synchronizedMap(LinkedHashMap())
+        Collections.synchronizedMap(object : LinkedHashMap<String, Int?>() {
+            override fun removeEldestEntry(eldest: Map.Entry<String, Int?>?): Boolean {
+                return size > 256
+            }
+        })
 
     // Map<malId, score?> \u2014 same semantics as above.
     private val scoreCache: MutableMap<Int, Double?> =
-        Collections.synchronizedMap(LinkedHashMap())
+        Collections.synchronizedMap(object : LinkedHashMap<Int, Double?>() {
+            override fun removeEldestEntry(eldest: Map.Entry<Int, Double?>?): Boolean {
+                return size > 256
+            }
+        })
 
     /**
      * Look up the MAL community score for an anime by its IMDB id.
@@ -61,7 +70,6 @@ class AnimeScoreRepository @Inject constructor(
             runCatching { armApi.resolve(imdbId).firstOrNull()?.myanimelist }.getOrNull()
         }
         malIdCache[imdbId] = resolved
-        trimCache(malIdCache)
         return resolved
     }
 
@@ -72,22 +80,6 @@ class AnimeScoreRepository @Inject constructor(
             runCatching { jikanApi.getAnime(malId).data?.score }.getOrNull()
         }
         scoreCache[malId] = score
-        trimCache(scoreCache)
         return score
-    }
-
-    /** Crude LRU bound to keep per-process memory reasonable during long sessions. */
-    private fun <K, V> trimCache(cache: MutableMap<K, V>) {
-        val maxEntries = 256
-        if (cache.size <= maxEntries) return
-        synchronized(cache) {
-            val iterator = cache.entries.iterator()
-            var toRemove = cache.size - maxEntries
-            while (iterator.hasNext() && toRemove > 0) {
-                iterator.next()
-                iterator.remove()
-                toRemove--
-            }
-        }
     }
 }
