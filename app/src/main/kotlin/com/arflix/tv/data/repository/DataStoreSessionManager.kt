@@ -36,13 +36,9 @@ class DataStoreSessionManager(
                 dataStore.edit { prefs ->
                     prefs[sessionKey] = payload
                 }
-                // Verify the save was successful
-                val verified = dataStore.data.first()[sessionKey]
-                if (verified == null) {
-                    AppLogger.w(TAG, "Saved session verified as null.")
-                }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to save session", e)
+                throw e
             }
         }
     }
@@ -75,6 +71,7 @@ class DataStoreSessionManager(
                 dataStore.edit { prefs -> prefs.remove(sessionKey) }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to delete session", e)
+                throw e
             }
         }
     }

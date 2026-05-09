@@ -33,7 +33,7 @@ class AnimeScoreRepository @Inject constructor(
 ) {
     // Map<imdbId, malId?> \u2014 nulls cached to avoid re-hitting ARM for negative results.
     private val malIdCache: MutableMap<String, Int?> =
-        Collections.synchronizedMap(object : LinkedHashMap<String, Int?>() {
+        Collections.synchronizedMap(object : LinkedHashMap<String, Int?>(16, 0.75f, true) {
             override fun removeEldestEntry(eldest: Map.Entry<String, Int?>?): Boolean {
                 return size > 256
             }
@@ -41,7 +41,7 @@ class AnimeScoreRepository @Inject constructor(
 
     // Map<malId, score?> \u2014 same semantics as above.
     private val scoreCache: MutableMap<Int, Double?> =
-        Collections.synchronizedMap(object : LinkedHashMap<Int, Double?>() {
+        Collections.synchronizedMap(object : LinkedHashMap<Int, Double?>(16, 0.75f, true) {
             override fun removeEldestEntry(eldest: Map.Entry<Int, Double?>?): Boolean {
                 return size > 256
             }
@@ -64,7 +64,8 @@ class AnimeScoreRepository @Inject constructor(
 
     private suspend fun resolveMalId(imdbId: String): Int? {
         // Cache hit (including negative cache)
-        if (malIdCache.containsKey(imdbId)) return malIdCache[imdbId]
+        val cached = malIdCache[imdbId]
+        if (cached != null || malIdCache.containsKey(imdbId)) return cached
 
         val resolved = withTimeoutOrNull(2_000L) {
             runCatching { armApi.resolve(imdbId).firstOrNull()?.myanimelist }.getOrNull()
@@ -74,7 +75,8 @@ class AnimeScoreRepository @Inject constructor(
     }
 
     private suspend fun resolveScore(malId: Int): Double? {
-        if (scoreCache.containsKey(malId)) return scoreCache[malId]
+        val cached = scoreCache[malId]
+        if (cached != null || scoreCache.containsKey(malId)) return cached
 
         val score = withTimeoutOrNull(2_000L) {
             runCatching { jikanApi.getAnime(malId).data?.score }.getOrNull()
