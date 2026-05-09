@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.jan.supabase.gotrue.SessionManager
 import io.github.jan.supabase.gotrue.user.UserSession
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -53,11 +54,13 @@ class DataStoreSessionManager(
                 val session = json.decodeFromString(UserSession.serializer(), raw)
                 session
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 AppLogger.e(TAG, "Failed to load session", e)
                 // Clear corrupted data
                 try {
                     dataStore.edit { prefs -> prefs.remove(sessionKey) }
                 } catch (clearError: Exception) {
+                    if (clearError is CancellationException) throw clearError
                     AppLogger.e(TAG, "Failed to clear corrupted session data", clearError)
                 }
                 null
