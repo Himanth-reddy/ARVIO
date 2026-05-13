@@ -102,6 +102,16 @@ data class PlayerUiState(
     val aiErrorToast: String? = null
 )
 
+
+private object PlayerRegexes {
+    val ALPHA_DASH = Regex("[A-Za-z-]+")
+    val ALPHA = Regex("[A-Za-z]+")
+    val WHITESPACE = Regex("""\s+""")
+    val SIZE_PATTERN_1 = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
+    val SIZE_PATTERN_2 = Regex("""(\d+(?:\.\d+)?)\s*(TIB|GIB|MIB|KIB)""")
+    val SIZE_PATTERN_3 = Regex("""^(\d+(?:\.\d+)?)$""")
+}
+
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -920,7 +930,7 @@ class PlayerViewModel @Inject constructor(
             val tokens = buildSet {
                 add(normalizeLanguage(sub.lang))
                 add(normalizeLanguage(sub.label))
-                Regex("[A-Za-z-]+").findAll("${sub.lang} ${sub.label}")
+                PlayerRegexes.ALPHA_DASH.findAll("${sub.lang} ${sub.label}")
                     .map { normalizeLanguage(it.value) }
                     .filter { it.isNotBlank() }
                     .forEach { add(it) }
@@ -993,7 +1003,7 @@ class PlayerViewModel @Inject constructor(
         }
 
         fun subtitleTokens(sub: Subtitle): Set<String> {
-            val rawTokens = Regex("[A-Za-z-]+").findAll("${sub.lang} ${sub.label}")
+            val rawTokens = PlayerRegexes.ALPHA_DASH.findAll("${sub.lang} ${sub.label}")
                 .map { it.value }
                 .toList()
             val normalized = rawTokens.map { normalizeLanguage(it) }.filter { it.isNotBlank() }
@@ -1470,11 +1480,11 @@ class PlayerViewModel @Inject constructor(
         // Normalize: uppercase, replace comma with dot, remove extra spaces
         val normalized = sizeStr.uppercase()
             .replace(",", ".")
-            .replace(Regex("\\s+"), " ")
+            .replace(PlayerRegexes.WHITESPACE, " ")
             .trim()
 
         // Pattern 1: "15.2 GB", "6GB", "1.5 TB" etc.
-        val pattern1 = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
+        val pattern1 = PlayerRegexes.SIZE_PATTERN_1
         pattern1.find(normalized)?.let { match ->
             val number = match.groupValues[1].toDoubleOrNull() ?: return@let
             val unit = match.groupValues[2]
@@ -1482,7 +1492,7 @@ class PlayerViewModel @Inject constructor(
         }
 
         // Pattern 2: Numbers with GiB/MiB notation
-        val pattern2 = Regex("""(\d+(?:\.\d+)?)\s*(TIB|GIB|MIB|KIB)""")
+        val pattern2 = PlayerRegexes.SIZE_PATTERN_2
         pattern2.find(normalized)?.let { match ->
             val number = match.groupValues[1].toDoubleOrNull() ?: return@let
             val unit = match.groupValues[2].replace("IB", "B")
@@ -1490,7 +1500,7 @@ class PlayerViewModel @Inject constructor(
         }
 
         // Pattern 3: Just a number (assume bytes)
-        val pattern3 = Regex("""^(\d+(?:\.\d+)?)$""")
+        val pattern3 = PlayerRegexes.SIZE_PATTERN_3
         pattern3.find(normalized)?.let { match ->
             return match.groupValues[1].toLongOrNull() ?: 0L
         }
@@ -1510,7 +1520,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun extractLanguageCodes(text: String): Set<String> {
         if (text.isBlank()) return emptySet()
-        val tokens = Regex("[A-Za-z]+").findAll(text).map { it.value }.toList()
+        val tokens = PlayerRegexes.ALPHA.findAll(text).map { it.value }.toList()
         if (tokens.isEmpty()) return emptySet()
 
         val codes = mutableSetOf<String>()
