@@ -1566,6 +1566,7 @@ fun PlayerScreen(
     val subtitleSizePref = uiState.subtitleSize
     val subtitleColorPref = uiState.subtitleColor
     val subtitleStylePref = uiState.subtitleStyle
+    val subtitleStylizedPref = uiState.subtitleStylized
     val aspectModeLabel = when (playerResizeMode) {
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
         AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
@@ -1998,17 +1999,25 @@ fun PlayerScreen(
                         setKeepContentOnPlayerReset(true)
                         resizeMode = playerResizeMode
 
-                        // Enable subtitle view with Netflix-style: bold white text with black outline
+                        // Enable subtitle view with styling based on user preference
                         subtitleView?.apply {
-                            // Read subtitle appearance from user settings
-                            val subSizeSp = when (subtitleSizePref) {
-                                "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
-                            }
-                            val subFgColor = when (subtitleColorPref) {
-                                "Yellow" -> android.graphics.Color.YELLOW
-                                "Green" -> android.graphics.Color.GREEN
-                                "Cyan" -> android.graphics.Color.CYAN
-                                else -> android.graphics.Color.WHITE
+                            if (subtitleStylizedPref) {
+                                // Stylized mode: let Media3 render embedded ASS/SSA styles
+                                // (colors, fonts, positioning, z-order). User prefs are
+                                // only used as a fallback CaptionStyle for plain SRT/VTT.
+                                setApplyEmbeddedStyles(true)
+                                setApplyEmbeddedFontSizes(true)
+                                setBottomPaddingFraction(0.08f)
+                            } else {
+                                // Uniform mode: override everything with user preferences
+                                val subSizeSp = when (subtitleSizePref) {
+                                    "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
+                                }
+                                val subFgColor = when (subtitleColorPref) {
+                                    "Yellow" -> android.graphics.Color.YELLOW
+                                    "Green" -> android.graphics.Color.GREEN
+                                    "Cyan" -> android.graphics.Color.CYAN
+                                    else -> android.graphics.Color.WHITE
                                 }
                                 val subTypeface = when (subtitleStylePref) {
                                     "Normal" -> android.graphics.Typeface.DEFAULT
@@ -2034,10 +2043,11 @@ fun PlayerScreen(
                                         subTypeface
                                     )
                                 )
-                            setApplyEmbeddedStyles(false)
-                            setApplyEmbeddedFontSizes(false)
-                            setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp)
-                            setBottomPaddingFraction(0.08f)
+                                setApplyEmbeddedStyles(false)
+                                setApplyEmbeddedFontSizes(false)
+                                setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp)
+                                setBottomPaddingFraction(0.08f)
+                            }
                         }
                     }
                 },

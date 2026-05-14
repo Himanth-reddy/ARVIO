@@ -103,6 +103,7 @@ data class SettingsUiState(
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
     val subtitleOffset: String = "Low",
+    val subtitleStylized: Boolean = true,
     val filterSubtitlesByLanguage: Boolean = true,
     val secondarySubtitle: String = "Off",
     val trailerAutoPlay: Boolean = false,
@@ -267,6 +268,7 @@ class SettingsViewModel @Inject constructor(
     private fun subtitleColorKey() = profileManager.profileStringKey("subtitle_color")
     private fun subtitleOffsetKey() = profileManager.profileStringKey("subtitle_offset")
     private fun subtitleStyleKey() = profileManager.profileStringKey("subtitle_style")
+    private fun subtitleStylizedKey() = profileManager.profileBooleanKey("subtitle_stylized")
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
     private val dnsProviderKey = stringPreferencesKey(OkHttpProvider.DNS_PROVIDER_PREF_KEY)
@@ -417,6 +419,7 @@ class SettingsViewModel @Inject constructor(
             val subtitleColor = prefs[subtitleColorKey()] ?: "White"
             val subtitleStyle = prefs[subtitleStyleKey()] ?: "Bold"
             val subtitleOffset = prefs[subtitleOffsetKey()] ?: "Low"
+            val subtitleStylized = prefs[subtitleStylizedKey()] ?: true
             val filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKey()] ?: true
             val secondarySubtitle = prefs[secondarySubtitleKey()]?.trim()?.takeIf { it.isNotBlank() } ?: "Off"
             val dnsProviderValue = normalizeDnsProviderValue(prefs[dnsProviderKey])
@@ -480,6 +483,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleColor = subtitleColor,
                 subtitleStyle = subtitleStyle,
                 subtitleOffset = subtitleOffset,
+                subtitleStylized = subtitleStylized,
                 filterSubtitlesByLanguage = filterSubtitlesByLanguage,
                 secondarySubtitle = secondarySubtitle,
                 dnsProvider = dnsProviderLabel(dnsProviderValue),
@@ -1104,6 +1108,15 @@ class SettingsViewModel @Inject constructor(
     fun cycleSubtitleStyle() {
         val next = when (_uiState.value.subtitleStyle) { "Bold" -> "Normal"; "Normal" -> "Background"; else -> "Bold" }
         viewModelScope.launch { context.settingsDataStore.edit { it[subtitleStyleKey()] = next }; _uiState.value = _uiState.value.copy(subtitleStyle = next); syncLocalStateToCloud(silent = true) }
+    }
+
+    fun toggleSubtitleStylized() {
+        val next = !_uiState.value.subtitleStylized
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleStylizedKey()] = next }
+            _uiState.value = _uiState.value.copy(subtitleStylized = next)
+            syncLocalStateToCloud(silent = true)
+        }
     }
 
     // ── AI Subtitles ──────────────────────────────────────────────────────────
