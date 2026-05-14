@@ -444,7 +444,7 @@ class AnimeMapper @Inject constructor(
      * If episode <= first segment count, use first segment's Kitsu ID.
      * Otherwise, subtract and use next segment.
      */
-    private fun resolveSegmentedEpisode(segments: List<SeasonSegment>, episode: Int): String {
+    private fun resolveSegmentedEpisode(segments: List<SeasonSegment>, episode: Int): String? {
         var remaining = episode
         for (segment in segments) {
             if (remaining <= segment.episodeCount) {
@@ -452,9 +452,8 @@ class AnimeMapper @Inject constructor(
             }
             remaining -= segment.episodeCount
         }
-        // Past all segments - use last segment with remaining offset
-        val last = segments.last()
-        return "kitsu:${last.kitsuId}:$remaining"
+        // Past all segments - return null to avoid incorrect fallbacks
+        return null
     }
 
     /**
@@ -465,7 +464,7 @@ class AnimeMapper @Inject constructor(
      * This handles cases like MF Ghost where TMDB shows 1 season with 29+ episodes,
      * but Kitsu has 3 separate entries (S1: 12, S2: 12, S3: ongoing).
      */
-    private suspend fun resolveDynamicSegmentedEpisode(segments: List<SeasonSegment>, episode: Int): String {
+    private suspend fun resolveDynamicSegmentedEpisode(segments: List<SeasonSegment>, episode: Int): String? {
         var remaining = episode
         for ((index, segment) in segments.withIndex()) {
             // Fetch episode count from Kitsu API (cached)
@@ -492,9 +491,8 @@ class AnimeMapper @Inject constructor(
             remaining -= epCount
         }
 
-        // Past all segments - use last segment with remaining offset
-        val last = segments.last()
-        return "kitsu:${last.kitsuId}:$remaining"
+        // Past all segments - return null to avoid incorrect fallbacks
+        return null
     }
 
     // ========== Tier 2: Absolute numbering resolution ==========
@@ -591,9 +589,9 @@ class AnimeMapper @Inject constructor(
                     remaining -= epCount
                 }
 
-                // Past all entries - use last entry with remaining offset
-                val lastId = kitsuIds.last()
-                return@withContext "kitsu:$lastId:$remaining"
+                // Past all entries - we do not fallback to the last entry
+                // Strict policy: Return null if mapping is not found to avoid incorrect fallbacks
+                return@withContext null
             }
 
             // Standard case: TMDB season maps to the corresponding Kitsu entry.
