@@ -21,12 +21,10 @@ class CloudSyncCoordinator @Inject constructor(
     private var collectorJob: Job? = null
     private var flushJob: Job? = null
 
-    @Volatile
-    private var started = false
+    private val started = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun start() {
-        if (started) return
-        started = true
+        if (!started.compareAndSet(false, true)) return
         collectorJob = scope.launch {
             invalidationBus.events.collectLatest { invalidation ->
                 if (authRepository.getCurrentUserId().isNullOrBlank()) return@collectLatest
@@ -37,7 +35,7 @@ class CloudSyncCoordinator @Inject constructor(
     }
 
     fun stop() {
-        started = false
+        started.set(false)
         collectorJob?.cancel()
         flushJob?.cancel()
         collectorJob = null
