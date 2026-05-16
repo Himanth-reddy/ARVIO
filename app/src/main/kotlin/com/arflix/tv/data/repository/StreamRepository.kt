@@ -704,7 +704,7 @@ class StreamRepository @Inject constructor(
     }
 
     private fun sanitizeProviderLabel(value: String): String {
-        return value.replace(Regex("nu" + "vio", RegexOption.IGNORE_CASE), "HTTP").trim()
+        return value.replace(StreamRegexes.NUVIO_REGEX, "HTTP").trim()
     }
 
     private fun isIncompleteExternalAddon(addon: Addon): Boolean {
@@ -836,7 +836,7 @@ class StreamRepository @Inject constructor(
         cleanUrl = cleanUrl.substringBefore('#')
         // Handle common manifest typo variants like manifest.jsonv / manifest.json123.
         cleanUrl = cleanUrl.replace(
-            Regex("""(?i)/manifest\.json[a-z0-9_-]+(?=($|[?]))"""),
+            StreamRegexes.MANIFEST_TYPO_REGEX,
             "/manifest.json"
         )
         return cleanUrl.trim()
@@ -2966,8 +2966,7 @@ class StreamRepository @Inject constructor(
 
         // Normalize comma decimals (European format: "5,71 GB" -> "5.71 GB")
         val normalized = sizeStr.replace(",", ".")
-        val regex = Regex("""([\d.]+)\s*(GB|MB|KB|TB)""", RegexOption.IGNORE_CASE)
-        val match = regex.find(normalized) ?: return 0L
+        val match = StreamRegexes.SIZE_REGEX.find(normalized) ?: return 0L
 
         val value = match.groupValues[1].toDoubleOrNull() ?: return 0L
         val unit = match.groupValues[2].uppercase()
@@ -3109,18 +3108,29 @@ class StreamRepository @Inject constructor(
         val enabledFilters = qualityFilters.filter { it.enabled && it.regexPattern.isNotBlank() }
         if (enabledFilters.isEmpty()) return streams
 
+        val compiledRegexes = enabledFilters.mapNotNull { filter ->
+            try {
+                Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        if (compiledRegexes.isEmpty()) return streams
+
         return streams.filter { stream ->
             // Check if this stream matches any exclusion filter regex
-            enabledFilters.none { filter ->
-                try {
-                    Regex(filter.regexPattern, RegexOption.IGNORE_CASE).containsMatchIn(stream.quality)
-                } catch (e: Exception) {
-                    // If regex is invalid, don't filter (log might be helpful)
-                    false
-                }
+            compiledRegexes.none { regex ->
+                regex.containsMatchIn(stream.quality)
             }
         }
     }
+
+private object StreamRegexes {
+    val MANIFEST_TYPO_REGEX = Regex("""(?i)/manifest\.json[a-z0-9_-]+(?=($|[?]))""")
+    val NUVIO_REGEX = Regex("nu" + "vio", RegexOption.IGNORE_CASE)
+    val SIZE_REGEX = Regex("""([\d.]+)\s*(GB|MB|KB|TB)""", RegexOption.IGNORE_CASE)
+}
 
 /**
  * Addon configuration
