@@ -2334,7 +2334,7 @@ class MediaRepository @Inject constructor(
         if (title.isBlank()) return null
 
         val cleanedTitle = title
-            .replace(Regex("""\s+\(\d{4}\)$"""), "")
+            .replace(MediaRepositoryRegexes.TITLE_YEAR_REGEX, "")
             .trim()
             .ifBlank { title }
         val cacheKey = "${mediaTypeHint?.name ?: "ANY"}|${cleanedTitle.lowercase(Locale.US)}"
@@ -2430,7 +2430,7 @@ class MediaRepository @Inject constructor(
         // self-contained.
         val rawTmdb = meta.tmdbId?.trim().orEmpty()
         val tmdbFromField = rawTmdb.toIntOrNull()
-            ?: Regex("""\d+""").find(rawTmdb)?.value?.toIntOrNull()
+            ?: MediaRepositoryRegexes.DIGIT_REGEX.find(rawTmdb)?.value?.toIntOrNull()
         if (tmdbFromField != null && normalizedHint != null) {
             return normalizedHint to tmdbFromField
         }
@@ -2444,7 +2444,7 @@ class MediaRepository @Inject constructor(
         // grids. Rely on explicit tmdb_id / moviedb_id or IMDB resolution.
 
         // IDs like movie:12345 or series:12345
-        val typedIdMatch = Regex("""^(movie|series|tv|show|shows):(\d+)$""", RegexOption.IGNORE_CASE).find(rawId)
+        val typedIdMatch = MediaRepositoryRegexes.TYPED_ID_REGEX.find(rawId)
         if (typedIdMatch != null) {
             val token = typedIdMatch.groupValues[1].lowercase()
             val tmdbId = typedIdMatch.groupValues[2].toIntOrNull() ?: return null
@@ -2504,7 +2504,7 @@ class MediaRepository @Inject constructor(
             if (candidate.startsWith("tt", ignoreCase = true)) return candidate
         }
 
-        val match = Regex("""tt\d{5,}""", RegexOption.IGNORE_CASE).find(fromId)
+        val match = MediaRepositoryRegexes.IMDB_ID_REGEX.find(fromId)
         return match?.value
     }
 
@@ -3215,10 +3215,7 @@ class MediaRepository @Inject constructor(
         if (fromJson.isNotEmpty()) return fromJson
 
         val html = fetchUrl(url) ?: return emptyList()
-        val traktLink = Regex(
-            """https?://(?:www\.)?trakt\.tv/users/[^"'\s<]+/lists/[^"'\s<]+""",
-            RegexOption.IGNORE_CASE
-        ).find(html)?.value
+        val traktLink = MediaRepositoryRegexes.TRAKT_LINK_REGEX.find(html)?.value
         return if (traktLink != null) loadTraktCatalogRefs(traktLink) else emptyList()
     }
 
@@ -3451,4 +3448,15 @@ private fun formatDate(dateStr: String): String {
     } catch (e: Exception) {
         dateStr
     }
+}
+
+private object MediaRepositoryRegexes {
+    val TITLE_YEAR_REGEX = Regex("""\s+\(\d{4}\)$""")
+    val DIGIT_REGEX = Regex("""\d+""")
+    val TYPED_ID_REGEX = Regex("""^(movie|series|tv|show|shows):(\d+)$""", RegexOption.IGNORE_CASE)
+    val IMDB_ID_REGEX = Regex("""tt\d{5,}""", RegexOption.IGNORE_CASE)
+    val TRAKT_LINK_REGEX = Regex(
+        """https?://(?:www\.)?trakt\.tv/users/[^"'\s<]+/lists/[^"'\s<]+""",
+        RegexOption.IGNORE_CASE
+    )
 }
