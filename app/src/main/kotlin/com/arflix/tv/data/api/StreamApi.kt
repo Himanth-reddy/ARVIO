@@ -225,7 +225,7 @@ data class StremioStream(
                 (firstLine.contains(".mkv", ignoreCase = true) ||
                  firstLine.contains(".mp4", ignoreCase = true) ||
                  firstLine.contains(".avi", ignoreCase = true) ||
-                 firstLine.matches(StreamApiRegexes.QUALITY_TAG_REGEX))) {  // Contains [quality] tags
+                  firstLine.matches(StreamApiRegexes.QUALITY_TAGS_REGEX))) {  // Contains [quality] tags
                 return firstLine
             }
         }
@@ -475,7 +475,7 @@ data class ArmMappingEntry(
 )
 
 private object StreamApiRegexes {
-    val QUALITY_TAG_REGEX = Regex(".*\\[.*\\].*")
+    val QUALITY_TAGS_REGEX = Regex(".*\\[.*\\].*")
     val EMOJI_SIZE_REGEX = """💾\s*([\d.]+\s*[GMKT]B)""".toRegex(RegexOption.IGNORE_CASE)
     val PLAIN_SIZE_REGEX = """(\d+\.?\d*)\s*(GB|MB|TB|KB)""".toRegex(RegexOption.IGNORE_CASE)
     val SEEDER_REGEX = """👤\s*(\d+)""".toRegex()
