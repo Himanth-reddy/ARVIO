@@ -766,7 +766,14 @@ class HomeViewModel @Inject constructor(
     private val heroDetailsCache = ConcurrentHashMap<String, HeroDetailsSnapshot>()
     private val savedCatalogById = ConcurrentHashMap<String, CatalogConfig>()
     private val categoryPaginationStates = ConcurrentHashMap<String, CategoryPaginationState>()
-    private val preloadedRequests = Collections.synchronizedSet(mutableSetOf<String>())
+    private val preloadedRequests: MutableSet<String> = run {
+        val backingMap = object : java.util.LinkedHashMap<String, Boolean>(1200, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>): Boolean {
+                return size > 1200
+            }
+        }
+        Collections.synchronizedSet(Collections.newSetFromMap(backingMap))
+    }
     private var logoCachePublishJob: Job? = null
     @Volatile
     private var pendingLogoPublishPriority: Boolean = false
@@ -2540,9 +2547,6 @@ class HomeViewModel @Inject constructor(
      * Uses target display sizes to reduce decode overhead.
      */
     private fun preloadImagesWithCoil(urls: List<String>, width: Int, height: Int, batchLimit: Int = 0) {
-        if (preloadedRequests.size > if (isLowRamDevice) 1_200 else 4_000) {
-            preloadedRequests.clear()
-        }
         // Bumped from 2/4 to 4/8 — enough to preload one full row of cards on
         // the home screen. The old limits left the majority of visible cards
         // without preloaded images on cold start.
