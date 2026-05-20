@@ -63,6 +63,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.data.model.supportsCatchup
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -93,6 +94,7 @@ fun EpgGrid(
     compact: Boolean = false,
     gridFocused: Boolean = false,
     onMoveLeftFromChannels: () -> Unit = {},
+    onProgramSelect: ((EnrichedChannel, IptvProgram) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -410,7 +412,13 @@ fun EpgGrid(
                                 hScrollOffsetPx = bodyHScroll.value,
                                 activeProgramFocusRequester = activeProgramFocusRequester,
                                 activeNowProgramFocusRequester = activeNowProgramFocusRequester,
-                                onClick = { onChannelSelect(ch) },
+                                onClick = { prog ->
+                                    if (onProgramSelect != null) {
+                                        onProgramSelect(ch, prog)
+                                    } else {
+                                        onChannelSelect(ch)
+                                    }
+                                },
                                 onFocused = {
                                     focusInProgramGrid = true
                                     onChannelFocused(ch)
@@ -447,7 +455,7 @@ private fun ProgramsRow(
     hScrollOffsetPx: Int,
     activeProgramFocusRequester: FocusRequester,
     activeNowProgramFocusRequester: FocusRequester,
-    onClick: () -> Unit,
+    onClick: (IptvProgram) -> Unit,
     onFocused: () -> Unit,
 ) {
     val nowMillis = clockTickMillis
@@ -487,7 +495,8 @@ private fun ProgramsRow(
                     isPast = placement.isPast,
                     isFocusTarget = placement.isNow,
                     focusable = true,
-                    onClick = onClick,
+                    supportsCatchup = channel.source.supportsCatchup(),
+                    onClick = { onClick(placement.program) },
                     onFocused = onFocused,
                     rowHeight = rowHeight,
                     modifier = Modifier

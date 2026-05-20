@@ -4316,6 +4316,11 @@ class IptvRepository @Inject constructor(
                 val groupTitle = extractAttr(metadata, "group-title")?.takeIf { it.isNotBlank() } ?: "Uncategorized"
                 val logo = extractAttr(metadata, "tvg-logo")
 
+                val catchupType = extractAttr(metadata, "catchup")
+                val catchupDaysStr = extractAttr(metadata, "catchup-days") ?: extractAttr(metadata, "timeshift")
+                val catchupDays = catchupDaysStr?.toIntOrNull() ?: 0
+                val catchupSource = extractAttr(metadata, "catchup-source")
+
                 channels += IptvChannel(
                     id = id,
                     name = channelName,
@@ -4323,7 +4328,10 @@ class IptvRepository @Inject constructor(
                     group = groupTitle,
                     logo = logo,
                     epgId = epgId,
-                    rawTitle = metadata ?: channelName
+                    rawTitle = metadata ?: channelName,
+                    catchupType = catchupType,
+                    catchupDays = catchupDays,
+                    catchupSource = catchupSource
                 )
                 parsedCount++
                 if (parsedCount % 5000 == 0) {

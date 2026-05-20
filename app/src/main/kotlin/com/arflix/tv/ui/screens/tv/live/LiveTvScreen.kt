@@ -37,6 +37,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -68,6 +69,10 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.data.model.IptvNowNext
+import com.arflix.tv.data.model.supportsCatchup
+import com.arflix.tv.data.model.getCatchupUrl
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.ui.screens.tv.TvUiState
 import com.arflix.tv.ui.screens.tv.TvViewModel
@@ -289,6 +294,9 @@ fun LiveTvScreen(
     // Playing channel — default to the one we were navigated to, else the first
     // channel of the first non-empty category.
     var playingChannelId by rememberSaveable { mutableStateOf<String?>(initialChannelId) }
+    var playingCatchupProgram by rememberSaveable(stateSaver = CatchupProgramSaver) {
+        mutableStateOf<IptvProgram?>(null)
+    }
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(initialChannelId) }
     val playingChannel = remember(playingChannelId, enrichedState.value, filteredChannels) {
         playingChannelId?.let { enrichedState.value.index.byId[it] }
@@ -399,6 +407,7 @@ fun LiveTvScreen(
         val start = if (currentIdx >= 0) currentIdx else 0
         val size = all.size
         val nextIdx = ((start + delta) % size + size) % size
+        playingCatchupProgram = null
         playingChannelId = all[nextIdx].id
         focusedChannelId = all[nextIdx].id
     }
@@ -463,20 +472,26 @@ fun LiveTvScreen(
     }
 
     // When the selected channel changes, swap media item.
-    val currentStreamUrl by rememberUpdatedState(playingChannel?.streamUrl ?: initialStreamUrl)
-    LaunchedEffect(currentStreamUrl) {
+    val currentStreamUrl = remember(playingChannel, playingCatchupProgram) {
+        val program = playingCatchupProgram
+        if (playingChannel != null && program != null) {
+            playingChannel.source.getCatchupUrl(program, System.currentTimeMillis()) ?: playingChannel.streamUrl
+        } else {
+            playingChannel?.streamUrl ?: initialStreamUrl
+        }
+    }
+    LaunchedEffect(currentStreamUrl, playingCatchupProgram) {
         val stream = currentStreamUrl ?: return@LaunchedEffect
         delay(90L)
-        exoPlayer.setMediaItem(
-            MediaItem.Builder()
-                .setUri(stream)
-                .setLiveConfiguration(
-                    MediaItem.LiveConfiguration.Builder()
-                        .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
-                        .setTargetOffsetMs(4_000).build()
-                )
-                .build()
-        )
+        val builder = MediaItem.Builder().setUri(stream)
+        if (playingCatchupProgram == null) {
+            builder.setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder()
+                    .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
+                    .setTargetOffsetMs(4_000).build()
+            )
+        }
+        exoPlayer.setMediaItem(builder.build())
         exoPlayer.prepare()
         exoPlayer.play()
         // Persist "recent" as soon as playback starts.
@@ -604,7 +619,11 @@ fun LiveTvScreen(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = if (playingCatchupProgram != null) {
+                            IptvNowNext(now = playingCatchupProgram, next = null)
+                        } else {
+                            playingChannelId?.let { state.snapshot.nowNext[it] }
+                        },
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
                         compact = true,
@@ -613,7 +632,10 @@ fun LiveTvScreen(
                     TouchCategoryRail(
                         tree = enrichedState.value.tree,
                         selectedId = selectedCategoryId,
-                        onSelect = { id -> selectedCategoryId = id },
+                        onSelect = { id ->
+                            playingCatchupProgram = null
+                            selectedCategoryId = id
+                        },
                         onOpenSearch = { searchOpen = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -626,11 +648,29 @@ fun LiveTvScreen(
                         compact = true,
                         gridFocused = focusZone == LiveTvFocusZone.EPG,
                         onChannelSelect = { channel ->
+                            playingCatchupProgram = null
                             focusedChannelId = channel.id
                             if (channel.id == playingChannelId && !isFullScreen) {
                                 isFullScreen = true
                             } else {
                                 playingChannelId = channel.id
+                            }
+                        },
+                        onProgramSelect = { channel, program ->
+                            focusedChannelId = channel.id
+                            val now = System.currentTimeMillis()
+                            val isPast = program.endUtcMillis <= now
+                            if (isPast && channel.source.supportsCatchup()) {
+                                playingCatchupProgram = program
+                                playingChannelId = channel.id
+                                isFullScreen = true
+                            } else {
+                                playingCatchupProgram = null
+                                if (channel.id == playingChannelId && !isFullScreen) {
+                                    isFullScreen = true
+                                } else {
+                                    playingChannelId = channel.id
+                                }
                             }
                         },
                         onChannelFocused = { channel -> focusedChannelId = channel.id },
@@ -650,7 +690,10 @@ fun LiveTvScreen(
                     tree = enrichedState.value.tree,
                     selectedId = selectedCategoryId,
                     expanded = sidebarExpanded,
-                    onSelect = { id -> selectedCategoryId = id },
+                    onSelect = { id ->
+                        playingCatchupProgram = null
+                        selectedCategoryId = id
+                    },
                     onOpenSearch = { searchOpen = true },
                     onHideCategory = { groupName ->
                         selectedCategoryId = "all"
@@ -693,7 +736,11 @@ fun LiveTvScreen(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = if (playingCatchupProgram != null) {
+                            IptvNowNext(now = playingCatchupProgram, next = null)
+                        } else {
+                            playingChannelId?.let { state.snapshot.nowNext[it] }
+                        },
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
                         compact = compactTouchLayout,
@@ -716,11 +763,29 @@ fun LiveTvScreen(
                             //      → enlarge to fullscreen.
                             // Picking a different channel while already full-
                             // screen swaps the stream but keeps fullscreen.
+                            playingCatchupProgram = null
                             focusedChannelId = channel.id
                             if (channel.id == playingChannelId && !isFullScreen) {
                                 isFullScreen = true
                             } else {
                                 playingChannelId = channel.id
+                            }
+                        },
+                        onProgramSelect = { channel, program ->
+                            focusedChannelId = channel.id
+                            val now = System.currentTimeMillis()
+                            val isPast = program.endUtcMillis <= now
+                            if (isPast && channel.source.supportsCatchup()) {
+                                playingCatchupProgram = program
+                                playingChannelId = channel.id
+                                isFullScreen = true
+                            } else {
+                                playingCatchupProgram = null
+                                if (channel.id == playingChannelId && !isFullScreen) {
+                                    isFullScreen = true
+                                } else {
+                                    playingChannelId = channel.id
+                                }
                             }
                         },
                         onChannelFocused = { channel -> focusedChannelId = channel.id },
@@ -799,7 +864,12 @@ fun LiveTvScreen(
                 if (isFullScreen) {
                     FullscreenHud(
                         channel = playingChannel,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = if (playingCatchupProgram != null) {
+                            IptvNowNext(now = playingCatchupProgram, next = null)
+                        } else {
+                            playingChannelId?.let { state.snapshot.nowNext[it] }
+                        },
+                        isCatchup = playingCatchupProgram != null,
                         pokeSignal = hudPokeSignal,
                         modifier = Modifier,
                     )
@@ -867,6 +937,33 @@ data class EnrichedChannels(
         )
     }
 }
+
+private val CatchupProgramSaver = Saver<IptvProgram?, List<Any>>(
+    save = { program ->
+        if (program != null) {
+            listOf(
+                program.title,
+                program.description ?: "",
+                program.startUtcMillis,
+                program.endUtcMillis
+            )
+        } else {
+            emptyList()
+        }
+    },
+    restore = { list ->
+        if (list.isNotEmpty()) {
+            IptvProgram(
+                title = list[0] as String,
+                description = (list[1] as String).takeIf { it.isNotEmpty() },
+                startUtcMillis = list[2] as Long,
+                endUtcMillis = list[3] as Long
+            )
+        } else {
+            null
+        }
+    }
+)
 
 private tailrec fun Context.findActivity(): Activity? {
     return when (this) {

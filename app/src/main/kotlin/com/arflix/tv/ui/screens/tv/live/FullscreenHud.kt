@@ -49,6 +49,7 @@ fun FullscreenHud(
     channel: EnrichedChannel?,
     nowNext: IptvNowNext?,
     pokeSignal: Int,
+    isCatchup: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var visible by remember { mutableStateOf(true) }
@@ -161,7 +162,7 @@ fun FullscreenHud(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("NOW", style = LiveType.SectionTag.copy(color = LiveColors.Accent))
+                        Text(if (isCatchup) "CATCHUP" else "NOW", style = LiveType.SectionTag.copy(color = LiveColors.Accent))
                         Text(
                             text = formatTimeWindow(now),
                             style = LiveType.TimeMono.copy(color = LiveColors.Fg),
@@ -209,7 +210,7 @@ fun FullscreenHud(
                             trackColor = LiveColors.Panel,
                         )
                     }
-                    if (next != null) {
+                    if (next != null && !isCatchup) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()

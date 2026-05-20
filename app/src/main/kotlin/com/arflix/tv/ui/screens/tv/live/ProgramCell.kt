@@ -59,6 +59,7 @@ fun ProgramCell(
     isPast: Boolean,
     isFocusTarget: Boolean,
     focusable: Boolean = true,
+    supportsCatchup: Boolean = false,
     onClick: () -> Unit,
     onFocused: () -> Unit = {},
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
@@ -161,6 +162,10 @@ fun ProgramCell(
                     !program.isLive(nowMs)
                 if (isNewTag) {
                     Badge("NEW", LiveColors.Bg, LiveColors.Accent)
+                    Spacer(Modifier.size(6.dp))
+                }
+                if (isPast && supportsCatchup) {
+                    Badge("⟲", LiveColors.Bg, LiveColors.Accent.copy(alpha = 0.85f))
                     Spacer(Modifier.size(6.dp))
                 }
                 Text(
