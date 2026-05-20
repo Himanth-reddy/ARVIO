@@ -344,6 +344,7 @@ fun LiveTvScreen(
     val sidebarExpanded = !useTouchRail
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var focusSelectedChannelSignal by remember { mutableIntStateOf(0) }
+    var lastFocusedCategoryId by remember { mutableStateOf<String?>(null) }
     var sidebarAtTopBoundary by remember { mutableStateOf(false) }
     // Full-screen playback mode — pressing OK on an EPG row expands the
     // mini-player to cover the whole screen. Back collapses back to the grid.
@@ -670,7 +671,10 @@ fun LiveTvScreen(
                     onFocusEnter = { focusZone = LiveTvFocusZone.SIDEBAR },
                     onMoveRight = {
                         focusZone = LiveTvFocusZone.EPG
-                        focusSelectedChannelSignal += 1
+                        if (selectedCategoryId != lastFocusedCategoryId) {
+                            lastFocusedCategoryId = selectedCategoryId
+                            focusSelectedChannelSignal += 1
+                        }
                         runCatching { epgFocus.requestFocus() }
                     },
                     onTopBoundaryFocusChanged = { sidebarAtTopBoundary = it },

@@ -67,6 +67,7 @@ fun ChannelRow(
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit,
     onMoveLeft: () -> Unit = {},
+    onMoveRight: () -> Unit = {},
     onFocused: () -> Unit = {},
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
@@ -121,6 +122,10 @@ fun ChannelRow(
             .onKeyEvent { ev ->
                 if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) {
                     onMoveLeft()
+                    return@onKeyEvent true
+                }
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionRight) {
+                    onMoveRight()
                     return@onKeyEvent true
                 }
                 val isLongHoldCenter = ev.type == KeyEventType.KeyDown &&
