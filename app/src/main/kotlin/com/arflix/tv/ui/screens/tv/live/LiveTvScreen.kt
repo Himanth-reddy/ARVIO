@@ -354,9 +354,8 @@ fun LiveTvScreen(
     DisposableEffect(Unit) {
         onDispose { onFullscreenChanged(false) }
     }
-    // Focus requesters for the three regions.
+    // Focus requesters for the regions.
     val sidebarFocus = remember { FocusRequester() }
-    val miniFocus = remember { FocusRequester() }
     val epgFocus = remember { FocusRequester() }
     val fsFocus = remember { FocusRequester() }
 
@@ -464,14 +463,6 @@ fun LiveTvScreen(
 
     // When the selected channel changes, swap media item.
     val currentStreamUrl by rememberUpdatedState(playingChannel?.streamUrl ?: initialStreamUrl)
-    val openFullScreenPlayer = remember(playingChannelId, currentStreamUrl) {
-        {
-            if (playingChannelId != null || currentStreamUrl != null) {
-                isFullScreen = true
-                hudPokeSignal++
-            }
-        }
-    }
     LaunchedEffect(currentStreamUrl) {
         val stream = currentStreamUrl ?: return@LaunchedEffect
         delay(90L)
@@ -615,7 +606,6 @@ fun LiveTvScreen(
                         nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
-                        onFullscreenClick = openFullScreenPlayer,
                         compact = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -702,11 +692,8 @@ fun LiveTvScreen(
                         nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
-                        onFullscreenClick = openFullScreenPlayer,
                         compact = compactTouchLayout,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (!isTouchDevice) Modifier.focusRequester(miniFocus) else Modifier),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     EpgGrid(
                         channels = filteredChannels,

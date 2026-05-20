@@ -8,7 +8,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,9 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FitScreen
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,7 +53,6 @@ fun MiniPlayerRow(
     nowNext: IptvNowNext?,
     favoriteSet: Set<String>,
     onFavoriteToggle: (String) -> Unit,
-    onFullscreenClick: (() -> Unit)? = null,
     compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -72,7 +67,6 @@ fun MiniPlayerRow(
                 exoPlayer = exoPlayer,
                 channel = channel,
                 compact = true,
-                onFullscreenClick = onFullscreenClick,
                 modifier = Modifier.fillMaxWidth(),
             )
             InfoColumn(
@@ -95,7 +89,6 @@ fun MiniPlayerRow(
             VideoCard(
                 exoPlayer = exoPlayer,
                 channel = channel,
-                onFullscreenClick = onFullscreenClick,
             )
             InfoColumn(
                 channel = channel,
@@ -115,7 +108,6 @@ private fun VideoCard(
     exoPlayer: ExoPlayer,
     channel: EnrichedChannel?,
     compact: Boolean = false,
-    onFullscreenClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -127,9 +119,6 @@ private fun VideoCard(
                     Modifier.size(LiveDims.MiniPlayerWidth, LiveDims.MiniPlayerHeight)
                 }
             )
-            .clickable(enabled = onFullscreenClick != null) {
-                onFullscreenClick?.invoke()
-            }
             .clip(RoundedCornerShape(LiveDims.VideoRadius))
             .background(LiveColors.PanelDeep),
     ) {
@@ -166,31 +155,6 @@ private fun VideoCard(
                 modifier = Modifier.fillMaxSize(),
             )
             LiveBug(modifier = Modifier.align(Alignment.TopEnd).padding(10.dp))
-        }
-
-        if (onFullscreenClick != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable { onFullscreenClick.invoke() },
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(10.dp)
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.62f))
-                    .clickable { onFullscreenClick.invoke() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.FitScreen,
-                    contentDescription = "Fullscreen",
-                    tint = Color.White,
-                    modifier = Modifier.size(21.dp),
-                )
-            }
         }
     }
 }
