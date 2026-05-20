@@ -475,7 +475,9 @@ fun LiveTvScreen(
     val currentStreamUrl = remember(playingChannel, playingCatchupProgram) {
         val program = playingCatchupProgram
         if (playingChannel != null && program != null) {
-            playingChannel.source.getCatchupUrl(program, System.currentTimeMillis()) ?: playingChannel.streamUrl
+            val resolved = playingChannel.source.getCatchupUrl(program, System.currentTimeMillis())
+            android.util.Log.d("ARVIO_CATCHUP", "Resolved catchup URL: $resolved")
+            resolved ?: playingChannel.streamUrl
         } else {
             playingChannel?.streamUrl ?: initialStreamUrl
         }

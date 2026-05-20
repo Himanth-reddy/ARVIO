@@ -77,10 +77,11 @@ fun IptvChannel.getCatchupUrl(program: IptvProgram, nowMillis: Long): String? {
         val password = match.groupValues[3]
         val streamId = match.groupValues[4]
         val zonedDateTime = java.time.Instant.ofEpochMilli(program.startUtcMillis)
-            .atZone(java.time.ZoneId.systemDefault())
+            .atZone(java.time.ZoneId.of("UTC"))
         val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm")
         val startStr = zonedDateTime.format(formatter)
-        return "$host/timeshift.php?username=$username&password=$password&stream=$streamId&start=$startStr"
+        val durationMins = (program.endUtcMillis - program.startUtcMillis) / 60_000L
+        return "$host/streaming/timeshift.php?username=$username&password=$password&stream=$streamId&start=$startStr&duration=$durationMins"
     }
 
     val sourceTemplate = catchupSource
@@ -104,7 +105,7 @@ fun IptvChannel.getCatchupUrl(program: IptvProgram, nowMillis: Long): String? {
             .replace("\${offset}", offsetSec.toString())
 
         val zonedDateTime = java.time.Instant.ofEpochMilli(program.startUtcMillis)
-            .atZone(java.time.ZoneId.systemDefault())
+            .atZone(java.time.ZoneId.of("UTC"))
         resolved = resolved
             .replace("{start-year}", zonedDateTime.year.toString())
             .replace("{start-mon}", String.format("%02d", zonedDateTime.monthValue))
