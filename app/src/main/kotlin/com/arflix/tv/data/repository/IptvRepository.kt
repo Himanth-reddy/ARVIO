@@ -1211,7 +1211,7 @@ class IptvRepository @Inject constructor(
         val cached = cachedNowNext
         if (cached.isEmpty()) return null
         val nowMs = System.currentTimeMillis()
-        val recentCutoff = nowMs - (30L * 60_000L)
+        val recentCutoff = nowMs - (48L * 60 * 60_000L) // 48 hours ago (to keep catchup programs)
 
         val result = mutableMapOf<String, IptvNowNext>()
         for (channelId in channelIds) {
@@ -4103,7 +4103,7 @@ class IptvRepository @Inject constructor(
         streamIdToChannelIds: Map<String, List<String>>
     ): Map<String, IptvNowNext> {
         val nowMs = System.currentTimeMillis()
-        val recentCutoff = nowMs - (30L * 60_000L) // 30 min ago (covers expanded timeline window)
+        val recentCutoff = nowMs - (48L * 60 * 60_000L) // 48 hours ago (covers expanded timeline window)
 
         // Group listings by channel.
         // Try matching by: epg_id (channelId field), then stream_id.
@@ -4351,7 +4351,7 @@ class IptvRepository @Inject constructor(
         if (channels.isEmpty()) return emptyMap()
 
         val nowUtc = System.currentTimeMillis()
-        val recentCutoff = nowUtc - (30 * 60_000L)  // Keep programs that ended within past 30 min
+        val recentCutoff = nowUtc - (48L * 60 * 60_000L)  // Keep programs that ended within past 48 hours
         val keyLookup = buildChannelKeyLookup(channels)
         val xmlChannelNameMap = mutableMapOf<String, MutableSet<String>>()
         val nowCandidates = mutableMapOf<String, IptvProgram?>()
@@ -4471,7 +4471,7 @@ class IptvRepository @Inject constructor(
         val upcomingCandidates = mutableMapOf<String, MutableList<IptvProgram>>()
         val recentCandidates = mutableMapOf<String, MutableList<IptvProgram>>()
         val nowUtc = System.currentTimeMillis()
-        val recentCutoff = nowUtc - (30 * 60_000L)  // Keep programs that ended within past 30 min
+        val recentCutoff = nowUtc - (48L * 60 * 60_000L)  // Keep programs that ended within past 48 hours
 
         val factory = SAXParserFactory.newInstance().apply {
             isNamespaceAware = false
