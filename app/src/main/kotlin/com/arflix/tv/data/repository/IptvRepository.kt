@@ -387,8 +387,7 @@ class IptvRepository @Inject constructor(
         // Multi-line: host\nuser\npass.
         val partsByLine = trimmed
             .split('\n', '\r')
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
         if (partsByLine.size >= 3) {
             val host = partsByLine[0]
             val user = partsByLine[1]
@@ -399,8 +398,7 @@ class IptvRepository @Inject constructor(
         // Space-separated: host user pass.
         val partsBySpace = trimmed
             .split(MULTI_SPACE_REGEX)
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
         if (partsBySpace.size >= 3) {
             val host = partsBySpace[0]
             val user = partsBySpace[1]
@@ -448,8 +446,7 @@ class IptvRepository @Inject constructor(
 
         val partsByLine = trimmed
             .split('\n', '\r')
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
         if (partsByLine.size >= 3) {
             val host = partsByLine[0]
             val user = partsByLine[1]
@@ -459,8 +456,7 @@ class IptvRepository @Inject constructor(
 
         val partsBySpace = trimmed
             .split(MULTI_SPACE_REGEX)
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
         if (partsBySpace.size >= 3) {
             val host = partsBySpace[0]
             val user = partsBySpace[1]
@@ -497,8 +493,7 @@ class IptvRepository @Inject constructor(
         val partsByLine = raw
             .split('\n', '\r')
             .asSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
             .take(3)
             .toList()
         if (partsByLine.size == 3) {
@@ -513,8 +508,7 @@ class IptvRepository @Inject constructor(
         val partsBySpace = raw
             .split(MULTI_SPACE_REGEX)
             .asSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
             .take(3)
             .toList()
         if (partsBySpace.size == 3) {
@@ -1607,8 +1601,7 @@ class IptvRepository @Inject constructor(
 
     private fun mergedGroupOrder(savedOrder: List<String>, currentGroups: List<String>): MutableList<String> {
         val current = currentGroups
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
             .distinct()
         val currentSet = current.toHashSet()
         val merged = savedOrder

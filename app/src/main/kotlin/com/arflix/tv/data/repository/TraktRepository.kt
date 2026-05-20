@@ -1586,8 +1586,9 @@ class TraktRepository @Inject constructor(
                 )
                 // Map candidates back to items without TMDB enrichment
                 // Filter out items with null season/episode (already validated at candidate creation)
-                val fallbackItems = topCandidates.map { it.item }
-                    .filter { it.mediaType != MediaType.TV || (it.season != null && it.episode != null) }
+                val fallbackItems = topCandidates.mapNotNull { candidate ->
+                    candidate.item.takeIf { it.mediaType != MediaType.TV || (it.season != null && it.episode != null) }
+                }
                 cachedContinueWatching = fallbackItems
                 cachedContinueWatchingProfileId = requestProfileId
                 lastContinueWatchingFetch = System.currentTimeMillis()
