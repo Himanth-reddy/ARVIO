@@ -159,7 +159,7 @@ fun ProgramCell(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val nowMs = clockTickMillis
                 val isNewTag = (nowMs - program.startUtcMillis) in 0..24L * 60 * 60 * 1000L &&
-                    !program.isLive(nowMs)
+                    !program.isLive(nowMs) && !isPast
                 if (isNewTag) {
                     Badge("NEW", LiveColors.Bg, LiveColors.Accent)
                     Spacer(Modifier.size(6.dp))

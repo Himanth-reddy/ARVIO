@@ -650,11 +650,13 @@ fun LiveTvScreen(
                         compact = true,
                         gridFocused = focusZone == LiveTvFocusZone.EPG,
                         onChannelSelect = { channel ->
-                            playingCatchupProgram = null
                             focusedChannelId = channel.id
-                            if (channel.id == playingChannelId && !isFullScreen) {
-                                isFullScreen = true
+                            if (channel.id == playingChannelId) {
+                                if (!isFullScreen) {
+                                    isFullScreen = true
+                                }
                             } else {
+                                playingCatchupProgram = null
                                 playingChannelId = channel.id
                             }
                         },
@@ -768,11 +770,13 @@ fun LiveTvScreen(
                             //      → enlarge to fullscreen.
                             // Picking a different channel while already full-
                             // screen swaps the stream but keeps fullscreen.
-                            playingCatchupProgram = null
                             focusedChannelId = channel.id
-                            if (channel.id == playingChannelId && !isFullScreen) {
-                                isFullScreen = true
+                            if (channel.id == playingChannelId) {
+                                if (!isFullScreen) {
+                                    isFullScreen = true
+                                }
                             } else {
+                                playingCatchupProgram = null
                                 playingChannelId = channel.id
                             }
                         },
