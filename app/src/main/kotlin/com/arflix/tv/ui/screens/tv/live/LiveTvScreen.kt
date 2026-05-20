@@ -661,9 +661,12 @@ fun LiveTvScreen(
                             val now = System.currentTimeMillis()
                             val isPast = program.endUtcMillis <= now
                             if (isPast && channel.source.supportsCatchup()) {
-                                playingCatchupProgram = program
-                                playingChannelId = channel.id
-                                isFullScreen = true
+                                if (playingCatchupProgram == program && playingChannelId == channel.id && !isFullScreen) {
+                                    isFullScreen = true
+                                } else {
+                                    playingCatchupProgram = program
+                                    playingChannelId = channel.id
+                                }
                             } else {
                                 playingCatchupProgram = null
                                 if (channel.id == playingChannelId && !isFullScreen) {
@@ -776,9 +779,12 @@ fun LiveTvScreen(
                             val now = System.currentTimeMillis()
                             val isPast = program.endUtcMillis <= now
                             if (isPast && channel.source.supportsCatchup()) {
-                                playingCatchupProgram = program
-                                playingChannelId = channel.id
-                                isFullScreen = true
+                                if (playingCatchupProgram == program && playingChannelId == channel.id && !isFullScreen) {
+                                    isFullScreen = true
+                                } else {
+                                    playingCatchupProgram = program
+                                    playingChannelId = channel.id
+                                }
                             } else {
                                 playingCatchupProgram = null
                                 if (channel.id == playingChannelId && !isFullScreen) {
