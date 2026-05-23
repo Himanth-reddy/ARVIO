@@ -441,7 +441,7 @@ class SettingsViewModel @Inject constructor(
                 } else {
                     gson.fromJson<List<QualityFilterConfig>>(
                         json,
-                        TypeToken.getParameterized(List::class.java, QualityFilterConfig::class.java).type
+                        object : TypeToken<List<QualityFilterConfig>>() {}.type
                     ).orEmpty()
                 }
             }.getOrDefault(emptyList())
