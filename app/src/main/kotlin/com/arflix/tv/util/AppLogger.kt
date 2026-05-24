@@ -159,6 +159,7 @@ object AppLogger {
     private val IPV4_PATTERN = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
     private val TOKEN_PATTERN = Regex("(token|jwt|bearer|api[_-]?key|secret)[\"':\\s=]+([a-zA-Z0-9._-]{20,})", RegexOption.IGNORE_CASE)
     private val LONG_HEX_PATTERN = Regex("[a-fA-F0-9]{32,}")
+    private val SAFE_TAG_PATTERN = Regex("[^A-Za-z0-9_.-]")
 
     /**
      * Sanitize a message by removing/masking PII.
@@ -202,7 +203,7 @@ object AppLogger {
 
     private fun safeTag(tag: String): String {
         return tag
-            .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            .replace(SAFE_TAG_PATTERN, "_")
             .take(40)
             .ifBlank { "app" }
     }

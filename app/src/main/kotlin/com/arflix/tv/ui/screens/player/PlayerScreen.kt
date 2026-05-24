@@ -3614,7 +3614,7 @@ private fun SubtitleMenu(
                                         } else {
                                             badge = subtitle.provider.ifBlank { null }
                                             detail = subtitle.id
-                                                .replace(Regex("^\\[[^]]+]"), "").trim()
+                                                .replace(PlayerScreenRegexes.BRACKET_REGEX, "").trim()
                                                 .ifBlank { subtitle.id }
                                                 .ifBlank { null }
                                         }
@@ -4351,11 +4351,10 @@ private fun parseSizeToBytes(sizeStr: String): Long {
 
     val normalized = sizeStr.uppercase()
         .replace(",", ".")
-        .replace(Regex("\\s+"), " ")
+        .replace(PlayerScreenRegexes.MULTI_SPACE_REGEX, " ")
         .trim()
 
-    val pattern = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
-    val match = pattern.find(normalized) ?: return 0L
+    val match = PlayerScreenRegexes.SIZE_REGEX.find(normalized) ?: return 0L
     val number = match.groupValues[1].toDoubleOrNull() ?: return 0L
 
     val multiplier = when (match.groupValues[2]) {
@@ -4623,4 +4622,10 @@ private fun buildPlaybackMetaLine(
 private fun subtitleMatchScore(streamSource: String, subtitle: Subtitle): Int {
     if (subtitle.isEmbedded) return 100
     return weightedSubtitleScore(streamSource, subtitle.id)
+}
+
+private object PlayerScreenRegexes {
+    val BRACKET_REGEX = Regex("^\\[[^]]+]")
+    val MULTI_SPACE_REGEX = Regex("\\s+")
+    val SIZE_REGEX = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
 }
