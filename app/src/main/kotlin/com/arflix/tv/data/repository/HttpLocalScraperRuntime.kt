@@ -421,13 +421,12 @@ class HttpLocalScraperRuntime @Inject constructor(
         val landingHtml = getText(landingUrl)
         var targetUrl = landingUrl
         if (mediaType == "tv") {
-            val divRegex = Regex("""<div[^>]+class=["']ep[^>]*>.*?</div>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            divRegex.findAll(landingHtml).firstOrNull { match ->
+            EP_DIV_REGEX.findAll(landingHtml).firstOrNull { match ->
                 val div = match.value
                 div.contains("data-s=\"${season ?: 1}\"", ignoreCase = true) &&
                     div.contains("data-e=\"${episode ?: 1}\"", ignoreCase = true)
             }?.value?.let { div ->
-                Regex("""data-iframe=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                DATA_IFRAME_REGEX
                     .find(div)
                     ?.groupValues
                     ?.getOrNull(1)
@@ -435,11 +434,11 @@ class HttpLocalScraperRuntime @Inject constructor(
             }
         }
         val pageHtml = getText(targetUrl, mapOf("Referer" to "$baseUrl/"))
-        val iframeSrc = Regex("""iframe\s+id=["']player_iframe["']\s+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        val iframeSrc = PLAYER_IFRAME_REGEX
             .find(pageHtml)
             ?.groupValues
             ?.getOrNull(1)
-            ?: Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            ?: IFRAME_SRC_REGEX
                 .find(pageHtml)
                 ?.groupValues
                 ?.getOrNull(1)
@@ -568,17 +567,14 @@ class HttpLocalScraperRuntime @Inject constructor(
         referer: String
     ): List<HttpResolvedStream> {
         val cloudHtml = getText(sourceUrl, mapOf("Referer" to referer))
-        val prorcpSrc = Regex("""src:\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+        val prorcpSrc = PRORCP_SRC_REGEX
             .find(cloudHtml)
             ?.groupValues
             ?.getOrNull(1)
             ?: return emptyList()
         val cloudUrl = URL(URL(sourceUrl), prorcpSrc).toString()
         val finalHtml = getText(cloudUrl, mapOf("Referer" to sourceUrl))
-        val hidden = Regex(
-            """<div id="([^"]+)"[^>]*style=["']display\s*:\s*none;?["'][^>]*>([a-zA-Z0-9:/.,{}\-_=+ ]+)</div>""",
-            RegexOption.IGNORE_CASE
-        ).find(finalHtml) ?: return emptyList()
+        val hidden = DIV_MATCH_REGEX.find(finalHtml) ?: return emptyList()
         val decrypted = postJson(
             url = "https://enc-dec.app/api/dec-cloudnestra",
             body = """{"text":${gson.toJson(hidden.groupValues[2])},"div_id":${gson.toJson(hidden.groupValues[1])}}"""
@@ -617,7 +613,7 @@ class HttpLocalScraperRuntime @Inject constructor(
         withContext(Dispatchers.IO) {
             okHttpClient.newCall(request).execute().use { response ->
                 response.header("set-cookie")
-                    ?.let { Regex("""t_hash_t=([^;]+)""").find(it)?.groupValues?.getOrNull(1) }
+                    ?.let { T_HASH_T_REGEX.find(it)?.groupValues?.getOrNull(1) }
             }
         }
     }.getOrNull()
@@ -962,6 +958,10 @@ class HttpLocalScraperRuntime @Inject constructor(
         )
         private val IMDB_ID_REGEX = Regex("tt\\d{5,}")
         private val NUVIO_REGEX = Regex("nu" + "vio", RegexOption.IGNORE_CASE)
+        private val EP_DIV_REGEX = Regex("""<div[^>]+class=["']ep[^>]*>.*?</div>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        private val DATA_IFRAME_REGEX = Regex("""data-iframe=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        private val PLAYER_IFRAME_REGEX = Regex("""iframe\s+id=["']player_iframe["']\s+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        private val T_HASH_T_REGEX = Regex("""t_hash_t=([^;]+)""")
         private const val HTTP_LOCAL_MANIFEST_PREFIX = "http.local."
         private const val LEGACY_LOCAL_MANIFEST_PREFIX = "nu" + "vio.local."
         private const val USER_AGENT =
