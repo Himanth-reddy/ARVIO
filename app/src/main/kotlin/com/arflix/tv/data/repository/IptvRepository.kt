@@ -949,7 +949,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun String.replaceDurationScalePlaceholders(durationSec: Long): String {
-        return Regex("""\$\{duration:(\d+)\}|\{duration:(\d+)\}""").replace(this) { match ->
+        return DURATION_SCALE_REGEX.replace(this) { match ->
             val divisor = (match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
                 ?: match.groupValues.getOrNull(2))
                 ?.toLongOrNull()
@@ -1037,11 +1037,9 @@ class IptvRepository @Inject constructor(
     }
 
     private fun redactIptvUrl(url: String): String {
-        val withoutQuerySecrets = Regex(
-            pattern = """(?i)([?&](?:username|user|uname|password|pass|pwd)=)[^&]+"""
-        ).replace(url) { match -> "${match.groupValues[1]}***" }
+        val withoutQuerySecrets = URL_QUERY_SECRETS_REGEX.replace(url) { match -> "${match.groupValues[1]}***" }
 
-        return Regex("""(?i)(/(?:live|movie|series|timeshift)/)([^/]+)/([^/]+)(/)""")
+        return URL_PATH_SECRETS_REGEX
             .replace(withoutQuerySecrets) { match ->
                 "${match.groupValues[1]}***/***${match.groupValues[4]}"
             }
@@ -7143,6 +7141,9 @@ class IptvRepository @Inject constructor(
     private companion object {
         const val ENC_PREFIX = "encv1:"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        val DURATION_SCALE_REGEX = Regex("""\$\{duration:(\d+)\}|\{duration:(\d+)\}""")
+        val URL_QUERY_SECRETS_REGEX = Regex("""(?i)([?&](?:username|user|uname|password|pass|pwd)=)[^&]+""")
+        val URL_PATH_SECRETS_REGEX = Regex("""(?i)(/(?:live|movie|series|timeshift)/)([^/]+)/([^/]+)(/)""")
         const val CONFIG_KEY_ALIAS = "arvio_iptv_config_v1"
         const val MAX_IPTV_CACHE_BYTES = 25L * 1024L * 1024L
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
