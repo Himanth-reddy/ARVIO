@@ -3261,6 +3261,8 @@ class StreamRepository @Inject constructor(
      * Filter streams based on active quality regex filters.
      * Enabled filters exclude matching quality patterns from the stream list.
      */
+    private val qualityRegexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
     fun filterStreamsByQualityRegex(
         streams: List<StreamSource>,
         qualityFilters: List<com.arflix.tv.data.model.QualityFilterConfig>
@@ -3269,10 +3271,8 @@ class StreamRepository @Inject constructor(
         if (enabledFilters.isEmpty()) return streams
 
         val compiledRegexes = enabledFilters.mapNotNull { filter ->
-            try {
-                Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
-            } catch (e: Exception) {
-                null
+            qualityRegexCache.getOrPut(filter.regexPattern) {
+                runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull() ?: return@mapNotNull null
             }
         }
 
