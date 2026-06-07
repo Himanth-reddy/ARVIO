@@ -88,6 +88,20 @@ import java.lang.reflect.Type
 import java.security.KeyStore
 import java.security.MessageDigest
 
+private object IptvRepoDateRegexes {
+    val MINUTE_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm")
+    val SECOND_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm-ss")
+    val SPACE_SECOND_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    val SPACE_MINUTE_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    val YEAR_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy")
+    val MONTH_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("MM")
+    val DAY_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("dd")
+    val HOUR_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("HH")
+    val MIN_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("mm")
+    val SEC_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("ss")
+    val formatterCache = java.util.concurrent.ConcurrentHashMap<String, DateTimeFormatter>()
+}
+
 private object IptvIdSentinels {
     const val IMDB_NONE: String = "tt0"
     const val TMDB_NONE: Int = 0
@@ -894,10 +908,10 @@ class IptvRepository @Inject constructor(
         durationMin: Long
     ): List<String> {
         val serverStartMs = program.startUtcMillis + getServerOffset(creds)
-        val minutePattern = DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm")
-        val secondPattern = DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm-ss")
-        val spaceSecondPattern = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-        val spaceMinutePattern = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+        val minutePattern = IptvRepoDateRegexes.MINUTE_PATTERN
+        val secondPattern = IptvRepoDateRegexes.SECOND_PATTERN
+        val spaceSecondPattern = IptvRepoDateRegexes.SPACE_SECOND_PATTERN
+        val spaceMinutePattern = IptvRepoDateRegexes.SPACE_MINUTE_PATTERN
         val hasSecondOffset = serverStartMs % 60_000L != 0L || program.startUtcMillis % 60_000L != 0L
         val starts = if (hasSecondOffset) {
             listOf(
@@ -988,24 +1002,24 @@ class IptvRepository @Inject constructor(
             .replace("{stream_id}", streamId?.toString().orEmpty())
             .replace("\${stream_id}", streamId?.toString().orEmpty())
             .replace("\$stream_id", streamId?.toString().orEmpty())
-            .replace("{Y}", startDt.format(DateTimeFormatter.ofPattern("yyyy")))
-            .replace("{m}", startDt.format(DateTimeFormatter.ofPattern("MM")))
-            .replace("{d}", startDt.format(DateTimeFormatter.ofPattern("dd")))
-            .replace("{H}", startDt.format(DateTimeFormatter.ofPattern("HH")))
-            .replace("{M}", startDt.format(DateTimeFormatter.ofPattern("mm")))
-            .replace("{S}", startDt.format(DateTimeFormatter.ofPattern("ss")))
-            .replace("{start:Y}", startDt.format(DateTimeFormatter.ofPattern("yyyy")))
-            .replace("{start:m}", startDt.format(DateTimeFormatter.ofPattern("MM")))
-            .replace("{start:d}", startDt.format(DateTimeFormatter.ofPattern("dd")))
-            .replace("{start:H}", startDt.format(DateTimeFormatter.ofPattern("HH")))
-            .replace("{start:M}", startDt.format(DateTimeFormatter.ofPattern("mm")))
-            .replace("{start:S}", startDt.format(DateTimeFormatter.ofPattern("ss")))
-            .replace("{end:Y}", endDt.format(DateTimeFormatter.ofPattern("yyyy")))
-            .replace("{end:m}", endDt.format(DateTimeFormatter.ofPattern("MM")))
-            .replace("{end:d}", endDt.format(DateTimeFormatter.ofPattern("dd")))
-            .replace("{end:H}", endDt.format(DateTimeFormatter.ofPattern("HH")))
-            .replace("{end:M}", endDt.format(DateTimeFormatter.ofPattern("mm")))
-            .replace("{end:S}", endDt.format(DateTimeFormatter.ofPattern("ss")))
+            .replace("{Y}", startDt.format(IptvRepoDateRegexes.YEAR_PATTERN))
+            .replace("{m}", startDt.format(IptvRepoDateRegexes.MONTH_PATTERN))
+            .replace("{d}", startDt.format(IptvRepoDateRegexes.DAY_PATTERN))
+            .replace("{H}", startDt.format(IptvRepoDateRegexes.HOUR_PATTERN))
+            .replace("{M}", startDt.format(IptvRepoDateRegexes.MIN_PATTERN))
+            .replace("{S}", startDt.format(IptvRepoDateRegexes.SEC_PATTERN))
+            .replace("{start:Y}", startDt.format(IptvRepoDateRegexes.YEAR_PATTERN))
+            .replace("{start:m}", startDt.format(IptvRepoDateRegexes.MONTH_PATTERN))
+            .replace("{start:d}", startDt.format(IptvRepoDateRegexes.DAY_PATTERN))
+            .replace("{start:H}", startDt.format(IptvRepoDateRegexes.HOUR_PATTERN))
+            .replace("{start:M}", startDt.format(IptvRepoDateRegexes.MIN_PATTERN))
+            .replace("{start:S}", startDt.format(IptvRepoDateRegexes.SEC_PATTERN))
+            .replace("{end:Y}", endDt.format(IptvRepoDateRegexes.YEAR_PATTERN))
+            .replace("{end:m}", endDt.format(IptvRepoDateRegexes.MONTH_PATTERN))
+            .replace("{end:d}", endDt.format(IptvRepoDateRegexes.DAY_PATTERN))
+            .replace("{end:H}", endDt.format(IptvRepoDateRegexes.HOUR_PATTERN))
+            .replace("{end:M}", endDt.format(IptvRepoDateRegexes.MIN_PATTERN))
+            .replace("{end:S}", endDt.format(IptvRepoDateRegexes.SEC_PATTERN))
         return when {
             templated.startsWith("http://", ignoreCase = true) || templated.startsWith("https://", ignoreCase = true) -> templated
             templated.startsWith("/") -> channel.streamUrl.toHttpUrlOrNull()?.let { parsed ->
@@ -1056,7 +1070,7 @@ class IptvRepository @Inject constructor(
             if (pattern in setOf("Y", "m", "d", "H", "M", "S")) {
                 return@replace match.value
             }
-            runCatching { dateTime.format(DateTimeFormatter.ofPattern(pattern)) }
+            try { Result.success(dateTime.format(IptvRepoDateRegexes.formatterCache.getOrPut(pattern) { DateTimeFormatter.ofPattern(pattern) })) } catch (e: Exception) { Result.failure<String>(e) }
                 .getOrDefault(match.value)
         }
     }
@@ -6070,7 +6084,7 @@ class IptvRepository @Inject constructor(
     private fun parseXtreamDateTime(dateStr: String?): Long? {
         if (dateStr.isNullOrBlank()) return null
         return try {
-            val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            val formatter = IptvRepoDateRegexes.SPACE_SECOND_PATTERN
             val local = java.time.LocalDateTime.parse(dateStr, formatter)
             // Xtream times are typically UTC
             local.atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()

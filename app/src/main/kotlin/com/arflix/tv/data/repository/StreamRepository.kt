@@ -3521,10 +3521,11 @@ class StreamRepository @Inject constructor(
         val enabledFilters = qualityFilters.filter { it.enabled && it.regexPattern.isNotBlank() }
         if (enabledFilters.isEmpty()) return streams
 
+        // Assuming qualityFilters are matching cached filters logic; to optimize, we rely on the caller maintaining cache or do a fast safe-compile.
         val compiledRegexes = enabledFilters.mapNotNull { filter ->
             try {
                 Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
-            } catch (e: Exception) {
+            } catch (e: java.util.regex.PatternSyntaxException) {
                 null
             }
         }

@@ -335,10 +335,10 @@ class WatchlistRepository @Inject constructor(
         val safeProfileId = profileId.trim().ifBlank { "default" }
 
         // Union merge local and cloud items to prevent offline additions from being wiped
-        val localJson = runCatching { context.traktDataStore.data.first()[watchlistKeyFor(safeProfileId)] }.getOrNull()
+        val localJson = try { context.traktDataStore.data.first()[watchlistKeyFor(safeProfileId)] } catch (e: Exception) { null }
         val type = TypeToken.getParameterized(MutableList::class.java, LocalWatchlistItem::class.java).type
         val localItems: List<LocalWatchlistItem> = if (localJson != null) {
-            runCatching { gson.fromJson<List<LocalWatchlistItem>>(localJson, type) }.getOrDefault(emptyList()) ?: emptyList()
+            try { gson.fromJson<List<LocalWatchlistItem>>(localJson, type) ?: emptyList() } catch (e: com.google.gson.JsonSyntaxException) { emptyList() }
         } else {
             emptyList()
         }
@@ -356,7 +356,7 @@ class WatchlistRepository @Inject constructor(
         }
 
         val mergedList = combinedMap.values.sortedWith(compareBy<LocalWatchlistItem> { it.sourceOrder }.thenByDescending { it.addedAt })
-        val json = runCatching { gson.toJson(mergedList) }.getOrDefault("[]")
+        val json = try { gson.toJson(mergedList) } catch (e: Exception) { "[]" }
 
         context.traktDataStore.edit { prefs ->
             prefs[watchlistKeyFor(safeProfileId)] = json

@@ -384,7 +384,7 @@ class InAppYouTubeExtractor @Inject constructor() {
             "https://$trimmed"
         }
 
-        return runCatching {
+        return try {
             val uri = Uri.parse(normalized)
             val host = uri.host?.lowercase().orEmpty()
             if (host.endsWith("youtu.be")) {
@@ -407,7 +407,9 @@ class InAppYouTubeExtractor @Inject constructor() {
                 }
             }
             null
-        }.getOrNull()
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun fetchPlayerResponse(
@@ -502,7 +504,7 @@ class InAppYouTubeExtractor @Inject constructor() {
     }
 
     private fun hasNParam(url: String): Boolean =
-        runCatching { !Uri.parse(url).getQueryParameter("n").isNullOrBlank() }.getOrDefault(false)
+        try { !Uri.parse(url).getQueryParameter("n").isNullOrBlank() } catch (e: Exception) { false }
 
     private fun videoScore(height: Int, fps: Int, bitrate: Double) =
         height * 1_000_000_000.0 + fps * 1_000_000.0 + bitrate
@@ -528,7 +530,7 @@ class InAppYouTubeExtractor @Inject constructor() {
     }
 
     private fun absolutizeUrl(baseUrl: String, maybeRelative: String): String =
-        runCatching { URL(URL(baseUrl), maybeRelative).toString() }.getOrElse { maybeRelative }
+        try { URL(URL(baseUrl), maybeRelative).toString() } catch (e: java.net.MalformedURLException) { maybeRelative }
 
     private fun performRequest(url: String, method: String, headers: Map<String, String>, body: String? = null): RequestResponse {
         val requestBuilder = Request.Builder().url(url).headers(buildHeaders(headers))

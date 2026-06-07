@@ -2076,9 +2076,13 @@ class MediaRepository @Inject constructor(
         limit: Int
     ): List<Pair<MediaType, Int>> {
         val id = source.tmdbCollectionId ?: return emptyList()
-        val response = runCatching {
+        val response = try {
             tmdbApi.getTmdbCollection(id, apiKey, language = contentLanguage)
-        }.getOrNull() ?: return emptyList()
+        } catch (e: retrofit2.HttpException) {
+            null
+        } catch (e: java.io.IOException) {
+            null
+        } ?: return emptyList()
         return response.parts
             .sortedBy { it.releaseDate.orEmpty() }
             .map { MediaType.MOVIE to it.id }
@@ -2809,9 +2813,13 @@ class MediaRepository @Inject constructor(
      * The response is cached by OkHttp, making the redundant call negligible.
      */
     suspend fun getMovieCollectionRef(movieId: Int): com.arflix.tv.data.api.TmdbCollectionRef? {
-        return runCatching {
+        return try {
             tmdbApi.getMovieDetails(movieId, apiKey, language = contentLanguage).belongsToCollection
-        }.getOrNull()
+        } catch (e: retrofit2.HttpException) {
+            null
+        } catch (e: java.io.IOException) {
+            null
+        }
     }
 
     /**
@@ -2820,9 +2828,13 @@ class MediaRepository @Inject constructor(
      * Used by the Details page to show franchise rows (e.g. "Cars Collection").
      */
     suspend fun getTmdbCollectionItems(collectionId: Int): List<MediaItem> {
-        val response = runCatching {
+        val response = try {
             tmdbApi.getTmdbCollection(collectionId, apiKey, language = contentLanguage)
-        }.getOrNull() ?: return emptyList()
+        } catch (e: retrofit2.HttpException) {
+            null
+        } catch (e: java.io.IOException) {
+            null
+        } ?: return emptyList()
         return response.parts
             .sortedBy { it.releaseDate.orEmpty() }
             .map { it.toMediaItem(MediaType.MOVIE) }
