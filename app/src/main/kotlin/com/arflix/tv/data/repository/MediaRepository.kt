@@ -1996,7 +1996,7 @@ class MediaRepository @Inject constructor(
         // third-party addons, keyword queries on unusual IDs, and region-gated
         // watch-provider calls all return HTTP errors sometimes — the right
         // UX is an empty row, not a force-close.
-        return runCatching {
+        return try {
             when (source.kind) {
                 CollectionSourceKind.ADDON_CATALOG -> loadCollectionAddonRefs(source, offset, limit)
                 CollectionSourceKind.TMDB_GENRE -> loadCollectionGenreRefs(source, limit)
@@ -2007,7 +2007,11 @@ class MediaRepository @Inject constructor(
                 CollectionSourceKind.CURATED_IDS -> loadCollectionCuratedRefs(source, limit)
                 CollectionSourceKind.MDBLIST_PUBLIC -> loadCollectionMdblistPublicRefs(source, limit)
             }
-        }.getOrDefault(emptyList())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     /**
@@ -2078,6 +2082,8 @@ class MediaRepository @Inject constructor(
         val id = source.tmdbCollectionId ?: return emptyList()
         val response = try {
             tmdbApi.getTmdbCollection(id, apiKey, language = contentLanguage)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: retrofit2.HttpException) {
             null
         } catch (e: java.io.IOException) {

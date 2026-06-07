@@ -176,6 +176,11 @@ class InAppYouTubeExtractor @Inject constructor() {
             withTimeout(EXTRACTOR_TIMEOUT_MS) {
                 extractPlaybackSourceInternal(videoId)
             }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.w(TAG, "[$videoId] extraction timed out")
+            null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "[$videoId] extraction failed: ${e.message}")
             null
@@ -213,6 +218,8 @@ class InAppYouTubeExtractor @Inject constructor() {
                             cookieHeader = null
                         )
                         client to playerResponse
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         val msg = e.message.orEmpty()
                         if (msg.contains("401") || msg.contains("403")) keyRejected = true
@@ -302,6 +309,8 @@ class InAppYouTubeExtractor @Inject constructor() {
                                 manifestUrl = manifestUrl, selectedVariantUrl = variant.url,
                                 height = variant.height, bandwidth = variant.bandwidth
                             )
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (_: Exception) { null }
                     }
                 }
@@ -407,7 +416,9 @@ class InAppYouTubeExtractor @Inject constructor() {
                 }
             }
             null
-        } catch (e: Exception) {
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: UnsupportedOperationException) {
             null
         }
     }
@@ -504,7 +515,13 @@ class InAppYouTubeExtractor @Inject constructor() {
     }
 
     private fun hasNParam(url: String): Boolean =
-        try { !Uri.parse(url).getQueryParameter("n").isNullOrBlank() } catch (e: Exception) { false }
+        try {
+            !Uri.parse(url).getQueryParameter("n").isNullOrBlank()
+        } catch (_: IllegalArgumentException) {
+            false
+        } catch (_: UnsupportedOperationException) {
+            false
+        }
 
     private fun videoScore(height: Int, fps: Int, bitrate: Double) =
         height * 1_000_000_000.0 + fps * 1_000_000.0 + bitrate

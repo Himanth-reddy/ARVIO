@@ -3533,9 +3533,16 @@ class StreamRepository @Inject constructor(
         if (compiledRegexes.isEmpty()) return streams
 
         return streams.filter { stream ->
+            val qualityText = buildString {
+                append(stream.quality)
+                if (stream.source.isNotBlank()) {
+                    append(' ')
+                    append(stream.source)
+                }
+            }
             // Check if this stream matches any exclusion filter regex
             compiledRegexes.none { regex ->
-                regex.containsMatchIn(stream.quality)
+                regex.containsMatchIn(qualityText)
             }
         }
     }

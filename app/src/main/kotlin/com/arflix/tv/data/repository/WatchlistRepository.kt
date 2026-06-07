@@ -335,10 +335,30 @@ class WatchlistRepository @Inject constructor(
         val safeProfileId = profileId.trim().ifBlank { "default" }
 
         // Union merge local and cloud items to prevent offline additions from being wiped
-        val localJson = try { context.traktDataStore.data.first()[watchlistKeyFor(safeProfileId)] } catch (e: Exception) { null }
+        val localJson = try {
+            context.traktDataStore.data.first()[watchlistKeyFor(safeProfileId)]
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            AppLogger.recordException(
+                throwable = e,
+                context = mapOf(
+                    "error_area" to "WatchlistRepository",
+                    "watchlist_phase" to "import_read_local",
+                    "profile_id" to safeProfileId
+                )
+            )
+            // Abort the import to prevent overwriting/wiping local-only entries when read fails
+            return
+        }
+
         val type = TypeToken.getParameterized(MutableList::class.java, LocalWatchlistItem::class.java).type
         val localItems: List<LocalWatchlistItem> = if (localJson != null) {
-            try { gson.fromJson<List<LocalWatchlistItem>>(localJson, type) ?: emptyList() } catch (e: com.google.gson.JsonSyntaxException) { emptyList() }
+            try {
+                gson.fromJson<List<LocalWatchlistItem>>(localJson, type) ?: emptyList()
+            } catch (e: com.google.gson.JsonSyntaxException) {
+                emptyList()
+            }
         } else {
             emptyList()
         }
@@ -356,14 +376,42 @@ class WatchlistRepository @Inject constructor(
         }
 
         val mergedList = combinedMap.values.sortedWith(compareBy<LocalWatchlistItem> { it.sourceOrder }.thenByDescending { it.addedAt })
-        val json = try { gson.toJson(mergedList) } catch (e: Exception) { "[]" }
-
-        context.traktDataStore.edit { prefs ->
-            prefs[watchlistKeyFor(safeProfileId)] = json
+        val json = try {
+            gson.toJson(mergedList)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            AppLogger.recordException(
+                throwable = e,
+                context = mapOf(
+                    "error_area" to "WatchlistRepository",
+                    "watchlist_phase" to "import_serialize",
+                    "profile_id" to safeProfileId
+                )
+            )
+            // Abort import to avoid writing an empty list on serialization failure
+            return
         }
-        invalidationBus.markDirty(CloudSyncScope.WATCHLIST, safeProfileId, "import watchlist")
-        if (profileManager.getProfileIdSync() == safeProfileId) {
-            clearWatchlistCache()
+
+        try {
+            context.traktDataStore.edit { prefs ->
+                prefs[watchlistKeyFor(safeProfileId)] = json
+            }
+            invalidationBus.markDirty(CloudSyncScope.WATCHLIST, safeProfileId, "import watchlist")
+            if (profileManager.getProfileIdSync() == safeProfileId) {
+                clearWatchlistCache()
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            AppLogger.recordException(
+                throwable = e,
+                context = mapOf(
+                    "error_area" to "WatchlistRepository",
+                    "watchlist_phase" to "import_write",
+                    "profile_id" to safeProfileId
+                )
+            )
         }
     }
 

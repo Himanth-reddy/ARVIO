@@ -99,7 +99,17 @@ private object IptvRepoDateRegexes {
     val HOUR_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("HH")
     val MIN_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("mm")
     val SEC_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("ss")
+    
+    private const val MAX_DYNAMIC_FORMATTERS = 256
     val formatterCache = java.util.concurrent.ConcurrentHashMap<String, DateTimeFormatter>()
+
+    fun formatterFor(pattern: String): DateTimeFormatter {
+        formatterCache[pattern]?.let { return it }
+        if (formatterCache.size >= MAX_DYNAMIC_FORMATTERS) {
+            return DateTimeFormatter.ofPattern(pattern)
+        }
+        return formatterCache.getOrPut(pattern) { DateTimeFormatter.ofPattern(pattern) }
+    }
 }
 
 private object IptvIdSentinels {
@@ -1070,7 +1080,7 @@ class IptvRepository @Inject constructor(
             if (pattern in setOf("Y", "m", "d", "H", "M", "S")) {
                 return@replace match.value
             }
-            try { Result.success(dateTime.format(IptvRepoDateRegexes.formatterCache.getOrPut(pattern) { DateTimeFormatter.ofPattern(pattern) })) } catch (e: Exception) { Result.failure<String>(e) }
+            try { Result.success(dateTime.format(IptvRepoDateRegexes.formatterFor(pattern))) } catch (e: Exception) { Result.failure<String>(e) }
                 .getOrDefault(match.value)
         }
     }
