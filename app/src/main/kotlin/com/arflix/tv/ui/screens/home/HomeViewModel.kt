@@ -68,6 +68,7 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
+@androidx.compose.runtime.Immutable
 data class HomeUiState(
     val isLoading: Boolean = false,
     val isInitialLoad: Boolean = true,
@@ -106,6 +107,7 @@ data class HomeUiState(
     val smoothScrolling: Boolean = false
 )
 
+@androidx.compose.runtime.Immutable
 data class HomeCollectionRow(
     val id: String,
     val title: String,

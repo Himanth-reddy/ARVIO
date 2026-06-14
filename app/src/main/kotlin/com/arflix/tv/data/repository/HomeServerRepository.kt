@@ -2284,7 +2284,7 @@ class HomeServerRepository @Inject constructor(
         runCatching { takeUnless { it.isJsonNull }?.asString }.getOrNull()
 
     private fun String.xmlAttribute(name: String): String {
-        val pattern = Regex("""\b${Regex.escape(name)}=["']([^"']*)["']""")
+        val pattern = HomeServerXmlRegexCache.getRegex(name)
         return pattern.find(this)?.groupValues?.getOrNull(1).orEmpty().xmlDecoded()
     }
 
@@ -2396,3 +2396,16 @@ private val PLEX_DEVICE_REGEX = Regex(
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
 )
 private val PLEX_CONNECTION_REGEX = Regex("""<Connection\b([^>]*)/?\s*>""", RegexOption.IGNORE_CASE)
+
+
+
+
+
+private object HomeServerXmlRegexCache {
+    private val regexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+    fun getRegex(name: String): Regex {
+        return regexCache.getOrPut(name) {
+            Regex("\\b${Regex.escape(name)}=[\"']([^\"']*)[\"']")
+        }
+    }
+}
