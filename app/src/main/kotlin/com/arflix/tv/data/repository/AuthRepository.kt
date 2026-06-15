@@ -204,7 +204,7 @@ internal fun accountSyncPayloadSaveSucceeded(
     userSettingsSaved: Boolean,
     profileAddonsSaved: Boolean
 ): Boolean {
-    return accountSyncSaved || userSettingsSaved
+    return accountSyncSaved || userSettingsSaved || profileAddonsSaved
 }
 
 private fun accountSyncPayloadsMatch(expected: String, actual: String?): Boolean {
