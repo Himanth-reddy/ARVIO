@@ -130,7 +130,7 @@ class TraktSyncService @Inject constructor(
                 try {
                     val supabaseUserId = userId ?: return@withContext SyncResult.Error("Not logged in")
                     updateSyncState(supabaseUserId, syncInProgress = true, lastError = null)
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                 }
             }
 
@@ -161,7 +161,7 @@ class TraktSyncService @Inject constructor(
                             executeSupabaseCall("bulk upsert watched movies") { auth ->
                                 supabaseApi.bulkUpsertWatchedMovies(auth, records = chunk)
                             }
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                         }
                     }
                 }
@@ -209,7 +209,7 @@ class TraktSyncService @Inject constructor(
                             executeSupabaseCall("bulk upsert watched episodes") { auth ->
                                 supabaseApi.bulkUpsertWatchedEpisodes(auth, records = chunk)
                             }
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                         }
                     }
                 }
@@ -240,14 +240,14 @@ class TraktSyncService @Inject constructor(
                             executeSupabaseCall("upsert watch history") { auth ->
                                 supabaseApi.upsertWatchHistory(auth = auth, item = record)
                             }
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                         }
                     }
                 }
 
                 try {
                     cleanupTraktPlaybackProgress(localUserId, progressRecords)
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                 }
             }
             flushOutbox()
@@ -270,7 +270,7 @@ class TraktSyncService @Inject constructor(
                         episodesSynced = totalEpisodes,
                         syncInProgress = false
                     )
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // Silently ignore - sync data is already cached locally
                 }
             }
@@ -345,7 +345,7 @@ class TraktSyncService @Inject constructor(
                     )
                 }
                 syncState = syncStates.firstOrNull()
-            } catch (e: Exception) {
+            } catch (_: Exception) {
             }
 
             if (syncState == null || (syncState.lastTraktActivitiesJson == null && syncState.lastTraktActivities == null)) {
@@ -381,7 +381,7 @@ class TraktSyncService @Inject constructor(
                             executeSupabaseCall("bulk upsert watched movies") { auth ->
                                 supabaseApi.bulkUpsertWatchedMovies(auth, records = chunk)
                             }
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                         }
                     }
                 }
@@ -406,7 +406,7 @@ class TraktSyncService @Inject constructor(
                             executeSupabaseCall("bulk upsert watched episodes") { auth ->
                                 supabaseApi.bulkUpsertWatchedEpisodes(auth, records = chunk)
                             }
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                         }
                     }
                 }
@@ -439,14 +439,14 @@ class TraktSyncService @Inject constructor(
                             executeSupabaseCall("upsert watch history") { auth ->
                                 supabaseApi.upsertWatchHistory(auth = auth, item = record)
                             }
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                         }
                     }
                 }
 
                 try {
                     cleanupTraktPlaybackProgress(safeUserId, progressRecords)
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                 }
             }
 
@@ -461,7 +461,7 @@ class TraktSyncService @Inject constructor(
                     episodesSynced = (syncState?.episodesSynced ?: 0) + episodesUpdated,
                     syncInProgress = false
                 )
-            } catch (e: Exception) {
+            } catch (_: Exception) {
             }
 
             _syncProgress.value = SyncProgress(
@@ -518,7 +518,7 @@ class TraktSyncService @Inject constructor(
                         TraktHistoryBody(movies = listOf(TraktMovieId(TraktIds(tmdb = tmdbId))))
                     )
                     true
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     false
                 }
             } else {
@@ -553,7 +553,7 @@ class TraktSyncService @Inject constructor(
             removePlaybackForContent(traktAuth, tmdbId, MediaType.MOVIE)
 
             traktSyncOk || hasSupabase
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -620,7 +620,7 @@ class TraktSyncService @Inject constructor(
                         )
                     )
                     true
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     false
                 }
             } else {
@@ -660,7 +660,7 @@ class TraktSyncService @Inject constructor(
             removePlaybackForContent(traktAuth, showTmdbId, MediaType.TV)
 
             traktSyncOk || userId != null
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -732,7 +732,7 @@ class TraktSyncService @Inject constructor(
             }
 
             traktAuth != null || hasSupabase
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -781,7 +781,7 @@ class TraktSyncService @Inject constructor(
             }
 
             traktAuth != null || hasSupabase
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -835,7 +835,7 @@ class TraktSyncService @Inject constructor(
                 supabaseApi.upsertWatchHistory(auth = auth, item = record)
             }
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -881,7 +881,7 @@ class TraktSyncService @Inject constructor(
                     ?: emptySet()
             }
             allRecords.filter { recordBelongsToActiveProfile(it.profileId) }.map { it.tmdbId }.toSet()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptySet()
         }
     }
@@ -951,7 +951,7 @@ class TraktSyncService @Inject constructor(
                 return@withContext cachedKeys
             }
             keys
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptySet()
         }
     }
@@ -982,7 +982,7 @@ class TraktSyncService @Inject constructor(
                 buildEpisodeKey(null, null, record.showTmdbId, season, episode)?.let { keys.add(it) }
             }
             keys
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptySet()
         }
     }
@@ -1006,7 +1006,7 @@ class TraktSyncService @Inject constructor(
                     profileId = "eq.${activeProfileId()}"
                 )
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -1031,7 +1031,7 @@ class TraktSyncService @Inject constructor(
             }
             val completionThreshold = Constants.WATCHED_THRESHOLD / 100f
             records.filter { it.progress > 0f && it.progress < completionThreshold }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -1053,7 +1053,7 @@ class TraktSyncService @Inject constructor(
                 )
             }
             syncStates.firstOrNull()?.lastSyncAt
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -1133,7 +1133,7 @@ class TraktSyncService @Inject constructor(
                 if (pageItems.size < limit) break
 
                 page++
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 consecutiveErrors++
                 if (consecutiveErrors > maxRetries) {
                     break
@@ -1172,7 +1172,7 @@ class TraktSyncService @Inject constructor(
                 if (pageItems.size < limit) break
 
                 page++
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 consecutiveErrors++
                 if (consecutiveErrors > maxRetries) {
                     break
@@ -1419,7 +1419,7 @@ class TraktSyncService @Inject constructor(
                                 )
                             }
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                     }
                 }
             }
@@ -1666,7 +1666,7 @@ class TraktSyncService @Inject constructor(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 false
             }
 
@@ -1699,7 +1699,7 @@ class TraktSyncService @Inject constructor(
                 executeTraktCall("remove playback item") { auth ->
                     traktApi.removePlaybackItem(auth, clientId, "2", item.id)
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 outboxRepository.enqueue(
                     TraktOutboxItem(
                         action = TraktOutboxAction.REMOVE_PLAYBACK_ITEM,
@@ -1707,7 +1707,7 @@ class TraktSyncService @Inject constructor(
                     )
                 )
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
     }
 
@@ -1840,7 +1840,7 @@ class TraktSyncService @Inject constructor(
             val newToken = refreshTraktToken(refreshToken)
             saveToken(newToken)
             newToken.accessToken
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

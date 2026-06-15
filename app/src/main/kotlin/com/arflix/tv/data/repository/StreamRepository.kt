@@ -940,7 +940,7 @@ class StreamRepository @Inject constructor(
                 acc[addon.id] = addon
                 acc
             }.values.toList()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

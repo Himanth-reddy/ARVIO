@@ -432,7 +432,7 @@ class AuthRepository @Inject constructor(
                         supabase.auth.currentSessionOrNull()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
             }
 
             // Second try: Import from cached tokens
@@ -448,7 +448,7 @@ class AuthRepository @Inject constructor(
                         // Save the imported session to SessionManager
                         storeSession(session)
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                 }
             }
 
@@ -489,7 +489,7 @@ class AuthRepository @Inject constructor(
             } else {
                 _authState.value = AuthState.NotAuthenticated
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             _authState.value = AuthState.NotAuthenticated
         }
     }
@@ -768,16 +768,16 @@ class AuthRepository @Inject constructor(
      */
     suspend fun signOut() {
         // Push final state before signing out
-        try { cloudSyncRepositoryProvider.get().pushToCloud() } catch (_: Exception) {}
+        try { cloudSyncRepositoryProvider.get().pushToCloud() } catch (e: Exception) { AppLogger.e("AuthRepository", "Error pushing to cloud", e) }
 
         try {
             supabase.auth.signOut()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
 
         try {
             traktRepositoryProvider.get().logout()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
 
         // Clear ALL local data (auth + settings + user preferences)
@@ -813,7 +813,7 @@ class AuthRepository @Inject constructor(
             }
 
             result
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -835,7 +835,7 @@ class AuthRepository @Inject constructor(
             // Set user ID in Trakt repo for Supabase sync
             traktRepositoryProvider.get().setUserId(userId)
             traktRepositoryProvider.get().syncLocalTokensToProfileIfNeeded()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
 
         return UserProfile(
@@ -947,7 +947,7 @@ class AuthRepository @Inject constructor(
             val refreshed = supabase.auth.refreshSession(refreshToken)
             storeSession(refreshed)
             refreshed.accessToken
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -958,7 +958,7 @@ class AuthRepository @Inject constructor(
             try {
                 supabase.auth.loadFromStorage(false)
                 session = supabase.auth.currentSessionOrNull()
-            } catch (e: Exception) {
+            } catch (_: Exception) {
             }
         }
         if (session != null && !isSessionExpired(session)) {
@@ -976,7 +976,7 @@ class AuthRepository @Inject constructor(
             val refreshed = supabase.auth.refreshSession(refreshToken)
             storeSession(refreshed)
             refreshed
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -1015,7 +1015,7 @@ class AuthRepository @Inject constructor(
             }
             val now = Clock.System.now().epochSeconds
             exp <= now + bufferSeconds
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             true
         }
     }
@@ -1024,7 +1024,7 @@ class AuthRepository @Inject constructor(
         // 1. Explicitly save through session manager (for Supabase SDK auto-restore)
         try {
             sessionManager.saveSession(session)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
 
         // 2. Also save tokens directly (fallback for manual restoration)
@@ -1072,7 +1072,7 @@ class AuthRepository @Inject constructor(
                 Charsets.UTF_8
             )
             JSONObject(payload)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

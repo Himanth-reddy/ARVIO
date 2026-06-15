@@ -2009,7 +2009,7 @@ class MediaRepository @Inject constructor(
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -2862,7 +2862,7 @@ class MediaRepository @Inject constructor(
         } else {
             try {
                 traktRepository.getWatchedEpisodesForShow(tvId)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 emptySet<String>()
             }
         }
@@ -2946,7 +2946,7 @@ class MediaRepository @Inject constructor(
         val type = if (mediaType == MediaType.TV) "tv" else "movie"
         val recommendations = try {
             tmdbApi.getRecommendations(type, mediaId, apiKey, language = contentLanguage)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
 
@@ -2997,7 +2997,7 @@ class MediaRepository @Inject constructor(
             val url = logo?.filePath?.let { "${Constants.LOGO_BASE}$it" }
             logoCache[cacheKey] = CacheEntry(url, System.currentTimeMillis())
             url
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -3031,7 +3031,7 @@ class MediaRepository @Inject constructor(
                 ?: results.find { it.type == "Teaser" && it.site == "YouTube" }
                 ?: results.find { it.site == "YouTube" }
             trailer?.key
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -3193,7 +3193,7 @@ class MediaRepository @Inject constructor(
                 cacheItems(items)
                 Category(id = categoryId, title = title, items = items.take(20))
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -3227,7 +3227,7 @@ class MediaRepository @Inject constructor(
             }
             reviewsCache[cacheKey] = CacheEntry(reviews, System.currentTimeMillis())
             reviews
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -3759,7 +3759,7 @@ private fun formatDate(dateStr: String): String {
         val outputFormat = SimpleDateFormat("d MMM yyyy", Locale.US)  // "12 Jan 2025" format
         val date = inputFormat.parse(dateStr)
         date?.let { outputFormat.format(it) } ?: dateStr
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         dateStr
     }
 }

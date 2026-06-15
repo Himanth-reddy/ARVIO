@@ -623,7 +623,7 @@ class TraktRepository @Inject constructor(
         // Then sync to backend in background
         try {
             syncService.markMovieWatched(tmdbId)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Sync failed, but local cache is already updated
         }
     }
@@ -640,7 +640,7 @@ class TraktRepository @Inject constructor(
         // Then sync to backend in background
         try {
             syncService.markMovieUnwatched(tmdbId)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Sync failed, but local cache is already updated
         }
     }
@@ -698,7 +698,7 @@ class TraktRepository @Inject constructor(
         if (syncTrakt) {
             try {
                 syncService.markEpisodeUnwatched(showTmdbId, season, episode)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Sync failed, but local cache is already updated
             }
         }
@@ -734,7 +734,7 @@ class TraktRepository @Inject constructor(
                 delay(delayMs)
                 delayMs = (delayMs * 2).coerceAtMost(10000)
                 attempt++
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 if (attempt == maxAttempts) {
                     return null
                 }
@@ -899,7 +899,7 @@ class TraktRepository @Inject constructor(
         return try {
             traktApi.removePlaybackItem(auth, clientId, "2", playbackId)
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -923,7 +923,7 @@ class TraktRepository @Inject constructor(
             } else {
                 false
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -1025,6 +1025,7 @@ class TraktRepository @Inject constructor(
             showWatchedCacheTime = now
 
         } catch (e: Exception) {
+            AppLogger.e("TraktRepository", "Exception caught and ignored", e)
         }
 
         return watchedSet
@@ -1103,7 +1104,7 @@ class TraktRepository @Inject constructor(
             val complete = progress.aired > 0 && progress.completed >= progress.aired
             showCompletionCache[tmdbId] = complete to now
             complete
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             showCompletionCache[tmdbId] = false to now
             false
         }
@@ -1136,7 +1137,7 @@ class TraktRepository @Inject constructor(
             } else {
                 false
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -1156,6 +1157,7 @@ class TraktRepository @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            AppLogger.e("TraktRepository", "Exception caught and ignored", e)
         }
     }
 
@@ -1171,7 +1173,7 @@ class TraktRepository @Inject constructor(
                 else -> null
             }
             traktId
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -1773,7 +1775,7 @@ class TraktRepository @Inject constructor(
                 cachedContinueWatching = filtered
                 cachedContinueWatchingProfileId = profileId
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Silently ignore preload failures - not critical
         }
     }
@@ -2141,7 +2143,7 @@ class TraktRepository @Inject constructor(
             return@coroutineScope if (item.mediaType == MediaType.TV) {
                 val details = try {
                     tmdbApi.getTvDetails(item.id, apiKey)
-                } catch (_: Exception) { null }
+                } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
 
                 // Get current season info for episode title and aired-episode counts.
                 val seasonDetails = if (item.season != null && item.episode != null && (item.episodeTitle.isNullOrEmpty() || needsEpisodeCounts)) {
@@ -2155,7 +2157,7 @@ class TraktRepository @Inject constructor(
                             launch {
                                 val result = try {
                                     tmdbApi.getTvSeason(item.id, item.season, apiKey)
-                                } catch (_: Exception) { null }
+                                } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
                                 newDeferred.complete(result)
                             }
                             newDeferred
@@ -2165,7 +2167,7 @@ class TraktRepository @Inject constructor(
                         }
 
                         deferredSeason.await()
-                    } catch (_: Exception) { null }
+                    } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
                 } else null
                 val episodeInfo = seasonDetails?.episodes?.find { it.episodeNumber == item.episode }
 
@@ -2207,7 +2209,7 @@ class TraktRepository @Inject constructor(
             } else {
                 val details = try {
                     tmdbApi.getMovieDetails(item.id, apiKey)
-                } catch (_: Exception) { null }
+                } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
 
                 // Build full URLs for images
                 val backdropUrl = details?.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
@@ -2260,7 +2262,7 @@ class TraktRepository @Inject constructor(
     private fun parseIso8601(dateString: String): Long {
         return try {
             java.time.Instant.parse(dateString).toEpochMilli()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             0L
         }
     }
@@ -3040,7 +3042,7 @@ class TraktRepository @Inject constructor(
             }
             traktApi.addToWatchlist(auth, clientId, "2", body)
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3055,7 +3057,7 @@ class TraktRepository @Inject constructor(
             }
             traktApi.removeFromWatchlist(auth, clientId, "2", body)
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3071,7 +3073,7 @@ class TraktRepository @Inject constructor(
                     else -> false
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3127,7 +3129,7 @@ class TraktRepository @Inject constructor(
                 TraktCollectionBody(movies = listOf(TraktMovieId(TraktIds(tmdb = tmdbId))))
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3143,7 +3145,7 @@ class TraktRepository @Inject constructor(
                 TraktCollectionBody(shows = listOf(TraktShowId(TraktIds(tmdb = tmdbId))))
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3159,7 +3161,7 @@ class TraktRepository @Inject constructor(
                 TraktCollectionBody(movies = listOf(TraktMovieId(TraktIds(tmdb = tmdbId))))
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3175,7 +3177,7 @@ class TraktRepository @Inject constructor(
                 TraktCollectionBody(shows = listOf(TraktShowId(TraktIds(tmdb = tmdbId))))
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3268,7 +3270,7 @@ class TraktRepository @Inject constructor(
                 )
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3286,7 +3288,7 @@ class TraktRepository @Inject constructor(
                 )
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3311,7 +3313,7 @@ class TraktRepository @Inject constructor(
                 )
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3329,7 +3331,7 @@ class TraktRepository @Inject constructor(
                 )
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3464,7 +3466,7 @@ class TraktRepository @Inject constructor(
                 updateWatchedCache(showTmdbId, seasonNumber, ep, true)
             }
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3480,7 +3482,7 @@ class TraktRepository @Inject constructor(
                 TraktHistoryBody(shows = listOf(TraktHistoryShowWithSeasons(TraktIds(tmdb = tmdbId))))
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3493,7 +3495,7 @@ class TraktRepository @Inject constructor(
                 TraktHistoryBody(shows = listOf(TraktHistoryShowWithSeasons(TraktIds(tmdb = tmdbId))))
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3520,7 +3522,7 @@ class TraktRepository @Inject constructor(
                 updateWatchedCache(showTmdbId, season, ep, true)
             }
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3547,7 +3549,7 @@ class TraktRepository @Inject constructor(
                 updateWatchedCache(showTmdbId, seasonNumber, ep, false)
             }
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3563,7 +3565,7 @@ class TraktRepository @Inject constructor(
                 TraktHistoryBody(shows = listOf(TraktHistoryShowWithSeasons(TraktIds(tmdb = tmdbId))))
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3579,7 +3581,7 @@ class TraktRepository @Inject constructor(
                 TraktHistoryRemoveBody(ids = ids)
             )
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -3693,7 +3695,7 @@ class TraktRepository @Inject constructor(
             watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
 
             cacheInitialized = true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // If sync service fails, try direct Trakt load (only if Trakt auth available)
             try {
                 val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
@@ -4036,7 +4038,7 @@ private fun formatDateString(dateStr: String?): String {
         val outputFormat = SimpleDateFormat("MMMM d, yyyy", Locale.US)
         val date = inputFormat.parse(dateStr)
         date?.let { outputFormat.format(it) } ?: ""
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         ""
     }
 }

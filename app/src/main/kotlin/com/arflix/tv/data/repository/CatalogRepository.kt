@@ -19,6 +19,7 @@ import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.repository.HomeServerCatalogCandidate
 import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.ParsedCatalogUrl
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
@@ -82,7 +83,8 @@ class CatalogRepository @Inject constructor(
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .toSet()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AppLogger.e("CatalogRepository", "Error fetching data, returning empty set", e)
             emptySet()
         }
     }
@@ -95,7 +97,8 @@ class CatalogRepository @Inject constructor(
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .toSet()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AppLogger.e("CatalogRepository", "Error fetching data, returning empty set", e)
             emptySet()
         }
     }
@@ -108,7 +111,8 @@ class CatalogRepository @Inject constructor(
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .toSet()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AppLogger.e("CatalogRepository", "Error fetching data, returning empty set", e)
             emptySet()
         }
     }
