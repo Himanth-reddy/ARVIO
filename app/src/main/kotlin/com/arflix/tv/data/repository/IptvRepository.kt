@@ -2098,7 +2098,7 @@ class IptvRepository @Inject constructor(
     // Keyed by the active index key (set during loadSnapshot / cache ownership).
 
     fun pagedChannelsReady(): Boolean =
-        currentEpgIndexKey.isNotBlank() && runCatching { channelStore.count(currentEpgIndexKey) }.getOrDefault(0) > 0
+        currentEpgIndexKey.isNotBlank() && try { channelStore.count(currentEpgIndexKey) } catch (e: Exception) { com.arflix.tv.util.AppLogger.e("IptvRepository", "DB error: ${e.message}"); 0 } > 0
 
     fun pagedChannelCount(groupTitle: String?): Int =
         runCatching { channelStore.countForGroup(currentEpgIndexKey, groupTitle) }.getOrDefault(0)
@@ -2113,19 +2113,44 @@ class IptvRepository @Inject constructor(
         runCatching { channelStore.windowForPlaylistGroup(currentEpgIndexKey, playlistId, groupTitle, offset, limit) }.getOrDefault(emptyList())
 
     fun pagedChannelStoreCount(): Int =
-        runCatching { channelStore.count(currentEpgIndexKey) }.getOrDefault(0)
+        try {
+            channelStore.count(currentEpgIndexKey)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            com.arflix.tv.util.AppLogger.e("IptvRepository", "DB error: ${e.message}")
+            0
+        }
 
     fun pagedChannelGroupCounts(): List<Pair<String, Int>> =
-        runCatching { channelStore.groupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
+        try {
+            channelStore.groupCounts(currentEpgIndexKey)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            com.arflix.tv.util.AppLogger.e("IptvRepository", "DB error: ${e.message}")
+            emptyList()
+        }
 
     fun pagedPlaylistGroupCounts(): List<Triple<String, String, Int>> =
-        runCatching { channelStore.playlistGroupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
+        try {
+            channelStore.playlistGroupCounts(currentEpgIndexKey)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            com.arflix.tv.util.AppLogger.e("IptvRepository", "DB error: ${e.message}")
+            emptyList()
+        }
 
     fun pagedChannelsByIds(ids: Collection<String>): List<IptvChannel> =
-        runCatching { channelStore.getByIds(currentEpgIndexKey, ids) }.getOrDefault(emptyList())
+        try {
+            channelStore.getByIds(currentEpgIndexKey, ids)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            com.arflix.tv.util.AppLogger.e("IptvRepository", "DB error: ${e.message}")
+            emptyList()
+        }
 
     fun pagedChannelIndexOf(groupTitle: String?, channelId: String): Int =
-        runCatching { channelStore.indexOfId(currentEpgIndexKey, groupTitle, channelId) }.getOrDefault(-1)
+        try {
+            channelStore.indexOfId(currentEpgIndexKey, groupTitle, channelId)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            com.arflix.tv.util.AppLogger.e("IptvRepository", "DB error: ${e.message}")
+            -1
+        }
 
     fun pagedSearchChannels(query: String, limit: Int): List<IptvChannel> =
         runCatching { channelStore.search(currentEpgIndexKey, query, limit) }.getOrDefault(emptyList())
@@ -2490,9 +2515,9 @@ class IptvRepository @Inject constructor(
         updatedAtMs: Long = System.currentTimeMillis()
     ) {
         if (!hasAnyProgramData(nowNext)) return
-        runCatching {
+        try {
             epgIndex.replaceChannels(currentEpgIndexKey(config), nowNext, updatedAtMs)
-        }.onFailure { error ->
+        } catch (error: Exception) {
             System.err.println("[EPG-Index] Failed to update guide index: ${error.message}")
         }
     }

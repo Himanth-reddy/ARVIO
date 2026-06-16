@@ -340,7 +340,11 @@ class StreamRepository @Inject constructor(
                 ).orEmpty()
                     .filter { it.enabled && it.regexPattern.isNotBlank() }
                 val regexes = filters.mapNotNull { filter ->
-                    runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+                    try {
+                        Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
+                    } catch (e: java.util.regex.PatternSyntaxException) {
+                        null
+                    }
                 }
                 cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
             }
@@ -357,7 +361,11 @@ class StreamRepository @Inject constructor(
     fun updateQualityFiltersCache(filters: List<QualityFilterConfig>) {
         val enabledFilters = filters.filter { it.enabled && it.regexPattern.isNotBlank() }
         val regexes = enabledFilters.mapNotNull { filter ->
-            runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+            try {
+                Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
+            } catch (e: java.util.regex.PatternSyntaxException) {
+                null
+            }
         }
         cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
         synchronized(streamResultCache) { streamResultCache.clear() }
