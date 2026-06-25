@@ -1644,7 +1644,8 @@ fun PlayerScreen(
             delay(300)
             try {
                 playButtonFocusRequester.requestFocus()
-            } catch (e: Exception) {}
+            } catch (e: Exception) {if (e is kotlinx.coroutines.CancellationException) throw e
+}
         }
     }
 
@@ -3806,6 +3807,7 @@ private fun ErrorButton(
 /**
  * Audio track info from ExoPlayer
  */
+@androidx.compose.runtime.Immutable
 data class AudioTrackInfo(
     val index: Int,
     val groupIndex: Int,
@@ -3879,6 +3881,8 @@ private fun applyAudioTrackSelection(
         android.util.Log.w("PlayerScreen", "applyAudioTrackSelection on invalid player: ${e.message}")
         null
     } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+
         android.util.Log.e("PlayerScreen", "applyAudioTrackSelection unexpected error", e)
         null
     }
@@ -4903,6 +4907,7 @@ private fun subtitleMimeTypeFromUrl(url: String): String {
     }
 }
 
+@androidx.compose.runtime.Immutable
 private data class PlaybackBufferProfile(
     val minBufferMs: Int,
     val maxBufferMs: Int,

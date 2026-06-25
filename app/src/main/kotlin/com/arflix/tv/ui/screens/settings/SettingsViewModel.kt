@@ -664,6 +664,8 @@ class SettingsViewModel @Inject constructor(
                 .withZone(java.time.ZoneId.systemDefault())
             formatter.format(instant)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             null
         }
     }
@@ -2943,6 +2945,8 @@ class SettingsViewModel @Inject constructor(
                 // Start polling for token
                 startTraktPolling(deviceCode)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("SettingsVM: failed to start Trakt auth: ${e.message}")
                 val message = when (e) {
                     is retrofit2.HttpException -> "Trakt activation failed (${e.code()})"
@@ -3003,6 +3007,8 @@ class SettingsViewModel @Inject constructor(
                     runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                     return@launch
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Keep polling on 400 (pending) - user hasn't entered code yet
                     // Check both HttpException code and message for 400
                     val is400 = when (e) {

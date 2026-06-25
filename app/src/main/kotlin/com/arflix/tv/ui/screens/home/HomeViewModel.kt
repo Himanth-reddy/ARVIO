@@ -774,6 +774,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("[EPG-Refresh] Error: ${e.message}")
             }
         }
@@ -1240,6 +1242,8 @@ class HomeViewModel @Inject constructor(
                 val json = org.json.JSONObject(snapshot as Map<*, *>).toString()
                 logoCachePrefs.edit().putString("urls", json).apply()
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("HomeVM: failed to save logo cache: ${e.message}")
             }
         }
@@ -1487,6 +1491,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("HomeVM: preload CW cache failed: ${e.message}")
             }
         }
@@ -1498,6 +1504,8 @@ class HomeViewModel @Inject constructor(
                 try {
                     iptvRepository.warmXtreamVodCachesIfPossible()
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     AppLogger.e("HomeVM", "warmXtreamVodCachesIfPossible failed", e)
                 }
             }
@@ -1510,6 +1518,8 @@ class HomeViewModel @Inject constructor(
                 traktRepository.isAuthenticated.filter { it }.first()
                 launchContinueWatchingFetch()
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("HomeVM: auth observer CW refresh failed: ${e.message}")
             }
         }
@@ -2346,6 +2356,8 @@ class HomeViewModel @Inject constructor(
                             val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
                             if (logoUrl != null) key to logoUrl else null
                         } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+
                             null
                         }
                     }
@@ -2482,6 +2494,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }
               } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 if (requestId != loadHomeRequestId) return@loadHome
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -3151,6 +3165,8 @@ class HomeViewModel @Inject constructor(
                     // Else: No data anywhere - nothing to show, UI already doesn't have it
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 // Silently fail - don't clear existing data on error
                 AppLogger.e("HomeVM", "launchContinueWatchingFetch failed", e)
             }
@@ -3481,6 +3497,8 @@ class HomeViewModel @Inject constructor(
                 )
                 lastWatchedBadgesRefreshMs = SystemClock.elapsedRealtime()
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("HomeVM: refreshWatchedBadges failed: ${e.message}")
             }
         }
@@ -3595,6 +3613,8 @@ class HomeViewModel @Inject constructor(
                         preloadLogoImages(listOf(logoUrl))
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Logo fetch failed
                     AppLogger.e("HomeVM", "Hero logo fetch failed", e)
                 }
@@ -3729,6 +3749,8 @@ class HomeViewModel @Inject constructor(
                 applyHeroDetailsSnapshotIfCurrent(item, snapshot)
                 snapshot.primaryNetworkLogo?.let { preloadLogoImages(listOf(it)) }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 _uiState.value = _uiState.value.copy(isHeroTransitioning = false)
             }
         }
@@ -3817,6 +3839,8 @@ class HomeViewModel @Inject constructor(
                             val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
                             if (logoUrl != null) key to logoUrl else null
                         } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+
                             null
                         } finally {
                             logoFetchInFlight.remove(key)
@@ -3887,6 +3911,8 @@ class HomeViewModel @Inject constructor(
                                 val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
                                 if (logoUrl != null) key to logoUrl else null
                             } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+
                                 null
                             } finally {
                                 logoFetchInFlight.remove(key)
@@ -3967,6 +3993,8 @@ class HomeViewModel @Inject constructor(
                     toastType = ToastType.SUCCESS
                 )
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 AppLogger.recordException(
                     throwable = e,
                     context = mapOf(
@@ -4078,6 +4106,8 @@ class HomeViewModel @Inject constructor(
                 // was never updated — only the Supabase watch_history table was.
                 runCatching { cloudSyncRepository.pushToCloud() }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 _uiState.value = _uiState.value.copy(
                     toastMessage = context.getString(R.string.details_failed_update_watched),
                     toastType = ToastType.ERROR
@@ -4182,6 +4212,8 @@ class HomeViewModel @Inject constructor(
                 // Push cloud snapshot so other devices see watched status + CW update
                 runCatching { cloudSyncRepository.pushToCloud() }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 _uiState.value = _uiState.value.copy(
                     toastMessage = context.getString(R.string.details_failed_update_watched),
                     toastType = ToastType.ERROR
@@ -4235,6 +4267,8 @@ class HomeViewModel @Inject constructor(
                     lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 _uiState.value = _uiState.value.copy(
                     toastMessage = context.getString(R.string.home_failed_remove_continue_watching),
                     toastType = ToastType.ERROR
