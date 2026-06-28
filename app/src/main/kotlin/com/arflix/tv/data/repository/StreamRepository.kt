@@ -129,6 +129,19 @@ internal fun shouldTryNativeAnimeFallback(
  * Repository for stream resolution from Stremio addons
  * Enhanced with addon management
  */
+private object StreamRepoRegexes {
+    private val filterRegexCache = object : java.util.LinkedHashMap<String, Regex>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Regex>?): Boolean {
+            return size > 128
+        }
+    }
+
+    fun getOrPutFilterRegex(pattern: String): Regex {
+        synchronized(filterRegexCache) {
+            return filterRegexCache.getOrPut(pattern) { Regex(pattern, RegexOption.IGNORE_CASE) }
+        }
+    }
+}
 @Singleton
 class StreamRepository @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -342,7 +355,7 @@ class StreamRepository @Inject constructor(
                 ).orEmpty()
                     .filter { it.enabled && it.regexPattern.isNotBlank() }
                 val regexes = filters.mapNotNull { filter ->
-                    runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+                    runCatching { StreamRepoRegexes.getOrPutFilterRegex(filter.regexPattern) }.getOrNull()
                 }
                 cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
             }
@@ -359,7 +372,7 @@ class StreamRepository @Inject constructor(
     fun updateQualityFiltersCache(filters: List<QualityFilterConfig>) {
         val enabledFilters = filters.filter { it.enabled && it.regexPattern.isNotBlank() }
         val regexes = enabledFilters.mapNotNull { filter ->
-            runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+            runCatching { StreamRepoRegexes.getOrPutFilterRegex(filter.regexPattern) }.getOrNull()
         }
         cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
         synchronized(streamResultCache) { streamResultCache.clear() }
@@ -3757,7 +3770,7 @@ class StreamRepository @Inject constructor(
         // Assuming qualityFilters are matching cached filters logic; to optimize, we rely on the caller maintaining cache or do a fast safe-compile.
         val compiledRegexes = enabledFilters.mapNotNull { filter ->
             try {
-                Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
+                StreamRepoRegexes.getOrPutFilterRegex(filter.regexPattern)
             } catch (e: java.util.regex.PatternSyntaxException) {
                 null
             }
