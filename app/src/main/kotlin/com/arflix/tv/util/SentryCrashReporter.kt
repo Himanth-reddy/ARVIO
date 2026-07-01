@@ -14,7 +14,7 @@ import io.sentry.protocol.User
  * The SDK only starts when crash reporting is enabled for the variant and
  * SENTRY_DSN is set to a real Sentry DSN in secrets.properties.
  */
-object SentryCrashReporter : AppLogger.CrashContextProvider {
+data object SentryCrashReporter : AppLogger.CrashContextProvider {
     private const val DISABLED_DSN = "disabled"
     private var isInitialized = false
 

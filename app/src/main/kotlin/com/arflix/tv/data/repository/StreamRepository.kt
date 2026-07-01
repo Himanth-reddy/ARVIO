@@ -244,7 +244,7 @@ class StreamRepository @Inject constructor(
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
     private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
     private val qualityFiltersKey = stringPreferencesKey("quality_filters")
-    private val streamResultCacheBundleType = object : TypeToken<Map<String, PersistedStreamResultPayload>>() {}.type
+    private val streamResultCacheBundleType = TypeToken.getParameterized(Map::class.java, String::class.java, PersistedStreamResultPayload::class.java).type
     private val streamResultCacheDiskTtlMs = 4 * 60 * 60_000L
     private val streamResultCacheDiskStaleGraceMs = 5 * 60_000L
     private val streamResultCacheDiskMaxEntries = 320
@@ -343,7 +343,7 @@ class StreamRepository @Inject constructor(
                 ).orEmpty()
                     .filter { it.enabled && it.regexPattern.isNotBlank() }
                 val regexes = filters.mapNotNull { filter ->
-                    runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+                    try { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) } catch (e: Exception) { null }
                 }
                 cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
             }
@@ -360,7 +360,7 @@ class StreamRepository @Inject constructor(
     fun updateQualityFiltersCache(filters: List<QualityFilterConfig>) {
         val enabledFilters = filters.filter { it.enabled && it.regexPattern.isNotBlank() }
         val regexes = enabledFilters.mapNotNull { filter ->
-            runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+            try { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) } catch (e: Exception) { null }
         }
         cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
         synchronized(streamResultCache) { streamResultCache.clear() }
