@@ -295,6 +295,7 @@ class SettingsViewModel @Inject constructor(
     private var lastObservedStalkerUrl: String = ""
 
     private var traktPollingJob: Job? = null
+    private var traktStartupJob: Job? = null
     private var plexHomeServerPollingJob: Job? = null
     private var plexHomeServerUrl: String? = null
     private var plexHomeServerDisplayName: String? = null
@@ -2921,7 +2922,8 @@ class SettingsViewModel @Inject constructor(
         val current = _uiState.value
         if (current.isTraktAuthStarting || current.isTraktPolling) return
 
-        viewModelScope.launch {
+        traktStartupJob?.cancel()
+        traktStartupJob = viewModelScope.launch {
             traktPollingJob?.cancel()
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
@@ -3040,6 +3042,7 @@ class SettingsViewModel @Inject constructor(
 
     fun cancelTraktAuth() {
         traktPollingJob?.cancel()
+        traktStartupJob?.cancel()
         _uiState.value = _uiState.value.copy(
             traktCode = null,
             isTraktAuthStarting = false,
