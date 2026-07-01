@@ -1,5 +1,7 @@
 package com.arflix.tv.ui.screens.search
 
+import com.arflix.tv.util.rethrowIfCancellation
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.MediaItem
@@ -306,7 +308,7 @@ class SearchViewModel @Inject constructor(
                 val logos = withContext(Dispatchers.IO) { top.map { item -> async { val k = "${item.mediaType}_${item.id}"; val l = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }.getOrNull(); if (l.isNullOrBlank()) null else k to l } }.awaitAll().filterNotNull().toMap() }
                 _uiState.value = _uiState.value.copy(isLoading = false, results = sorted, movieResults = movies, tvResults = tv, personResults = peopleRows, cardLogoUrls = logos)
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                e.rethrowIfCancellation()
                 com.arflix.tv.util.AppLogger.recordException(e)
                 _uiState.value = _uiState.value.copy(isLoading = false, error = e.message)
             }
@@ -356,7 +358,7 @@ class SearchViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(isLoading = false, aiResults = if (sq.limit != null) items.take(sq.limit) else items)
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                e.rethrowIfCancellation()
                 com.arflix.tv.util.AppLogger.recordException(e)
                 _uiState.value = _uiState.value.copy(isLoading = false, error = e.message)
             }

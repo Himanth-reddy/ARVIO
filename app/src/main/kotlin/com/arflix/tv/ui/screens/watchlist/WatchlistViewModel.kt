@@ -12,6 +12,7 @@ import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.util.AppLogger
+import com.arflix.tv.util.rethrowIfCancellation
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -109,7 +110,7 @@ class WatchlistViewModel @Inject constructor(
             for (item in items) {
                 val key = "${item.mediaType}_${item.id}"
                 if (key in currentLogos) continue
-                val url = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }.getOrNull()
+                val url = try { mediaRepository.getLogoUrl(item.mediaType, item.id) } catch (e: Exception) { e.rethrowIfCancellation(); null }
                 if (url != null) {
                     currentLogos[key] = url
                     _logoUrls.value = currentLogos.toMap()
@@ -128,13 +129,15 @@ class WatchlistViewModel @Inject constructor(
 
             if (initialLocalItems.isEmpty()) {
                 withTimeoutOrNull(3_500) {
-                    runCatching { cloudSyncRepository.pullFromCloud() }
-                        .onFailure { error ->
-                            AppLogger.recordException(
+                    try {
+                        cloudSyncRepository.pullFromCloud()
+                    } catch (error: Exception) {
+                        error.rethrowIfCancellation()
+                        AppLogger.recordException(
                                 throwable = error,
                                 context = watchlistDiagnosticContext("startup_cloud_pull")
                             )
-                        }
+                    }
                 }
                 val cloudItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
                 if (cloudItems.isNotEmpty()) {
@@ -143,7 +146,12 @@ class WatchlistViewModel @Inject constructor(
                 }
             }
 
-            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            val traktConnected = try {
+                    traktRepository.hasTrakt()
+                } catch (e: Exception) {
+                    e.rethrowIfCancellation()
+                    false
+                }
             if (!traktConnected) {
                 val items = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
                 _uiState.value = items.toSplitState(isLoading = false)
@@ -194,7 +202,7 @@ class WatchlistViewModel @Inject constructor(
                     _uiState.value = WatchlistUiState(isLoading = false)
                 }
             } catch (error: Exception) {
-                if (error is kotlinx.coroutines.CancellationException) throw error
+                error.rethrowIfCancellation()
                 AppLogger.recordException(
                     throwable = error,
                     context = watchlistDiagnosticContext("background_enrich")
@@ -214,7 +222,12 @@ class WatchlistViewModel @Inject constructor(
             val hadItems = _uiState.value.allItems.isNotEmpty()
             _uiState.value = _uiState.value.copy(isLoading = !hadItems)
             try {
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val traktConnected = try {
+                    traktRepository.hasTrakt()
+                } catch (e: Exception) {
+                    e.rethrowIfCancellation()
+                    false
+                }
                 val syncedFromTrakt = if (traktConnected) {
                     withTimeoutOrNull(15_000) { syncTraktWatchlistSuspend() } ?: false
                 } else {
@@ -229,7 +242,7 @@ class WatchlistViewModel @Inject constructor(
                     enrichLocalWatchlistInBackground()
                 }
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                e.rethrowIfCancellation()
                 AppLogger.recordException(
                     throwable = e,
                     context = watchlistDiagnosticContext("refresh")
@@ -246,7 +259,12 @@ class WatchlistViewModel @Inject constructor(
     fun refreshAfterResume() {
         if (!initialLoadComplete) return
         viewModelScope.launch {
-            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            val traktConnected = try {
+                    traktRepository.hasTrakt()
+                } catch (e: Exception) {
+                    e.rethrowIfCancellation()
+                    false
+                }
             if (!traktConnected || traktSyncInFlight) return@launch
             val syncedFromTrakt = withTimeoutOrNull(10_000) { syncTraktWatchlistSuspend() } ?: false
             if (!syncedFromTrakt && _uiState.value.isLoading) {
@@ -269,7 +287,12 @@ class WatchlistViewModel @Inject constructor(
     fun removeFromWatchlist(item: MediaItem) {
         viewModelScope.launch {
             try {
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val traktConnected = try {
+                    traktRepository.hasTrakt()
+                } catch (e: Exception) {
+                    e.rethrowIfCancellation()
+                    false
+                }
                 if (traktConnected && !traktRepository.removeFromWatchlist(item.mediaType, item.id)) {
                     throw IllegalStateException(context.getString(R.string.watchlist_failed_remove_trakt))
                 }
@@ -284,15 +307,17 @@ class WatchlistViewModel @Inject constructor(
                     toastMessage = context.getString(R.string.watchlist_toast_removed),
                     toastType = ToastType.SUCCESS
                 )
-                runCatching { cloudSyncRepository.pushToCloud() }
-                    .onFailure { error ->
-                        AppLogger.recordException(
+                try {
+                    cloudSyncRepository.pushToCloud()
+                } catch (error: Exception) {
+                    error.rethrowIfCancellation()
+                    AppLogger.recordException(
                             throwable = error,
                             context = watchlistDiagnosticContext("remove_cloud_push")
                         )
-                    }
+                }
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                e.rethrowIfCancellation()
                 AppLogger.recordException(
                     throwable = e,
                     context = watchlistDiagnosticContext(
@@ -340,9 +365,11 @@ class WatchlistViewModel @Inject constructor(
 
                     watchlistRepository.syncFromTraktOrder(orderedTraktItems)
                     _uiState.value = orderedTraktItems.toSplitState(isLoading = false)
-                    runCatching { cloudSyncRepository.pushToCloud() }
-                        .onFailure { error ->
-                            AppLogger.recordException(
+                    try {
+                        cloudSyncRepository.pushToCloud()
+                    } catch (error: Exception) {
+                        error.rethrowIfCancellation()
+                        AppLogger.recordException(
                                 throwable = error,
                                 context = watchlistDiagnosticContext(
                                     phase = "trakt_sync_cloud_push",
@@ -352,7 +379,7 @@ class WatchlistViewModel @Inject constructor(
                                     )
                                 )
                             )
-                        }
+                    }
                 } else if (rawCount == 0) {
                     val cachedItems = (watchlistRepository.getCachedItems().ifEmpty {
                         watchlistRepository.getWatchlistItems()
@@ -381,7 +408,7 @@ class WatchlistViewModel @Inject constructor(
                 true
             }
         } catch (error: Exception) {
-            if (error is kotlinx.coroutines.CancellationException) throw error
+            error.rethrowIfCancellation()
             AppLogger.recordException(
                 throwable = error,
                 context = watchlistDiagnosticContext("trakt_sync")
