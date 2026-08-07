@@ -1972,7 +1972,7 @@ class HomeServerRepository @Inject constructor(
         item: HomeServerItem
     ): List<StreamSource> {
         val sources = if (connection.serverKind == HomeServerKind.PLEX) {
-            val refreshedSources = runCatching {
+            val refreshedSources = try {
                 getJson(
                     buildUrl(
                         connection.serverUrl,
@@ -1984,11 +1984,14 @@ class HomeServerRepository @Inject constructor(
                     ),
                     connection
                 ).metadataItems(connection.serverKind).firstOrNull()?.mediaSources.orEmpty()
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                emptyList()
+            }
             (refreshedSources + item.mediaSources)
                 .distinctBy { it.identityKey() }
         } else {
-            val playbackInfoSources = runCatching {
+            val playbackInfoSources = try {
                 postJson(
                     buildUrl(
                         connection.serverUrl,
@@ -2004,7 +2007,10 @@ class HomeServerRepository @Inject constructor(
                     JsonObject(),
                     connection
                 ).mediaSources()
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                emptyList()
+            }
             (playbackInfoSources + item.mediaSources)
                 .distinctBy { it.identityKey() }
         }
@@ -2431,10 +2437,14 @@ class HomeServerRepository @Inject constructor(
         .replace("&gt;", ">")
 
     private fun parsePlexIdentity(body: String): Pair<String, String> {
-        val container = runCatching {
+        val container = try {
             val json = JsonParser().parse(body).asJsonObjectOrNull()
             json?.obj("MediaContainer") ?: json
-        }.getOrNull()
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            null
+        } catch (e: IllegalStateException) {
+            null
+        }
         val name = container?.string("friendlyName").orEmpty()
         val id = container?.string("machineIdentifier").orEmpty()
         if (name.isNotBlank() || id.isNotBlank()) {

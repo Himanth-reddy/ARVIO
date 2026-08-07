@@ -484,7 +484,8 @@ class CloudSyncRepository @Inject constructor(
 
     private suspend fun loadJsonMap(key: androidx.datastore.preferences.core.Preferences.Key<String>): JSONObject {
         val raw = context.settingsDataStore.data.first()[key]
-        return runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+        if (raw.isNullOrBlank()) return JSONObject()
+        return try { JSONObject(raw) } catch (e: org.json.JSONException) { JSONObject() }
     }
 
     /**
@@ -551,11 +552,11 @@ class CloudSyncRepository @Inject constructor(
      * other=local (never let an older remote value overwrite a newer-unpushed local one).
      */
     private fun mergeSettingsByTimestamp(baseStr: String, otherStr: String): SettingsMergeResult {
-        val base = runCatching { JSONObject(baseStr) }.getOrNull() ?: return SettingsMergeResult(baseStr, emptySet())
-        val other = runCatching { JSONObject(otherStr) }.getOrNull() ?: return SettingsMergeResult(baseStr, emptySet())
+        val base = try { JSONObject(baseStr) } catch (e: org.json.JSONException) { null } ?: return SettingsMergeResult(baseStr, emptySet())
+        val other = try { JSONObject(otherStr) } catch (e: org.json.JSONException) { null } ?: return SettingsMergeResult(baseStr, emptySet())
         val baseTs = base.optJSONObject("fieldUpdatedAt") ?: JSONObject()
         val otherTs = other.optJSONObject("fieldUpdatedAt") ?: JSONObject()
-        val mergedTs = runCatching { JSONObject(baseTs.toString()) }.getOrDefault(JSONObject())
+        val mergedTs = try { JSONObject(baseTs.toString()) } catch (e: org.json.JSONException) { JSONObject() }
         val otherWon = HashSet<String>()
         val allKeys = LinkedHashSet<String>().apply { addAll(mergeKeysOf(base)); addAll(mergeKeysOf(other)) }
         for (key in allKeys) {

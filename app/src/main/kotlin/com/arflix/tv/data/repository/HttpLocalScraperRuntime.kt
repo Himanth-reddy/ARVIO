@@ -769,11 +769,27 @@ class HttpLocalScraperRuntime @Inject constructor(
     }
 
     private suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JsonObject? {
-        return runCatching { gson.fromJson(getText(url, headers), JsonObject::class.java) }.getOrNull()
+        return try {
+            gson.fromJson(getText(url, headers), JsonObject::class.java)
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            null
+        } catch (e: IllegalStateException) {
+            null
+        } catch (e: java.io.IOException) {
+            null
+        }
     }
 
     private suspend fun getJsonElement(url: String, headers: Map<String, String> = emptyMap()): JsonElement? {
-        return runCatching { gson.fromJson(getText(url, headers), JsonElement::class.java) }.getOrNull()
+        return try {
+            gson.fromJson(getText(url, headers), JsonElement::class.java)
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            null
+        } catch (e: IllegalStateException) {
+            null
+        } catch (e: java.io.IOException) {
+            null
+        }
     }
 
     private suspend fun resolveRedirectUrl(url: String, headers: Map<String, String>): String? = withContext(Dispatchers.IO) {
