@@ -188,7 +188,8 @@ internal fun usesSlowAggregatorTimeout(addon: Addon): Boolean {
         haystack.contains("aio-streams") ||
         haystack.contains("comet") ||
         haystack.contains("mediafusion") ||
-        haystack.contains("hdhub")
+        haystack.contains("hdhub") ||
+        haystack.contains("pengu")
 }
 
 /**
@@ -1428,7 +1429,12 @@ class StreamRepository @Inject constructor(
         genreIds: List<Int>,
         originalLanguage: String?
     ): List<Addon> {
-        val seriesAddons = getStreamAddons(addons, "series", imdbId)
+        val seriesAddons = buildList {
+            addAll(getStreamAddons(addons, "series", imdbId))
+            if (tmdbId != null) {
+                addAll(getStreamAddons(addons, "series", "tmdb:$tmdbId"))
+            }
+        }.distinctBy { it.id }
         val hasNativeAnimeAddon = addons.any(::shouldPreferNativeAnimeIds)
         val shouldIncludeAnimeAddons = isAnime ||
             shouldTryNativeAnimeFallback(
@@ -1451,7 +1457,7 @@ class StreamRepository @Inject constructor(
     // debrid-backed addons (Torrentio, MediaFusion, etc.) that resolve remotely.
     private val ADDON_TIMEOUT_MS = 6_000L
     private val ADDON_EPISODE_TIMEOUT_MS = 10_000L
-    private val ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 4_000L
+    private val ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 8_000L
     private val ADDON_NATIVE_ANIME_EPISODE_TIMEOUT_MS = 24_000L
     private val ADDON_NATIVE_ANIME_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 12_000L
     private val ANIME_ID_LOOKUP_TIMEOUT_MS = 3_000L
@@ -1850,7 +1856,7 @@ class StreamRepository @Inject constructor(
                     return emptyList()
                 }
 
-                val tmdbEpisodeId = if (resolveAsAnime && tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
+                val tmdbEpisodeId = if (tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
                     "tmdb:$tmdbId:$season:$episode"
                 } else null
 
