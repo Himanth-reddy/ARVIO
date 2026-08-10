@@ -33,6 +33,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import kotlin.math.max
 import javax.inject.Inject
@@ -484,7 +485,7 @@ class CloudSyncRepository @Inject constructor(
 
     private suspend fun loadJsonMap(key: androidx.datastore.preferences.core.Preferences.Key<String>): JSONObject {
         val raw = context.settingsDataStore.data.first()[key]
-        return runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+        return try { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) } catch (e: JSONException) { JSONObject() }
     }
 
     /**
@@ -551,11 +552,11 @@ class CloudSyncRepository @Inject constructor(
      * other=local (never let an older remote value overwrite a newer-unpushed local one).
      */
     private fun mergeSettingsByTimestamp(baseStr: String, otherStr: String): SettingsMergeResult {
-        val base = runCatching { JSONObject(baseStr) }.getOrNull() ?: return SettingsMergeResult(baseStr, emptySet())
-        val other = runCatching { JSONObject(otherStr) }.getOrNull() ?: return SettingsMergeResult(baseStr, emptySet())
+        val base = try { JSONObject(baseStr) } catch (e: JSONException) { null } ?: return SettingsMergeResult(baseStr, emptySet())
+        val other = try { JSONObject(otherStr) } catch (e: JSONException) { null } ?: return SettingsMergeResult(baseStr, emptySet())
         val baseTs = base.optJSONObject("fieldUpdatedAt") ?: JSONObject()
         val otherTs = other.optJSONObject("fieldUpdatedAt") ?: JSONObject()
-        val mergedTs = runCatching { JSONObject(baseTs.toString()) }.getOrDefault(JSONObject())
+        val mergedTs = try { JSONObject(baseTs.toString()) } catch (e: JSONException) { JSONObject() }
         val otherWon = HashSet<String>()
         val allKeys = LinkedHashSet<String>().apply { addAll(mergeKeysOf(base)); addAll(mergeKeysOf(other)) }
         for (key in allKeys) {

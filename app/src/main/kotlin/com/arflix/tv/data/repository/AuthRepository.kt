@@ -62,6 +62,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Provider
@@ -225,7 +226,7 @@ private fun accountSyncPayloadsMatch(expected: String, actual: String?): Boolean
 
 private fun safePostgrestError(body: String): String {
     if (body.isBlank()) return "empty response"
-    val parsed = runCatching { JSONObject(body) }.getOrNull()
+    val parsed = try { JSONObject(body) } catch (e: JSONException) { null }
     return parsed?.optString("message")?.takeIf { it.isNotBlank() }
         ?: parsed?.optString("error")?.takeIf { it.isNotBlank() }
         ?: body.take(180)
@@ -679,7 +680,7 @@ class AuthRepository @Inject constructor(
 
             okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                val json = runCatching { JSONObject(body) }.getOrNull()
+                val json = try { JSONObject(body) } catch (e: JSONException) { null }
                 if (!response.isSuccessful) {
                     val message = cloudAuthErrorMessage(json, defaultError)
                     throw IllegalStateException(message)
@@ -1708,7 +1709,7 @@ class AuthRepository @Inject constructor(
 
     private suspend fun saveAccountSyncPayloadToNetlify(payload: String): Result<Unit> {
         return try {
-            val payloadValue = runCatching { JSONObject(payload) }.getOrNull() ?: payload
+            val payloadValue = try { JSONObject(payload) } catch (e: JSONException) { null } ?: payload
             val body = JSONObject()
                 .put("payload", payloadValue)
                 .toString()
@@ -1716,7 +1717,7 @@ class AuthRepository @Inject constructor(
                 url = Constants.NETLIFY_ACCOUNT_SYNC_PUSH_URL,
                 body = body
             )
-            val responseJson = runCatching { JSONObject(responseBody) }.getOrNull()
+            val responseJson = try { JSONObject(responseBody) } catch (e: JSONException) { null }
             if (responseJson?.optBoolean("accepted", true) == false) {
                 val reason = responseJson.optString("reason", "existing_snapshot_is_richer")
                 throw AccountSyncPayloadRejectedException("Cloud sync upload rejected: $reason")
@@ -1752,7 +1753,7 @@ class AuthRepository @Inject constructor(
                             "Cloud sync upload failed (${response.code}): ${safePostgrestError(responseBody)}"
                         )
                     }
-                    val rpcJson = runCatching { JSONObject(responseBody) }.getOrNull()
+                    val rpcJson = try { JSONObject(responseBody) } catch (e: JSONException) { null }
                     if (rpcJson?.optBoolean("accepted", true) == false) {
                         val reason = rpcJson.optString("reason", "existing_snapshot_is_richer")
                         throw AccountSyncPayloadRejectedException("Cloud sync upload rejected: $reason")
@@ -2139,7 +2140,7 @@ class AuthRepository @Inject constructor(
             val root = if (existingPayload.isBlank()) {
                 JSONObject()
             } else {
-                runCatching { JSONObject(existingPayload) }.getOrElse { JSONObject() }
+                try { JSONObject(existingPayload) } catch (e: JSONException) { JSONObject() }
             }
 
             root.put("version", root.optInt("version", 1))

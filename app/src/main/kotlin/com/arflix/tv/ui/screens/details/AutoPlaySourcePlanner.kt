@@ -13,8 +13,10 @@ internal const val AUTOPLAY_TOP_TIER_SETTLE_MS = 450L
 internal const val AUTOPLAY_SOURCE_RECHECK_MS = 120L
 private const val TOP_TIER_QUALITY_SCORE = 4
 
-private val fourKRegex = Regex("""\b4[kK]\b""")
-private val sizeRegex = Regex("""(?i)(\d+(?:[\.,]\d+)?)\s*(TB|GB|MB|KB|B|GiB|MiB|KiB)?""")
+private object AutoPlayRegexes {
+    val fourKRegex = Regex("""\b4[kK]\b""")
+    val sizeRegex = Regex("""(?i)(\d+(?:[\.,]\d+)?)\s*(TB|GB|MB|KB|B|GiB|MiB|KiB)?""")
+}
 
 /** Score quality from all stream text because addons do not fill the quality field consistently. */
 internal fun qualityScoreForAutoPlay(stream: StreamSource): Int {
@@ -34,7 +36,7 @@ internal fun qualityScoreForAutoPlay(stream: StreamSource): Int {
         }
     }
     return when {
-        combined.contains("2160p", ignoreCase = true) || fourKRegex.containsMatchIn(combined) -> 4
+        combined.contains("2160p", ignoreCase = true) || AutoPlayRegexes.fourKRegex.containsMatchIn(combined) -> 4
         combined.contains("1080p", ignoreCase = true) -> 3
         combined.contains("720p", ignoreCase = true) -> 2
         combined.contains("480p", ignoreCase = true) -> 1
@@ -72,7 +74,7 @@ internal fun bestAutoPlayStream(
 internal fun autoPlaySizeBytes(stream: StreamSource): Long {
     val raw = stream.size.trim()
     if (raw.isBlank()) return 0L
-    val match = sizeRegex.find(raw) ?: return 0L
+    val match = AutoPlayRegexes.sizeRegex.find(raw) ?: return 0L
     val value = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return 0L
     val unit = match.groupValues.getOrNull(2)?.uppercase(Locale.US).orEmpty()
     val multiplier = when (unit) {
