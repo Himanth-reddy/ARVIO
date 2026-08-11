@@ -193,7 +193,12 @@ class WatchHistoryRepository @Inject constructor(
                 }
             }
             cachedContinueWatchingByProfile[profileId] = cachedContinueWatching
-            runCatching { realtimeSyncManagerProvider.get().markLocalWatchHistoryWrite() }
+            try {
+                realtimeSyncManagerProvider.get().markLocalWatchHistoryWrite()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.recordException(e, mapOf("error_area" to "WatchHistoryRepository", "watch_history_phase" to "mark_local_write"))
+            }
             return
         }
 
@@ -206,12 +211,15 @@ class WatchHistoryRepository @Inject constructor(
             }
             saved = true
         } catch (e: HttpException) {
-            runCatching {
+            try {
                 val fallback = entry.copy(stream_key = null, stream_addon_id = null, stream_title = null)
                 executeSupabaseCall("save watch progress fallback") { auth ->
                     supabaseApi.upsertWatchHistory(auth = auth, item = fallback.toRecord())
                 }
                 saved = true
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.recordException(e, mapOf("error_area" to "WatchHistoryRepository", "watch_history_phase" to "save_fallback"))
             }
         } catch (e: Exception) {
             AppLogger.e("WatchHistoryRepository", "Error in watch history operation", e)
@@ -240,7 +248,12 @@ class WatchHistoryRepository @Inject constructor(
                 }
             }
             cachedContinueWatchingByProfile[profileId] = cachedContinueWatching
-            runCatching { realtimeSyncManagerProvider.get().markLocalWatchHistoryWrite() }
+            try {
+                realtimeSyncManagerProvider.get().markLocalWatchHistoryWrite()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.recordException(e, mapOf("error_area" to "WatchHistoryRepository", "watch_history_phase" to "mark_local_write"))
+            }
         }
     }
 
