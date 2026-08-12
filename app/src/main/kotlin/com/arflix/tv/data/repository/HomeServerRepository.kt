@@ -568,9 +568,9 @@ class HomeServerRepository @Inject constructor(
                 val libraryCandidates = connection.collections
                     .filter { it.enabled && it.id.isNotBlank() }
                     .map { collection -> connection.toCatalogCandidate(collection) }
-                val serverCollectionCandidates = runCatching {
+                val serverCollectionCandidates = try {
                     fetchServerCollectionCatalogs(connection)
-                }.getOrDefault(emptyList())
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                 libraryCandidates + serverCollectionCandidates
             }
             .distinctBy { it.sourceRef }
@@ -588,9 +588,9 @@ class HomeServerRepository @Inject constructor(
         val connection = currentConnections()
             .firstOrNull { it.isUsable && catalogServerKey(it) == serverKey }
             ?: return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
-        runCatching {
+        try {
             loadConnectionCatalogItems(connection, collectionId, collectionType, offset, limit)
-        }.getOrDefault(HomeServerCatalogPage(emptyList(), hasMore = false))
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; HomeServerCatalogPage(emptyList(), hasMore = false) }
     }
 
     suspend fun resolveMovieSources(
@@ -616,14 +616,14 @@ class HomeServerRepository @Inject constructor(
             coroutineScope {
                 connections.map { connection ->
                     async {
-                        runCatching {
+                        try {
                             val items = findMovieMatches(connection, imdbId, title, year, tmdbId)
                             coroutineScope {
                                 items.map { item -> async { buildStreamSources(connection, item) } }
                                     .awaitAll()
                                     .flatten()
                             }
-                        }.getOrDefault(emptyList())
+                        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                     }
                 }.awaitAll()
                     .flatten()
@@ -657,9 +657,9 @@ class HomeServerRepository @Inject constructor(
             coroutineScope {
                 connections.map { connection ->
                     async {
-                        runCatching {
+                        try {
                     val series = findBestSeries(connection, imdbId, title, null, tmdbId, tvdbId)
-                        ?: return@runCatching emptyList()
+                        ?: return@async emptyList<StreamSource>()
                             val episodeItems = findEpisodes(connection, series.id, season, episode)
                                 .ifEmpty {
                                     listOfNotNull(
@@ -679,7 +679,7 @@ class HomeServerRepository @Inject constructor(
                                     .awaitAll()
                                     .flatten()
                             }
-                        }.getOrDefault(emptyList())
+                        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                     }
                 }.awaitAll()
                     .flatten()
@@ -1164,14 +1164,14 @@ class HomeServerRepository @Inject constructor(
             .header("Accept", "application/json")
             .header("X-Plex-Token", token)
             .build()
-        return runCatching {
+        return try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use ""
                 val body = response.body?.string().orEmpty()
                 val json = JsonParser().parse(body).asJsonObjectOrNull() ?: return@use ""
                 json.string("friendlyName").ifBlank { json.string("username") }.ifBlank { json.string("title") }
             }
-        }.getOrDefault("")
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; "" }
     }
 
     private fun buildPlexConnection(
@@ -1188,7 +1188,7 @@ class HomeServerRepository @Inject constructor(
         val normalizedPreferredUrl = normalizeServerUrl(preferredServerUrl)
         val preferredIdentity = preferredInfo?.takeIf { it.serverId.isNotBlank() }
             ?: normalizedPreferredUrl.takeIf { it.isNotBlank() }?.let { url ->
-                runCatching {
+                try {
                     fetchSystemInfo(
                         HomeServerConnection(
                             serverUrl = url,
@@ -1199,7 +1199,7 @@ class HomeServerRepository @Inject constructor(
                             userName = preferredUsername.ifBlank { "Account" }
                         )
                     )
-                }.getOrNull()
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             }
         val accountName = validatePlexAccount(trimmedAccountToken)
             .ifBlank { preferredUsername.ifBlank { "Account" } }
@@ -1287,12 +1287,12 @@ class HomeServerRepository @Inject constructor(
             .header("Accept", "application/xml")
             .header("X-Plex-Token", accountToken)
             .build()
-        return runCatching {
+        return try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use emptyList()
                 parsePlexResourcesXml(response.body?.string().orEmpty())
             }
-        }.getOrDefault(emptyList())
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
     }
 
     private fun parsePlexResourcesXml(xml: String): List<PlexResourceDevice> {
@@ -1491,7 +1491,7 @@ class HomeServerRepository @Inject constructor(
         return connection.collections
             .filter { it.enabled && it.id.isNotBlank() }
             .flatMap { library ->
-                runCatching {
+                try {
                     getJson(
                         buildUrl(
                             connection.serverUrl,
@@ -1514,7 +1514,7 @@ class HomeServerRepository @Inject constructor(
                             )
                             connection.toCatalogCandidate(collection)
                         }
-                }.getOrDefault(emptyList())
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
             }
     }
 
@@ -1646,13 +1646,13 @@ class HomeServerRepository @Inject constructor(
         coroutineScope {
             providerQueries(imdbId, tmdbId, null).map { providerId ->
                 async {
-                    runCatching {
+                    try {
                         queryItems(
                             connection,
                             itemTypes = "Movie",
                             query = mapOf("AnyProviderIdEquals" to providerId, "Limit" to "10")
                         )
-                    }.getOrDefault(emptyList())
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                 }
             }.awaitAll().flatten().forEach { candidates[it.id] = it }
         }
@@ -1703,13 +1703,13 @@ class HomeServerRepository @Inject constructor(
         coroutineScope {
             providerQueries(imdbId, tmdbId, tvdbId).map { providerId ->
                 async {
-                    runCatching {
+                    try {
                         queryItems(
                             connection,
                             itemTypes = "Series",
                             query = mapOf("AnyProviderIdEquals" to providerId, "Limit" to "10")
                         )
-                    }.getOrDefault(emptyList())
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                 }
             }.awaitAll().flatten().forEach { candidates[it.id] = it }
         }
@@ -1899,7 +1899,7 @@ class HomeServerRepository @Inject constructor(
 
         val sectionResults = if (collections.isNotEmpty()) {
             collections.flatMap { collection ->
-                runCatching {
+                try {
                     getJson(
                         buildUrl(
                             connection.serverUrl,
@@ -1913,7 +1913,7 @@ class HomeServerRepository @Inject constructor(
                         ),
                         connection
                     ).metadataItems(connection.serverKind)
-                }.getOrDefault(emptyList())
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
             }
         } else {
             emptyList()
@@ -1936,7 +1936,7 @@ class HomeServerRepository @Inject constructor(
             connection.collections.filter { it.enabled }
         }
         return targetCollections.flatMap { collection ->
-            runCatching {
+            try {
                 getJson(
                     buildUrl(
                         connection.serverUrl,
@@ -1950,7 +1950,7 @@ class HomeServerRepository @Inject constructor(
                     ),
                     connection
                 ).metadataItems(connection.serverKind)
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
         }
     }
 
@@ -1960,7 +1960,7 @@ class HomeServerRepository @Inject constructor(
         plexType: String?,
         limit: String
     ): List<HomeServerItem> {
-        return runCatching {
+        return try {
             getJson(
                 buildUrl(
                     connection.serverUrl,
@@ -1974,7 +1974,7 @@ class HomeServerRepository @Inject constructor(
                 ),
                 connection
             ).metadataItems(connection.serverKind)
-        }.getOrDefault(emptyList())
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
     }
 
     private fun filterPlexEpisodeNumbers(
@@ -2034,7 +2034,7 @@ class HomeServerRepository @Inject constructor(
         item: HomeServerItem
     ): List<StreamSource> {
         val sources = if (connection.serverKind == HomeServerKind.PLEX) {
-            val refreshedSources = runCatching {
+            val refreshedSources = try {
                 getJson(
                     buildUrl(
                         connection.serverUrl,
@@ -2046,11 +2046,11 @@ class HomeServerRepository @Inject constructor(
                     ),
                     connection
                 ).metadataItems(connection.serverKind).firstOrNull()?.mediaSources.orEmpty()
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
             (refreshedSources + item.mediaSources)
                 .distinctBy { it.identityKey() }
         } else {
-            val playbackInfoSources = runCatching {
+            val playbackInfoSources = try {
                 postJson(
                     buildUrl(
                         connection.serverUrl,
@@ -2066,7 +2066,7 @@ class HomeServerRepository @Inject constructor(
                     JsonObject(),
                     connection
                 ).mediaSources()
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
             (playbackInfoSources + item.mediaSources)
                 .distinctBy { it.identityKey() }
         }
@@ -2493,10 +2493,10 @@ class HomeServerRepository @Inject constructor(
         .replace("&gt;", ">")
 
     private fun parsePlexIdentity(body: String): Pair<String, String> {
-        val container = runCatching {
+        val container = try {
             val json = JsonParser().parse(body).asJsonObjectOrNull()
             json?.obj("MediaContainer") ?: json
-        }.getOrNull()
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         val name = container?.string("friendlyName").orEmpty()
         val id = container?.string("machineIdentifier").orEmpty()
         if (name.isNotBlank() || id.isNotBlank()) {

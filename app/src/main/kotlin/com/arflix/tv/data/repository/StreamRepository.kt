@@ -366,7 +366,7 @@ class StreamRepository @Inject constructor(
         stremioAddonRuntime
     ).associateBy { it.kind }
     private val addonRuntimeAggregator = AddonRuntimeAggregator(addonRuntimes)
-    private data class AddonRuntimeHealth(
+    internal data class AddonRuntimeHealth(
         var fetchSuccesses: Int = 0,
         var fetchFailures: Int = 0,
         var playbackStarts: Int = 0,
@@ -4098,10 +4098,12 @@ class StreamRepository @Inject constructor(
         val parsed: Map<String, AddonRuntimeHealth> = if (raw.isBlank()) {
             emptyMap()
         } else {
-            runCatching {
-                val type = TypeToken.getParameterized(Map::class.java, String::class.java, AddonRuntimeHealth::class.java).type
-                gson.fromJson<Map<String, AddonRuntimeHealth>>(raw, type)
-            }.getOrNull().orEmpty()
+            try {
+                gson.fromJson<Map<String, AddonRuntimeHealth>>(raw, StreamRepositoryTypeTokens.ADDON_HEALTH_TYPE) ?: emptyMap()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                emptyMap()
+            }
         }
 
         synchronized(addonRuntimeHealth) {
@@ -4359,3 +4361,7 @@ data class AddonRefreshReport(
     val refreshed: Int = 0,
     val failed: Int = 0
 )
+
+private object StreamRepositoryTypeTokens {
+    val ADDON_HEALTH_TYPE: java.lang.reflect.Type = com.google.gson.reflect.TypeToken.getParameterized(Map::class.java, String::class.java, StreamRepository.AddonRuntimeHealth::class.java).type
+}

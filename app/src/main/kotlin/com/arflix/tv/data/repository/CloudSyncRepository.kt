@@ -484,7 +484,7 @@ class CloudSyncRepository @Inject constructor(
 
     private suspend fun loadJsonMap(key: androidx.datastore.preferences.core.Preferences.Key<String>): JSONObject {
         val raw = context.settingsDataStore.data.first()[key]
-        return runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+        return try { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; JSONObject() }
     }
 
     /**
@@ -677,9 +677,9 @@ class CloudSyncRepository @Inject constructor(
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
             ?.let { payload ->
-                runCatching {
+                try {
                     JSONObject(payload).optJSONObject("profileAvatarImagesById")
-                }.getOrNull()
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             }
         root.put(
             "profileAvatarImagesById",
@@ -942,9 +942,9 @@ class CloudSyncRepository @Inject constructor(
             groupOrderMerged
         }
 
-        val payloadHash = runCatching {
+        val payloadHash = try {
             JSONObject(effectivePayload).apply { remove("updatedAt") }.toString().hashCode()
-        }.getOrNull()
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
 
         if (!force && payloadHash != null && payloadHash == lastPushedPayloadHash && !isPushDirty && pushFailureCount == 0) {
             AppLogger.breadcrumb(
@@ -992,11 +992,11 @@ class CloudSyncRepository @Inject constructor(
     }
 
     private fun mergeRemoteGroupOrder(localPayload: String, remotePayload: String): String {
-        return runCatching {
+        return try {
             val local = JSONObject(localPayload)
             val remote = JSONObject(remotePayload)
-            val localByProfile = local.optJSONObject("iptvByProfile") ?: return@runCatching localPayload
-            val remoteByProfile = remote.optJSONObject("iptvByProfile") ?: return@runCatching localPayload
+            val localByProfile = local.optJSONObject("iptvByProfile") ?: return localPayload
+            val remoteByProfile = remote.optJSONObject("iptvByProfile") ?: return localPayload
             val remoteKeys = remoteByProfile.keys()
             while (remoteKeys.hasNext()) {
                 val profileId = remoteKeys.next()
@@ -1010,7 +1010,7 @@ class CloudSyncRepository @Inject constructor(
                 }
             }
             local.toString()
-        }.getOrDefault(localPayload)
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; localPayload }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1072,9 +1072,9 @@ class CloudSyncRepository @Inject constructor(
         }
 
         val remoteRestoreRank = accountSyncPayloadRestoreRank(payload)
-        val localRestoreRank = runCatching {
+        val localRestoreRank = try {
             accountSyncPayloadRestoreRank(buildCloudSnapshotJson())
-        }.getOrDefault(0)
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0 }
         if (localRestoreRank > remoteRestoreRank && remoteRestoreRank <= 10) {
             AppLogger.breadcrumb(
                 tag = "CloudSync",
@@ -1186,11 +1186,11 @@ class CloudSyncRepository @Inject constructor(
         // below). Skipped when the remote predates this feature (no `fieldUpdatedAt`) so rollout
         // behaves exactly like today until every device is on the new code. The rest of this
         // function then writes the merged values exactly as before.
-        val incomingHasFieldTs = runCatching {
+        val incomingHasFieldTs = try {
             JSONObject(payload).optJSONObject("fieldUpdatedAt") != null
-        }.getOrDefault(false)
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
         val localSnapshotForMerge = if (incomingHasFieldTs) {
-            runCatching { buildCloudSnapshotJson() }.getOrNull()
+            try { buildCloudSnapshotJson() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         } else {
             null
         }
@@ -1471,16 +1471,19 @@ class CloudSyncRepository @Inject constructor(
         authRepository.saveAutoPlayNextToProfile(fallbackAutoPlayNext)
 
         // ── Trakt tokens ──
-        runCatching {
+        try {
             root.optJSONObject("traktTokens")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TraktRepository.CloudTraktToken::class.java).type
                 val tokens: Map<String, TraktRepository.CloudTraktToken> = gson.fromJson(json, type) ?: emptyMap()
                 traktRepository.importTokensForProfiles(tokens)
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_trakt_tokens")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_trakt_tokens"))
+        }
 
         // ── MDBList selection (provider + API key) ──
-        runCatching {
+        try {
             root.optJSONObject("mdbListSyncByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(
                     Map::class.java,
@@ -1491,10 +1494,13 @@ class CloudSyncRepository @Inject constructor(
                     gson.fromJson(json, type) ?: emptyMap()
                 syncProviderStore.importForProfiles(map)
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_mdblist_sync")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_mdblist_sync"))
+        }
 
         // ── Addons ──
-        runCatching {
+        try {
             val cloudAddonsTs = root.optLong("addonsUpdatedAt", 0L)
             val localAddonsTs = streamRepository.getAddonsUpdatedAt()
             var appliedCloudAddons = false
@@ -1525,10 +1531,13 @@ class CloudSyncRepository @Inject constructor(
             if (appliedCloudAddons && cloudAddonsTs > localAddonsTs) {
                 streamRepository.setAddonsUpdatedAt(cloudAddonsTs)
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_addons")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_addons"))
+        }
 
         // ── Catalogs ──
-        runCatching {
+        try {
             root.optJSONObject("catalogsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, CatalogConfig::class.java).type).type
                 val map: Map<String, List<CatalogConfig>> = gson.fromJson(json, type) ?: emptyMap()
@@ -1545,10 +1554,13 @@ class CloudSyncRepository @Inject constructor(
                     }
                 }
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_catalogs")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_catalogs"))
+        }
 
         // ── Hidden preinstalled catalogs ──
-        runCatching {
+        try {
             root.optJSONObject("hiddenPreinstalledByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
                 val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
@@ -1567,10 +1579,13 @@ class CloudSyncRepository @Inject constructor(
                     catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(activeProfileId, hidden)
                 }
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_preinstalled")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_preinstalled"))
+        }
 
         // ── Hidden addon catalogs ──
-        runCatching {
+        try {
             root.optJSONObject("hiddenAddonByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
                 val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
@@ -1578,10 +1593,13 @@ class CloudSyncRepository @Inject constructor(
                     catalogRepository.setHiddenAddonCatalogIdsForProfile(profileId, hidden)
                 }
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_addons")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_addons"))
+        }
 
         // ── Hidden Home Server catalogs ──
-        runCatching {
+        try {
             root.optJSONObject("hiddenHomeServerByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
                 val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
@@ -1589,10 +1607,13 @@ class CloudSyncRepository @Inject constructor(
                     catalogRepository.setHiddenHomeServerCatalogIdsForProfile(profileId, hidden)
                 }
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_home_server")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_home_server"))
+        }
 
         // ── IPTV config + favorites ──
-        runCatching {
+        try {
             var importedActiveProfileIptv = false
             root.optJSONObject("iptvByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, IptvCloudProfileState::class.java).type
@@ -1636,10 +1657,13 @@ class CloudSyncRepository @Inject constructor(
                     iptvRepository.invalidateCache()
                 }
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_iptv")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_iptv"))
+        }
 
         // ── Watchlist ──
-        runCatching {
+        try {
             root.optJSONObject("watchlistByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, LocalWatchlistItem::class.java).type).type
                 val map: Map<String, List<LocalWatchlistItem>> = gson.fromJson(json, type) ?: emptyMap()
@@ -1651,19 +1675,25 @@ class CloudSyncRepository @Inject constructor(
                     watchlistRepository.importWatchlistForProfile(profileId, items)
                 }
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_watchlist")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_watchlist"))
+        }
 
         // ── Dismissed Continue Watching ──
-        runCatching {
+        try {
             root.optJSONObject("dismissedContinueWatchingByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, String::class.java).type
                 val map: Map<String, String> = gson.fromJson(json, type) ?: emptyMap()
                 traktRepository.importDismissedContinueWatchingForProfiles(map)
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_dismissed_cw")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_dismissed_cw"))
+        }
 
         // ── Local Continue Watching ──
-        runCatching {
+        try {
             // Only import local CW for profiles that DON'T have Trakt connected.
             // For Trakt profiles, CW is sourced exclusively from Trakt's progress API.
             root.optJSONObject("localContinueWatchingByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
@@ -1699,9 +1729,12 @@ class CloudSyncRepository @Inject constructor(
                     traktRepository.importLocalContinueWatchingForProfiles(nonTraktOnly)
                 }
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_local_cw")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_local_cw"))
+        }
 
-        runCatching {
+        try {
             root.optJSONObject("localWatchedMoviesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Int::class.javaObjectType).type).type
                 val map: Map<String, List<Int>> = gson.fromJson(json, type) ?: emptyMap()
@@ -1713,13 +1746,16 @@ class CloudSyncRepository @Inject constructor(
                 val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
                 traktRepository.importLocalWatchedEpisodesForProfiles(map)
             }
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_local_watched")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_local_watched"))
+        }
 
         traktRepository.clearAllProfileCaches()
         watchHistoryRepository.clearProfileCaches()
 
         // Restore plugin repositories and scrapers
-        runCatching {
+        try {
             root.optJSONArray("pluginRepositories")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, com.arflix.tv.domain.model.PluginRepository::class.java).type
                 val repos: List<com.arflix.tv.domain.model.PluginRepository> = gson.fromJson(json, type) ?: emptyList()
@@ -1731,7 +1767,10 @@ class CloudSyncRepository @Inject constructor(
                 if (scrapers.isNotEmpty()) pluginDataStore.saveScrapers(scrapers)
             }
             if (root.has("pluginsEnabled")) pluginDataStore.setPluginsEnabled(root.optBoolean("pluginsEnabled", false))
-        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_plugins")) }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(e, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_plugins"))
+        }
 
         // Reset the per-field baseline/timestamps to the merged result so the next snapshot build
         // does not see remote-applied values as fresh local changes (ping-pong guard). If we
