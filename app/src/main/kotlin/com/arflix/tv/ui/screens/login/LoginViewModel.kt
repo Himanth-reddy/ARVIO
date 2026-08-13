@@ -72,8 +72,18 @@ class LoginViewModel @Inject constructor(
             // down on a fresh login. This is why TV-side changes weren't visible
             // on the phone even after logout/login.
             if (result.isSuccess) {
-                runCatching { cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false) }
-                runCatching { streamRepository.syncAddonsFromCloud() }
+                try {
+                    cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.recordException(e)
+                }
+                try {
+                    streamRepository.syncAddonsFromCloud()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.recordException(e)
+                }
             }
 
             _uiState.update { state ->
@@ -142,8 +152,18 @@ class LoginViewModel @Inject constructor(
             val authResult = authRepository.handleGoogleSignInResult(result)
 
             if (authResult.isSuccess) {
-                runCatching { cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false) }
-                runCatching { streamRepository.syncAddonsFromCloud() }
+                try {
+                    cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.recordException(e)
+                }
+                try {
+                    streamRepository.syncAddonsFromCloud()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.recordException(e)
+                }
             }
 
             _uiState.update { state ->

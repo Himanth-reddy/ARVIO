@@ -44,7 +44,9 @@ const val CARD_LAYOUT_MODE_POSTER = "Poster"
 private val cardLayoutModeKey = stringPreferencesKey("card_layout_mode")
 private val activeProfileIdKey = stringPreferencesKey("active_profile_id")
 private const val CATALOGUE_ROW_LAYOUT_PREFIX = "catalogue_row_layout_"
-private val ALPHANUMERIC_REGEX = Regex("[^a-z0-9_.:-]+")
+private object CardLayoutModeRegexes {
+    val ALPHANUMERIC_REGEX = Regex("[^a-z0-9_.:-]+")
+}
 
 private fun profileCardLayoutModeKey(profileId: String): Preferences.Key<String> {
     return stringPreferencesKey("profile_${profileId}_card_layout_mode")
@@ -79,7 +81,7 @@ fun normalizeCatalogueRowLayoutKey(rowKey: String): String {
     return rowKey
         .trim()
         .lowercase()
-        .replace(ALPHANUMERIC_REGEX, "_")
+        .replace(CardLayoutModeRegexes.ALPHANUMERIC_REGEX, "_")
         .trim('_')
         .ifBlank { "default" }
 }

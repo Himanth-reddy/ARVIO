@@ -2211,10 +2211,13 @@ class DetailsViewModel @Inject constructor(
             val entry = watchHistoryRepository.getLatestProgress(mediaType, tmdbId) ?: return null
             if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
                 val watchedKey = "show_tmdb:$tmdbId:${entry.season}:${entry.episode}"
-                val isWatched = runCatching {
+                val isWatched = try {
                     traktRepository.getWatchedEpisodesFromCache().contains(watchedKey) ||
                         traktRepository.getWatchedEpisodesForShow(tmdbId).contains(watchedKey)
-                }.getOrDefault(false)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    false
+                }
                 if (isWatched) return null
             }
             buildResumeFromProgress(

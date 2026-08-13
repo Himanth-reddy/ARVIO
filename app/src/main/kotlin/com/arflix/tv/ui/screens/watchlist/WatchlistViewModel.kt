@@ -110,7 +110,12 @@ class WatchlistViewModel @Inject constructor(
             for (item in items) {
                 val key = "${item.mediaType}_${item.id}"
                 if (key in currentLogos) continue
-                val url = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }.getOrNull()
+                val url = try {
+                    mediaRepository.getLogoUrl(item.mediaType, item.id)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    null
+                }
                 if (url != null) {
                     currentLogos[key] = url
                     _logoUrls.value = currentLogos.toMap()
@@ -129,13 +134,15 @@ class WatchlistViewModel @Inject constructor(
 
             if (initialLocalItems.isEmpty()) {
                 withTimeoutOrNull(3_500) {
-                    runCatching { cloudSyncRepository.pullFromCloud() }
-                        .onFailure { error ->
-                            AppLogger.recordException(
-                                throwable = error,
-                                context = watchlistDiagnosticContext("startup_cloud_pull")
-                            )
-                        }
+                    try {
+                        cloudSyncRepository.pullFromCloud()
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        AppLogger.recordException(
+                            throwable = e,
+                            context = watchlistDiagnosticContext("startup_cloud_pull")
+                        )
+                    }
                 }
                 val cloudItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
                 if (cloudItems.isNotEmpty()) {
@@ -144,7 +151,7 @@ class WatchlistViewModel @Inject constructor(
                 }
             }
 
-            val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+            val remoteConnected = try { remoteSyncManager.isRemoteConnected() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
             if (!remoteConnected) {
                 val items = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
                 _uiState.value = items.toSplitState(isLoading = false)
@@ -215,7 +222,7 @@ class WatchlistViewModel @Inject constructor(
             val hadItems = _uiState.value.allItems.isNotEmpty()
             _uiState.value = _uiState.value.copy(isLoading = !hadItems)
             try {
-                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+                val remoteConnected = try { remoteSyncManager.isRemoteConnected() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
                 val syncedFromTrakt = if (remoteConnected) {
                     withTimeoutOrNull(15_000) { syncTraktWatchlistSuspend() } ?: false
                 } else {
@@ -248,7 +255,7 @@ class WatchlistViewModel @Inject constructor(
     fun refreshAfterResume() {
         if (!initialLoadComplete) return
         viewModelScope.launch {
-            val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+            val remoteConnected = try { remoteSyncManager.isRemoteConnected() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
             if (!remoteConnected || traktSyncInFlight) return@launch
             val syncedFromTrakt = withTimeoutOrNull(10_000) { syncTraktWatchlistSuspend() } ?: false
             if (!syncedFromTrakt && _uiState.value.isLoading) {
@@ -271,7 +278,7 @@ class WatchlistViewModel @Inject constructor(
     fun removeFromWatchlist(item: MediaItem) {
         viewModelScope.launch {
             try {
-                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+                val remoteConnected = try { remoteSyncManager.isRemoteConnected() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
                 val isAnime = item.mediaType == TV &&
                     item.originalLanguage.equals("ja", ignoreCase = true) &&
                     item.genreIds.contains(16)
@@ -289,13 +296,15 @@ class WatchlistViewModel @Inject constructor(
                     toastMessage = context.getString(R.string.watchlist_toast_removed),
                     toastType = ToastType.SUCCESS
                 )
-                runCatching { cloudSyncRepository.pushToCloud() }
-                    .onFailure { error ->
-                        AppLogger.recordException(
-                            throwable = error,
-                            context = watchlistDiagnosticContext("remove_cloud_push")
-                        )
-                    }
+                try {
+                    cloudSyncRepository.pushToCloud()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    AppLogger.recordException(
+                        throwable = e,
+                        context = watchlistDiagnosticContext("remove_cloud_push")
+                    )
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
 
