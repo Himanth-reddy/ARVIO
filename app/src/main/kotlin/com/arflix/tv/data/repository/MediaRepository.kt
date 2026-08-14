@@ -37,6 +37,7 @@ import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -374,12 +375,16 @@ class MediaRepository @Inject constructor(
     }
 
     private suspend fun resolveExternalIds(mediaType: MediaType, mediaId: Int): TmdbExternalIds? {
-        return runCatching {
+        return try {
             when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieExternalIds(mediaId, apiKey)
                 MediaType.TV -> tmdbApi.getTvExternalIds(mediaId, apiKey)
             }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            com.arflix.tv.util.AppLogger.recordException(e, mapOf("error_area" to "MediaRepository", "action" to "resolveExternalIds"))
+            null
+        }
     }
 
     private suspend fun fetchCinemetaImdbRating(mediaType: MediaType, imdbId: String): String? = withContext(Dispatchers.IO) {
@@ -1711,7 +1716,7 @@ class MediaRepository @Inject constructor(
         calendar.add(Calendar.MONTH, -18)
         val eighteenMonthsAgo = dateFormat.format(calendar.time)
 
-        val response = runCatching {
+        val response = try {
             when (categoryId) {
                 "trending_movies" -> tmdbApi.getTrendingMovies(apiKey, language = contentLanguage, page = page)
                 "trending_tv" -> tmdbApi.getTrendingTv(apiKey, language = contentLanguage, page = page)
@@ -1729,7 +1734,11 @@ class MediaRepository @Inject constructor(
                 // favor of the Services collection-tile row.
                 else -> null
             }
-        }.getOrNull() ?: return CategoryPageResult(emptyList(), hasMore = false)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            com.arflix.tv.util.AppLogger.recordException(e, mapOf("error_area" to "MediaRepository", "action" to "loadHomeCategoryPage"))
+            null
+        } ?: return CategoryPageResult(emptyList(), hasMore = false)
 
         val mediaType = if (categoryId == "trending_movies") MediaType.MOVIE else MediaType.TV
         val items = response.results

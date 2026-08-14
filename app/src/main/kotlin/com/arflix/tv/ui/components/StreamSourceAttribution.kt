@@ -3,15 +3,17 @@ package com.arflix.tv.ui.components
 import com.arflix.tv.data.model.StreamSource
 import java.util.Locale
 
-private val attributionSeparators = Regex("[\\r\\n|\\u2022\\u00B7]+")
-private val attributionUrl = Regex("(?i)(?:https?://|magnet:)\\S+")
-private val attributionSize = Regex("(?i)\\b\\d+(?:\\.\\d+)?\\s*(?:TB|GB|MB|KB)\\b")
-private val attributionTechnicalToken = Regex(
+private object StreamSourceAttributionRegexes {
+    val attributionSeparators = Regex("[\\r\\n|\\u2022\\u00B7]+")
+    val attributionUrl = Regex("(?i)(?:https?://|magnet:)\\S+")
+    val attributionSize = Regex("(?i)\\b\\d+(?:\\.\\d+)?\\s*(?:TB|GB|MB|KB)\\b")
+    val attributionTechnicalToken = Regex(
     """(?i)(?<![\p{L}\p{N}])(?:8K|4K|4320P|2160P|1080P|720P|576P|480P|UHD|FHD|SD|REMUX|BLU[ ._-]?RAY|BDRIP|WEB[ ._-]?DL|WEBRIP|HDTV|CAM|TELESYNC|HEVC|H[ ._-]?265|X265|AV1|AVC|H[ ._-]?264|X264|HDR10\+?|HDR|DOLBY[ ._-]?VISION|DV|ATMOS|TRUEHD|DTS(?:[ ._-]?HD)?|DDP|DD\+|E[ ._-]?AC3|AC3|AAC|7[ .]?1|5[ .]?1)(?![\p{L}\p{N}])"""
 )
-private val attributionEmptyWrappers = Regex("""\(\s*\)|\[\s*]|\{\s*\}""")
-private val attributionWhitespace = Regex("\\s+")
-private val attributionNonAlphanumeric = Regex("[^\\p{L}\\p{N}]+")
+    val attributionEmptyWrappers = Regex("""\(\s*\)|\[\s*]|\{\s*\}""")
+    val attributionWhitespace = Regex("\\s+")
+    val attributionNonAlphanumeric = Regex("[^\\p{L}\\p{N}]+")
+}
 
 internal fun sourceAttributionLabels(
     stream: StreamSource,
@@ -44,12 +46,12 @@ internal fun sourceAttributionLabels(
 internal fun cleanSourceAttribution(raw: String?): String? {
     if (raw.isNullOrBlank()) return null
     val cleaned = raw
-        .replace(attributionUrl, " ")
-        .replace(attributionSeparators, " ")
-        .replace(attributionSize, " ")
-        .replace(attributionTechnicalToken, " ")
-        .replace(attributionEmptyWrappers, " ")
-        .replace(attributionWhitespace, " ")
+        .replace(StreamSourceAttributionRegexes.attributionUrl, " ")
+        .replace(StreamSourceAttributionRegexes.attributionSeparators, " ")
+        .replace(StreamSourceAttributionRegexes.attributionSize, " ")
+        .replace(StreamSourceAttributionRegexes.attributionTechnicalToken, " ")
+        .replace(StreamSourceAttributionRegexes.attributionEmptyWrappers, " ")
+        .replace(StreamSourceAttributionRegexes.attributionWhitespace, " ")
         .trim(' ', '-', '_', '/', ',', ':')
     return cleaned.takeIf { it.length >= 2 }?.take(48)
 }
@@ -72,4 +74,4 @@ private fun MutableList<String>.addAttributionLabel(label: String?, addonLabel: 
 
 private fun normalizedAttribution(value: String): String = value
     .lowercase(Locale.ROOT)
-    .replace(attributionNonAlphanumeric, "")
+    .replace(StreamSourceAttributionRegexes.attributionNonAlphanumeric, "")
