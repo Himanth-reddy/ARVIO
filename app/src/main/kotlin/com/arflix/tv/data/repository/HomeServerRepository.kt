@@ -2571,10 +2571,14 @@ class HomeServerRepository @Inject constructor(
         .replace("&gt;", ">")
 
     private fun parsePlexIdentity(body: String): Pair<String, String> {
-        val container = runCatching {
+        val container = try {
             val json = JsonParser().parse(body).asJsonObjectOrNull()
             json?.obj("MediaContainer") ?: json
-        }.getOrNull()
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            null
+        } catch (e: IllegalStateException) {
+            null
+        }
         val name = container?.string("friendlyName").orEmpty()
         val id = container?.string("machineIdentifier").orEmpty()
         if (name.isNotBlank() || id.isNotBlank()) {

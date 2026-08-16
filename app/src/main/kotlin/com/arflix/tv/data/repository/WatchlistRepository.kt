@@ -376,11 +376,7 @@ class WatchlistRepository @Inject constructor(
         return try {
             val prefs = context.traktDataStore.data.first()
             val json = prefs[watchlistKeyFor(safeProfileId)] ?: return emptyList()
-            val type = TypeToken.getParameterized(
-                MutableList::class.java,
-                LocalWatchlistItem::class.java
-            ).type
-            gson.fromJson<List<LocalWatchlistItem>>(json, type) ?: emptyList()
+            gson.fromJson<List<LocalWatchlistItem>>(json, WatchlistRepoTypeTokens.listType) ?: emptyList()
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -416,10 +412,9 @@ class WatchlistRepository @Inject constructor(
             return
         }
 
-        val type = TypeToken.getParameterized(MutableList::class.java, LocalWatchlistItem::class.java).type
         val localItems: List<LocalWatchlistItem> = if (localJson != null) {
             try {
-                gson.fromJson<List<LocalWatchlistItem>>(localJson, type) ?: emptyList()
+                gson.fromJson<List<LocalWatchlistItem>>(localJson, WatchlistRepoTypeTokens.listType) ?: emptyList()
             } catch (e: com.google.gson.JsonSyntaxException) {
                 emptyList()
             }
@@ -486,11 +481,7 @@ class WatchlistRepository @Inject constructor(
         return try {
             val prefs = context.traktDataStore.data.first()
             val json = prefs[watchlistKey()] ?: return emptyList()
-            val type = TypeToken.getParameterized(
-                MutableList::class.java,
-                LocalWatchlistItem::class.java
-            ).type
-            (gson.fromJson<List<LocalWatchlistItem>>(json, type) ?: emptyList())
+            (gson.fromJson<List<LocalWatchlistItem>>(json, WatchlistRepoTypeTokens.listType) ?: emptyList())
                 .sortedWith(compareBy<LocalWatchlistItem> { it.sourceOrder }.thenByDescending { it.addedAt })
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
@@ -563,13 +554,13 @@ class WatchlistRepository @Inject constructor(
 
     private fun parseWatchlistItems(json: String?): List<LocalWatchlistItem> {
         if (json.isNullOrBlank()) return emptyList()
-        return runCatching {
-            val type = TypeToken.getParameterized(
-                MutableList::class.java,
-                LocalWatchlistItem::class.java
-            ).type
-            gson.fromJson<List<LocalWatchlistItem>>(json, type).orEmpty()
-        }.getOrDefault(emptyList())
+        return try {
+            gson.fromJson<List<LocalWatchlistItem>>(json, WatchlistRepoTypeTokens.listType) ?: emptyList()
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            emptyList()
+        } catch (e: IllegalStateException) {
+            emptyList()
+        }
     }
 
     /**
@@ -662,4 +653,8 @@ class WatchlistRepository @Inject constructor(
         )
     }
 
+}
+
+private object WatchlistRepoTypeTokens {
+    val listType = TypeToken.getParameterized(MutableList::class.java, LocalWatchlistItem::class.java).type
 }
