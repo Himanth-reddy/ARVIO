@@ -347,17 +347,17 @@ class HttpLocalScraperRuntime @Inject constructor(
         mediaType: String,
         season: Int?,
         episode: Int?
-    ): List<HttpResolvedStream> = runCatching {
+    ): List<HttpResolvedStream> = try {
         val encrypted = getJson("https://enc-dec.app/api/enc-vidlink?text=${tmdbId.toString().urlEncode()}")
             ?.string("result")
-            ?: return@runCatching emptyList()
+            ?: return emptyList()
         val url = if (mediaType == "tv") {
             "https://vidlink.pro/api/b/tv/$encrypted/${season ?: 1}/${episode ?: 1}?multiLang=0"
         } else {
             "https://vidlink.pro/api/b/movie/$encrypted?multiLang=0"
         }
-        val payload = getJson(url, VIDLINK_HEADERS) ?: return@runCatching emptyList()
-        val playlist = payload.getObject("stream")?.string("playlist") ?: return@runCatching emptyList()
+        val payload = getJson(url, VIDLINK_HEADERS) ?: return emptyList()
+        val playlist = payload.getObject("stream")?.string("playlist") ?: return emptyList()
         listOf(
             HttpResolvedStream(
                 provider = "VidLink",
@@ -367,7 +367,10 @@ class HttpLocalScraperRuntime @Inject constructor(
                 headers = mapOf("Referer" to "https://vidlink.pro/", "Origin" to "https://vidlink.pro")
             )
         )
-    }.getOrDefault(emptyList())
+    } catch (e: Throwable) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        emptyList()
+    }
 
     private suspend fun resolveRgShows(
         tmdbId: Int,
@@ -499,9 +502,9 @@ class HttpLocalScraperRuntime @Inject constructor(
         episode: Int?,
         fallbackTitle: String,
         fallbackYear: Int?
-    ): List<HttpResolvedStream> = runCatching {
+    ): List<HttpResolvedStream> = try {
         val details = fetchTmdbDetails(tmdbId, mediaType, fallbackTitle, fallbackYear)
-        val cookie = netMirrorCookie() ?: return@runCatching emptyList<HttpResolvedStream>()
+        val cookie = netMirrorCookie() ?: return emptyList<HttpResolvedStream>()
         val cookies = "t_hash_t=$cookie; hd=on"
         val platforms = listOf(
             NetMirrorPlatform("netflix", "nf", "/mobile/search.php", "/mobile/post.php", "/mobile/episodes.php", "/mobile/playlist.php"),
@@ -509,12 +512,19 @@ class HttpLocalScraperRuntime @Inject constructor(
             NetMirrorPlatform("hotstar", "hs", "/mobile/hs/search.php", "/mobile/hs/post.php", "/mobile/hs/episodes.php", "/mobile/hs/playlist.php"),
             NetMirrorPlatform("disney", "hs", "/mobile/hs/search.php", "/mobile/hs/post.php", "/mobile/hs/episodes.php", "/mobile/hs/playlist.php")
         )
+        var resultStreams = emptyList<HttpResolvedStream>()
         for (platform in platforms) {
             val streams = fetchNetMirrorPlatform(platform, details.title, mediaType, season, episode, cookies)
-            if (streams.isNotEmpty()) return@runCatching streams
+            if (streams.isNotEmpty()) {
+                resultStreams = streams
+                break
+            }
         }
+        resultStreams
+    } catch (e: Throwable) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
         emptyList()
-    }.getOrDefault(emptyList())
+    }
 
     private suspend fun resolveVidSrc(
         tmdbId: Int,
@@ -707,7 +717,7 @@ class HttpLocalScraperRuntime @Inject constructor(
         fallbackTitle: String,
         fallbackYear: Int?
     ): HttpScraperTmdbDetails {
-        return runCatching {
+        return try {
             val type = if (mediaType == "tv") "tv" else "movie"
             val payload = getJson(
                 "https://api.themoviedb.org/3/$type/$tmdbId?api_key=${Constants.TMDB_API_KEY}&append_to_response=external_ids"
@@ -719,7 +729,8 @@ class HttpLocalScraperRuntime @Inject constructor(
             val imdbId = payload?.getObject("external_ids")?.string("imdb_id")
                 ?: payload?.string("imdb_id")
             HttpScraperTmdbDetails(tmdbId.toString(), title, year, imdbId, type)
-        }.getOrElse {
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             HttpScraperTmdbDetails(tmdbId.toString(), fallbackTitle, fallbackYear?.toString(), null, mediaType)
         }
     }
@@ -730,10 +741,13 @@ class HttpLocalScraperRuntime @Inject constructor(
         synchronized(tmdbIdCache) {
             if (tmdbIdCache.containsKey(key)) return tmdbIdCache[key]
         }
-        val resolved = runCatching {
+        val resolved = try {
             val find = tmdbApi.findByExternalId(clean, Constants.TMDB_API_KEY)
             if (mediaType == "tv") find.tvResults.firstOrNull()?.id else find.movieResults.firstOrNull()?.id
-        }.getOrNull()
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
         synchronized(tmdbIdCache) { tmdbIdCache[key] = resolved }
         return resolved
     }
@@ -742,10 +756,13 @@ class HttpLocalScraperRuntime @Inject constructor(
         synchronized(manifestCache) {
             manifestCache[manifestUrl]?.let { return it }
         }
-        val parsed = runCatching {
+        val parsed = try {
             val json = getText(manifestUrl)
             gson.fromJson(json, HttpScraperManifest::class.java)
-        }.getOrNull()?.takeIf { it.name.isNotBlank() && it.scrapers.isNotEmpty() }
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }?.takeIf { it.name.isNotBlank() && it.scrapers.isNotEmpty() }
         if (parsed != null) {
             synchronized(manifestCache) { manifestCache[manifestUrl] = parsed }
         }
@@ -771,6 +788,8 @@ class HttpLocalScraperRuntime @Inject constructor(
     private suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JsonObject? {
         return try {
             gson.fromJson(getText(url, headers), JsonObject::class.java)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: com.google.gson.JsonSyntaxException) {
             null
         } catch (e: IllegalStateException) {
@@ -783,6 +802,8 @@ class HttpLocalScraperRuntime @Inject constructor(
     private suspend fun getJsonElement(url: String, headers: Map<String, String> = emptyMap()): JsonElement? {
         return try {
             gson.fromJson(getText(url, headers), JsonElement::class.java)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: com.google.gson.JsonSyntaxException) {
             null
         } catch (e: IllegalStateException) {
