@@ -409,6 +409,7 @@ class TvViewModel @Inject constructor(
                 startCompleteEpgBackfill()
                 warmXtreamVodCache()
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 logIptvRefreshFailure(
                     error = error,
                     phase = "load_snapshot",
