@@ -222,6 +222,7 @@ class WatchHistoryRepository @Inject constructor(
                 AppLogger.recordException(e, mapOf("error_area" to "WatchHistoryRepository", "watch_history_phase" to "save_fallback"))
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Error in watch history operation", e)
         }
 
@@ -288,6 +289,7 @@ class WatchHistoryRepository @Inject constructor(
             cachedWatchHistoryByProfile[profileId] = result
             result
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Error getting watch history, returning cache", e)
             cachedWatchHistoryByProfile[profileId].orEmpty()
         }
@@ -338,6 +340,7 @@ class WatchHistoryRepository @Inject constructor(
             cachedContinueWatchingByProfile[profileId] = result
             result
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Error getting continue watching, returning cache", e)
             filterLive(cachedContinueWatchingByProfile[profileId].orEmpty())
         }
@@ -378,6 +381,7 @@ class WatchHistoryRepository @Inject constructor(
             }
             filterByProfile(records.map { it.toEntry() }).firstOrNull()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Error returning null fallback", e)
             null
         }
@@ -421,6 +425,7 @@ class WatchHistoryRepository @Inject constructor(
                     parseEpoch(entry.updated_at).coerceAtLeast(parseEpoch(entry.paused_at))
                 }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Error returning null fallback", e)
             null
         }
@@ -463,6 +468,7 @@ class WatchHistoryRepository @Inject constructor(
                 )
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Silently handled error", e)
         }
     }
@@ -491,6 +497,7 @@ class WatchHistoryRepository @Inject constructor(
                 )
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Silently handled error", e)
         }
     }

@@ -484,7 +484,20 @@ class CloudSyncRepository @Inject constructor(
 
     private suspend fun loadJsonMap(key: androidx.datastore.preferences.core.Preferences.Key<String>): JSONObject {
         val raw = context.settingsDataStore.data.first()[key]
-        return try { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) } catch (e: Exception) { JSONObject() }
+        return try {
+            if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.recordException(
+                throwable = e,
+                context = mapOf(
+                    "error_area" to "CloudSync",
+                    "cloud_flow" to "load_json_map",
+                    "pref_key" to key.name
+                )
+            )
+            JSONObject()
+        }
     }
 
     /**
@@ -1706,9 +1719,12 @@ class CloudSyncRepository @Inject constructor(
                     ?.toString()
                     ?.takeIf { it.isNotBlank() }
                     ?.let { tokenJson ->
-                        runCatching {
+                        try {
                             gson.fromJson<Map<String, TraktRepository.CloudTraktToken>>(tokenJson, traktTokenType)
-                        }.getOrNull()
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            null
+                        }
                     }
                     .orEmpty()
 
@@ -1718,7 +1734,12 @@ class CloudSyncRepository @Inject constructor(
                     }
                 }
 
-                val isActiveProfileTrakt = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val isActiveProfileTrakt = try {
+                    traktRepository.isAuthenticated.first()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    false
+                }
                 val activeProfileIdLocal = profileManager.getProfileIdSync().ifBlank { null }
                 if (isActiveProfileTrakt && activeProfileIdLocal != null) {
                     traktProfiles.add(activeProfileIdLocal)
