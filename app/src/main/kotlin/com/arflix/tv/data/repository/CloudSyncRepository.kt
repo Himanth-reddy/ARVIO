@@ -689,7 +689,11 @@ class CloudSyncRepository @Inject constructor(
 
         // Validate active Trakt auth before exporting so revoked tokens do not
         // get written back to cloud and restored on the next launch.
-        runCatching { traktRepository.hasTrakt() }
+        try {
+            traktRepository.hasTrakt()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
 
         // Trakt tokens per profile
         val traktTokens = traktRepository.exportTokensForProfiles(profiles.map { it.id })
@@ -803,13 +807,15 @@ class CloudSyncRepository @Inject constructor(
         root.put("iptvFavoriteChannels", JSONArray(gson.toJson(iptvRepository.observeFavoriteChannels().first())))
 
         // Plugin repositories and scrapers (sideload flavor)
-        runCatching {
+        try {
             val pluginRepos = pluginDataStore.repositories.first()
             val pluginScrapers = pluginDataStore.scrapers.first()
             val pluginsEnabled = pluginDataStore.pluginsEnabled.first()
             root.put("pluginRepositories", JSONArray(gson.toJson(pluginRepos)))
             root.put("pluginScrapers", JSONArray(gson.toJson(pluginScrapers)))
             root.put("pluginsEnabled", pluginsEnabled)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
         }
 
         // Informational
@@ -874,7 +880,10 @@ class CloudSyncRepository @Inject constructor(
             )
             return Result.failure(IllegalStateException("Not logged in"))
         }
-        val payload = runCatching { buildCloudSnapshotJson() }.getOrElse {
+        val payload = try {
+            buildCloudSnapshotJson()
+        } catch (it: Throwable) {
+            if (it is kotlinx.coroutines.CancellationException) throw it
             markPushFailedDirty()
             pushFailureCount++
             AppLogger.recordException(
@@ -907,25 +916,22 @@ class CloudSyncRepository @Inject constructor(
                 message = "push_blocked_remote_richer local_profiles=$localProfileCount remote_profiles=$remoteProfileCount",
                 severity = "warning"
             )
-            return runCatching {
+            return try {
                 invalidationBus.suppressDuringRemoteApply {
                     clearStaleLocalDirtyBeforeRemoteRestore()
                     applyCloudPayload(existingRemotePayload)
                 }
                 markCloudPayloadApplied(existingRemotePayload, existingRemotePayload.hashCode())
                 clearLocalDirtyAfterSuccessfulPush()
-            }.fold(
-                onSuccess = {
-                    Log.i(TAG, "Restored richer remote snapshot before push")
-                    Result.success(Unit)
-                },
-                onFailure = { error ->
-                    markPushFailedDirty()
-                    pushFailureCount++
-                    Log.w(TAG, "Failed to restore richer remote snapshot before push: ${error.message}", error)
-                    Result.failure(error)
-                }
-            )
+                Log.i(TAG, "Restored richer remote snapshot before push")
+                Result.success(Unit)
+            } catch (error: Throwable) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                markPushFailedDirty()
+                pushFailureCount++
+                Log.w(TAG, "Failed to restore richer remote snapshot before push: ${error.message}", error)
+                Result.failure(error)
+            }
         }
 
         val groupOrderMerged = if (existingRemotePayload != null && !iptvRepository.isGroupOrderLocallyDirty()) {
@@ -1142,7 +1148,7 @@ class CloudSyncRepository @Inject constructor(
             return@withLock RestoreResult.RESTORED
         }
 
-        runCatching {
+        try {
             invalidationBus.suppressDuringRemoteApply {
                 if (!pushPendingLocalFirst) {
                     clearStaleLocalDirtyBeforeRemoteRestore()
@@ -1150,30 +1156,27 @@ class CloudSyncRepository @Inject constructor(
                 applyCloudPayload(payload)
             }
             markCloudPayloadApplied(payload, payloadHash)
-        }.fold(
-            onSuccess = {
-                Log.i(TAG, "Pull restored size=${payloadSizeBucket(payload)}")
-                AppLogger.breadcrumb(
-                    tag = "CloudSync",
-                    message = "pull_restored size=${payloadSizeBucket(payload)}",
-                    severity = "info"
+            Log.i(TAG, "Pull restored size=${payloadSizeBucket(payload)}")
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_restored size=${payloadSizeBucket(payload)}",
+                severity = "info"
+            )
+            RestoreResult.RESTORED
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "Pull failed size=${payloadSizeBucket(payload)} error=${e.message}")
+            System.err.println("[CLOUD-SYNC] pullFromCloud failed: ${e.message}")
+            AppLogger.recordException(
+                throwable = e,
+                context = mapOf(
+                    "error_area" to "CloudSync",
+                    "cloud_flow" to "pull_apply_payload",
+                    "payload_size" to payloadSizeBucket(payload)
                 )
-                RestoreResult.RESTORED
-            },
-            onFailure = { e ->
-                Log.w(TAG, "Pull failed size=${payloadSizeBucket(payload)} error=${e.message}")
-                System.err.println("[CLOUD-SYNC] pullFromCloud failed: ${e.message}")
-                AppLogger.recordException(
-                    throwable = e,
-                    context = mapOf(
-                        "error_area" to "CloudSync",
-                        "cloud_flow" to "pull_apply_payload",
-                        "payload_size" to payloadSizeBucket(payload)
-                    )
-                )
-                RestoreResult.FAILED
-            }
-        )
+            )
+            RestoreResult.FAILED
+        }
     }
 
     /**
@@ -1653,8 +1656,10 @@ class CloudSyncRepository @Inject constructor(
             }
 
             if (importedActiveProfileIptv || importedLegacyIptv) {
-                runCatching {
+                try {
                     iptvRepository.invalidateCache()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                 }
             }
         } catch (e: Exception) {
@@ -1706,9 +1711,12 @@ class CloudSyncRepository @Inject constructor(
                     ?.toString()
                     ?.takeIf { it.isNotBlank() }
                     ?.let { tokenJson ->
-                        runCatching {
+                        try {
                             gson.fromJson<Map<String, TraktRepository.CloudTraktToken>>(tokenJson, traktTokenType)
-                        }.getOrNull()
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            null
+                        }
                     }
                     .orEmpty()
 
@@ -1718,7 +1726,12 @@ class CloudSyncRepository @Inject constructor(
                     }
                 }
 
-                val isActiveProfileTrakt = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val isActiveProfileTrakt = try {
+                    traktRepository.hasTrakt()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    false
+                }
                 val activeProfileIdLocal = profileManager.getProfileIdSync().ifBlank { null }
                 if (isActiveProfileTrakt && activeProfileIdLocal != null) {
                     traktProfiles.add(activeProfileIdLocal)

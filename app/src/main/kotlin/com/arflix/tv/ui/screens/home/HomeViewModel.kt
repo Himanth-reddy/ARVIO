@@ -2105,7 +2105,7 @@ class HomeViewModel @Inject constructor(
 
                 val cachedContinueWatching = preloadStartupContinueWatchingItems()
                 val savedCatalogs = withContext(networkDispatcher) {
-                    runCatching {
+                    try {
                         streamRepository.removeCustomAddonsByUrl(
                             CollectionTemplateManifest.autoInstalledAddonUrls() +
                                 listOf(MediaRepository.STREAMING_COLLECTION_ADDON_URL)
@@ -2125,11 +2125,16 @@ class HomeViewModel @Inject constructor(
                             mediaRepository.getDefaultCatalogConfigs()
                         )
                         catalogRepository.getCatalogs()
-                    }.getOrElse {
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         // If sync/defaults fail, fall back to whatever is already saved
                         // (includes user's custom Trakt catalogs) instead of only preinstalled defaults.
-                        runCatching { catalogRepository.getCatalogs() }
-                            .getOrDefault(mediaRepository.getDefaultCatalogConfigs())
+                        try {
+                            catalogRepository.getCatalogs()
+                        } catch (e2: Exception) {
+                            if (e2 is CancellationException) throw e2
+                            mediaRepository.getDefaultCatalogConfigs()
+                        }
                     }
                 }
                 savedCatalogById.clear()

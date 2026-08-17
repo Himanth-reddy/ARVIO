@@ -17,6 +17,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -306,7 +307,7 @@ class HomeServerRepository @Inject constructor(
         displayName: String = ""
     ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val serverUrl = normalizeServerUrl(rawUrl)
                 val trimmedUsername = username.trim()
                 val trimmedDisplayName = displayName.trim()
@@ -326,7 +327,7 @@ class HomeServerRepository @Inject constructor(
                         displayName = trimmedDisplayName
                     )
                     saveConnection(connection)
-                    return@runCatching connection
+                    return@withContext Result.success(connection)
                 }
 
                 require(trimmedUsername.isNotBlank()) { context.getString(R.string.homeserver_enter_username) }
@@ -347,7 +348,10 @@ class HomeServerRepository @Inject constructor(
                 )
                 val connection = connectionShell.copy(collections = fetchCollections(connectionShell))
                 saveConnection(connection)
-                connection
+                Result.success(connection)
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                Result.failure(e)
             }
         }
 
@@ -357,7 +361,7 @@ class HomeServerRepository @Inject constructor(
         displayName: String = ""
     ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val connection = buildPlexConnection(
                     accountToken = accountToken,
                     preferredServerUrl = preferredServerUrl,
@@ -366,7 +370,10 @@ class HomeServerRepository @Inject constructor(
                     displayName = displayName.trim()
                 )
                 saveConnection(connection)
-                connection
+                Result.success(connection)
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                Result.failure(e)
             }
         }
 
@@ -375,12 +382,15 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun testConnections(): Result<List<HomeServerConnection>> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val current = currentConnections()
             require(current.isNotEmpty()) { context.getString(R.string.homeserver_none_connected) }
             val refreshed = current.map { refreshConnection(it) }
             saveConnections(refreshed)
-            refreshed
+            Result.success(refreshed)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
@@ -393,25 +403,34 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun startHomeServerCodeAuth(serverUrl: String): Result<PlexPinAuthSession> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val normalizedUrl = normalizeServerUrl(serverUrl)
-            if (normalizedUrl.isBlank()) return@runCatching startPlexPinAuthInternal()
+            if (normalizedUrl.isBlank()) return@withContext Result.success(startPlexPinAuthInternal())
 
             val publicInfo = fetchPublicInfo(normalizedUrl)
             val detectedKind = publicInfo.serverKind
                 .takeUnless { it == HomeServerKind.UNKNOWN }
                 ?: detectServerKind(publicInfo.productName, publicInfo.serverName)
-            when (detectedKind) {
+            val session = when (detectedKind) {
                 HomeServerKind.JELLYFIN -> startJellyfinQuickConnect(normalizedUrl)
                 HomeServerKind.PLEX -> startPlexPinAuthInternal().copy(serverUrl = normalizedUrl)
                 HomeServerKind.EMBY -> error("Code sign in is not supported by Emby. Use username and password.")
                 HomeServerKind.UNKNOWN -> error("Could not detect this server. Use username and password, or leave URL empty for Plex.")
             }
+            Result.success(session)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
     suspend fun startPlexPinAuth(): Result<PlexPinAuthSession> = withContext(Dispatchers.IO) {
-        runCatching { startPlexPinAuthInternal() }
+        try {
+            Result.success(startPlexPinAuthInternal())
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
+        }
     }
 
     private fun startPlexPinAuthInternal(): PlexPinAuthSession {
@@ -468,7 +487,7 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun pollPlexPinAuth(pinId: String): Result<String?> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val url = "https://plex.tv/api/v2/pins/$pinId".toHttpUrlOrNull()
                 ?.newBuilder()
                 ?.addQueryParameter("X-Plex-Client-Identifier", deviceId())
@@ -480,7 +499,7 @@ class HomeServerRepository @Inject constructor(
                 .get()
                 .headers(plexPublicHeaders())
                 .build()
-            okHttpClient.newCall(request).execute().use { response ->
+            val token = okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     error(context.getString(R.string.homeserver_code_poll_failed, response.code))
@@ -490,6 +509,10 @@ class HomeServerRepository @Inject constructor(
                     .ifBlank { json.string("auth_token") }
                     .takeIf { it.isNotBlank() }
             }
+            Result.success(token)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
@@ -498,8 +521,8 @@ class HomeServerRepository @Inject constructor(
         preferredServerUrl: String = "",
         displayName: String = ""
     ): Result<HomeServerConnection?> = withContext(Dispatchers.IO) {
-        runCatching {
-            when (session.serverKind) {
+        try {
+            val conn = when (session.serverKind) {
                 HomeServerKind.PLEX -> {
                     val token = pollPlexPinAuth(session.id).getOrThrow()
                     if (token.isNullOrBlank()) {
@@ -515,6 +538,10 @@ class HomeServerRepository @Inject constructor(
                 HomeServerKind.JELLYFIN -> pollJellyfinQuickConnect(session, displayName)
                 else -> error(context.getString(R.string.homeserver_code_signin_failed))
             }
+            Result.success(conn)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
