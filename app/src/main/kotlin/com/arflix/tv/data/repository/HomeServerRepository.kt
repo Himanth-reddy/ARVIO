@@ -334,7 +334,7 @@ class HomeServerRepository @Inject constructor(
         displayName: String = ""
     ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val serverUrl = normalizeServerUrl(rawUrl)
                 val trimmedUsername = username.trim()
                 val trimmedDisplayName = displayName.trim()
@@ -354,7 +354,7 @@ class HomeServerRepository @Inject constructor(
                         displayName = trimmedDisplayName
                     )
                     saveConnection(connection)
-                    return@runCatching connection
+                    return@withContext Result.success(connection)
                 }
 
                 require(trimmedUsername.isNotBlank()) { context.getString(R.string.homeserver_enter_username) }
@@ -375,7 +375,11 @@ class HomeServerRepository @Inject constructor(
                 )
                 val connection = connectionShell.copy(collections = fetchCollections(connectionShell))
                 saveConnection(connection)
-                connection
+                Result.success(connection)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
             }
         }
 
@@ -385,7 +389,7 @@ class HomeServerRepository @Inject constructor(
         displayName: String = ""
     ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val connection = buildPlexConnection(
                     accountToken = accountToken,
                     preferredServerUrl = preferredServerUrl,
@@ -394,7 +398,11 @@ class HomeServerRepository @Inject constructor(
                     displayName = displayName.trim()
                 )
                 saveConnection(connection)
-                connection
+                Result.success(connection)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
             }
         }
 
@@ -439,7 +447,7 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun startPlexPinAuth(): Result<PlexPinAuthSession> = withContext(Dispatchers.IO) {
-        runCatching { startPlexPinAuthInternal() }
+        try { Result.success(startPlexPinAuthInternal()) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
     }
 
     private fun startPlexPinAuthInternal(): PlexPinAuthSession {
