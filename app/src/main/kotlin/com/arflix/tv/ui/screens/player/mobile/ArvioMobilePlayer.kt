@@ -21,11 +21,18 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import android.os.SystemClock
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Job
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,8 +58,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -90,6 +99,7 @@ import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.ui.screens.player.AudioTrackInfo
 import com.arflix.tv.ui.screens.player.PlayerUiState
+import com.arflix.tv.ui.theme.ArflixTypography
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -294,6 +304,28 @@ fun ArvioMobilePlayer(
     var showAspectFlash by remember { mutableStateOf(false) }
     var aspectFlashText by remember { mutableStateOf(aspectModeLabel) }
 
+    // Double Tap Seek Ripple State
+    var showDoubleTapSeekLeft by remember { mutableStateOf(false) }
+    var showDoubleTapSeekRight by remember { mutableStateOf(false) }
+    var doubleTapSeekLeftTrigger by remember { mutableIntStateOf(0) }
+    var doubleTapSeekRightTrigger by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(doubleTapSeekLeftTrigger) {
+        if (doubleTapSeekLeftTrigger > 0) {
+            showDoubleTapSeekLeft = true
+            delay(650)
+            showDoubleTapSeekLeft = false
+        }
+    }
+
+    LaunchedEffect(doubleTapSeekRightTrigger) {
+        if (doubleTapSeekRightTrigger > 0) {
+            showDoubleTapSeekRight = true
+            delay(650)
+            showDoubleTapSeekRight = false
+        }
+    }
+
     // Contextual Prompt Phase State (Intro / Outro / Up Next)
     var dismissedIntro by remember { mutableStateOf(false) }
     var dismissedOutro by remember { mutableStateOf(false) }
@@ -475,24 +507,72 @@ fun ArvioMobilePlayer(
     Box(
         modifier = modifier
             .fillMaxSize()
-            // Gesture Detection (Tap, Double Tap)
+            // Multi-Tap Gesture Detection (Single Tap = Controls, Double Tap = Seek -10s/+10s, Triple Tap = Aspect Ratio)
             .pointerInput(isLocked, uiState.error, anyPanelOpen) {
-                detectTapGestures(
-                    onTap = {
-                        if (isLocked) {
-                            showLockAffordance = true
-                        } else if (anyPanelOpen) {
-                            closeAllPanels()
-                        } else if (uiState.error == null) {
-                            showControls = !showControls
-                        }
-                    },
-                    onDoubleTap = {
-                        if (!isLocked && uiState.error == null && !anyPanelOpen) {
-                            onCycleAspectRatio()
+                coroutineScope {
+                    var tapCount = 0
+                    var lastTapTime = 0L
+                    var lastOffset = Offset.Zero
+                    var tapTimerJob: Job? = null
+
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val downTime = SystemClock.uptimeMillis()
+                        val up = waitForUpOrCancellation()
+                        if (up != null && !up.isConsumed) {
+                            val upTime = SystemClock.uptimeMillis()
+                            val isWithinTapSlop = (up.position - down.position).getDistance() < viewConfiguration.touchSlop
+                            if (isWithinTapSlop && (upTime - downTime) < viewConfiguration.longPressTimeoutMillis) {
+                                val now = SystemClock.uptimeMillis()
+                                if (now - lastTapTime > 320L) {
+                                    tapCount = 1
+                                } else {
+                                    tapCount++
+                                }
+                                lastTapTime = now
+                                lastOffset = up.position
+
+                                tapTimerJob?.cancel()
+
+                                if (tapCount >= 3) {
+                                    tapCount = 0
+                                    if (!isLocked && uiState.error == null && !anyPanelOpen) {
+                                        onCycleAspectRatio()
+                                    }
+                                } else {
+                                    tapTimerJob = launch {
+                                        delay(300L)
+                                        val count = tapCount
+                                        val offset = lastOffset
+                                        tapCount = 0
+                                        if (count == 1) {
+                                            if (isLocked) {
+                                                showLockAffordance = true
+                                            } else if (anyPanelOpen) {
+                                                closeAllPanels()
+                                            } else if (uiState.error == null) {
+                                                showControls = !showControls
+                                            }
+                                        } else if (count == 2) {
+                                            if (!isLocked && uiState.error == null && !anyPanelOpen) {
+                                                val screenWidth = size.width
+                                                if (offset.x < screenWidth * 0.42f) {
+                                                    onRewind10()
+                                                    doubleTapSeekLeftTrigger++
+                                                } else if (offset.x > screenWidth * 0.58f) {
+                                                    onForward10()
+                                                    doubleTapSeekRightTrigger++
+                                                } else {
+                                                    onTogglePlayPause()
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                )
+                }
             }
     ) {
         // Auto-hide indicators after release (restarts on every increment of trigger)
@@ -573,6 +653,68 @@ fun ArvioMobilePlayer(
                     )
                 }
         )
+
+        // ── Double Tap Seek Left Feedback ──
+        AnimatedVisibility(
+            visible = showDoubleTapSeekLeft,
+            enter = fadeIn(tween(100)) + scaleIn(tween(150), initialScale = 0.8f),
+            exit = fadeOut(tween(250)) + scaleOut(tween(200), targetScale = 0.9f),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 72.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                    .padding(20.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Replay10,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(36.dp)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "-10s",
+                    style = ArflixTypography.caption.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp),
+                    color = Color.White
+                )
+            }
+        }
+
+        // ── Double Tap Seek Right Feedback ──
+        AnimatedVisibility(
+            visible = showDoubleTapSeekRight,
+            enter = fadeIn(tween(100)) + scaleIn(tween(150), initialScale = 0.8f),
+            exit = fadeOut(tween(250)) + scaleOut(tween(200), targetScale = 0.9f),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 72.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                    .padding(20.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Forward10,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(36.dp)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "+10s",
+                    style = ArflixTypography.caption.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp),
+                    color = Color.White
+                )
+            }
+        }
 
         // ── Main Controls Overlay (Top Bar, Center, Bottom) ──
         val layoutDirection = LocalLayoutDirection.current

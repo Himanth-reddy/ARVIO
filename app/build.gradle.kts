@@ -160,7 +160,7 @@ android {
         debug {
             isMinifyEnabled = false
             isDebuggable = true
-            applicationIdSuffix = ".debug"
+            // applicationIdSuffix = ".debug" // Disabled to preserve settings between debug/release
             versionNameSuffix = "-debug"
 
             // Build config fields for debug
