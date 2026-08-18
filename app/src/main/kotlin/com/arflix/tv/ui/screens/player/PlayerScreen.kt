@@ -4307,53 +4307,110 @@ private fun isBitmapSubtitleMime(mimeType: String?): Boolean {
  * Language code to full name mapping
  */
 private fun getFullLanguageName(code: String?): String {
-    if (code == null) return "Unknown"
-    val normalizedCode = code.lowercase().trim()
-    return when {
-        normalizedCode == "en" || normalizedCode == "eng" || normalizedCode == "english" -> "English"
-        normalizedCode == "es" || normalizedCode == "spa" || normalizedCode == "spanish" -> "Spanish"
-        normalizedCode == "nl" || normalizedCode == "nld" || normalizedCode == "dut" || normalizedCode == "dutch" -> "Dutch"
-        normalizedCode == "de" || normalizedCode == "ger" || normalizedCode == "deu" || normalizedCode == "german" -> "German"
-        normalizedCode == "fr" || normalizedCode == "fra" || normalizedCode == "fre" || normalizedCode == "french" -> "French"
-        normalizedCode == "it" || normalizedCode == "ita" || normalizedCode == "italian" -> "Italian"
-        normalizedCode == "pt" || normalizedCode == "por" || normalizedCode == "portuguese" -> "Portuguese"
-        normalizedCode == "pt-br" || normalizedCode == "pob" -> "Portuguese (Brazil)"
-        normalizedCode == "ru" || normalizedCode == "rus" || normalizedCode == "russian" -> "Russian"
-        normalizedCode == "ja" || normalizedCode == "jpn" || normalizedCode == "japanese" -> "Japanese"
-        normalizedCode == "ko" || normalizedCode == "kor" || normalizedCode == "korean" -> "Korean"
-        normalizedCode == "zh" || normalizedCode == "chi" || normalizedCode == "zho" || normalizedCode == "chinese" -> "Chinese"
-        normalizedCode == "ar" || normalizedCode == "ara" || normalizedCode == "arabic" -> "Arabic"
-        normalizedCode == "hi" || normalizedCode == "hin" || normalizedCode == "hindi" -> "Hindi"
-        normalizedCode == "tr" || normalizedCode == "tur" || normalizedCode == "turkish" -> "Turkish"
-        normalizedCode == "pl" || normalizedCode == "pol" || normalizedCode == "polish" -> "Polish"
-        normalizedCode == "sv" || normalizedCode == "swe" || normalizedCode == "swedish" -> "Swedish"
-        normalizedCode == "no" || normalizedCode == "nor" || normalizedCode == "norwegian" -> "Norwegian"
-        normalizedCode == "da" || normalizedCode == "dan" || normalizedCode == "danish" -> "Danish"
-        normalizedCode == "fi" || normalizedCode == "fin" || normalizedCode == "finnish" -> "Finnish"
-        normalizedCode == "cs" || normalizedCode == "cze" || normalizedCode == "ces" || normalizedCode == "czech" -> "Czech"
-        normalizedCode == "hu" || normalizedCode == "hun" || normalizedCode == "hungarian" -> "Hungarian"
-        normalizedCode == "ro" || normalizedCode == "ron" || normalizedCode == "rum" || normalizedCode == "romanian" -> "Romanian"
-        normalizedCode == "el" || normalizedCode == "gre" || normalizedCode == "ell" || normalizedCode == "greek" -> "Greek"
-        normalizedCode == "he" || normalizedCode == "heb" || normalizedCode == "hebrew" -> "Hebrew"
-        normalizedCode == "th" || normalizedCode == "tha" || normalizedCode == "thai" -> "Thai"
-        normalizedCode == "vi" || normalizedCode == "vie" || normalizedCode == "vietnamese" -> "Vietnamese"
-        normalizedCode == "id" || normalizedCode == "ind" || normalizedCode == "indonesian" -> "Indonesian"
-        normalizedCode == "ms" || normalizedCode == "msa" || normalizedCode == "may" || normalizedCode == "malay" -> "Malay"
-        normalizedCode == "uk" || normalizedCode == "ukr" || normalizedCode == "ukrainian" -> "Ukrainian"
-        normalizedCode == "bg" || normalizedCode == "bul" || normalizedCode == "bulgarian" -> "Bulgarian"
-        normalizedCode == "hr" || normalizedCode == "hrv" || normalizedCode == "croatian" -> "Croatian"
-        normalizedCode == "sr" || normalizedCode == "srp" || normalizedCode == "serbian" -> "Serbian"
-        normalizedCode == "sk" || normalizedCode == "slo" || normalizedCode == "slk" || normalizedCode == "slovak" -> "Slovak"
-        normalizedCode == "sl" || normalizedCode == "slv" || normalizedCode == "slovenian" -> "Slovenian"
-        normalizedCode == "et" || normalizedCode == "est" || normalizedCode == "estonian" -> "Estonian"
-        normalizedCode == "lv" || normalizedCode == "lav" || normalizedCode == "latvian" -> "Latvian"
-        normalizedCode == "lt" || normalizedCode == "lit" || normalizedCode == "lithuanian" -> "Lithuanian"
-        normalizedCode == "fa" || normalizedCode == "per" || normalizedCode == "fas" || normalizedCode == "persian" -> "Persian"
-        normalizedCode == "kur" || normalizedCode == "ku" || normalizedCode == "kurdish" -> "Kurdish"
-        normalizedCode == "mon" || normalizedCode == "mn" || normalizedCode == "mongolian" -> "Mongolian"
-        normalizedCode == "und" || normalizedCode == "unknown" -> "Unknown"
-        else -> code.uppercase()
+    if (code.isNullOrBlank()) return "Unknown"
+    val raw = code.trim()
+    val normalizedCode = raw.lowercase().replace('_', '-')
+
+    val mapped = when {
+        normalizedCode in listOf("en", "eng", "english") -> "English"
+        normalizedCode in listOf("es", "spa", "spanish") -> "Spanish"
+        normalizedCode in listOf("es-419", "es-la") -> "Spanish (Latin America)"
+        normalizedCode in listOf("es-es") -> "Spanish (Spain)"
+        normalizedCode in listOf("nl", "nld", "dut", "dutch") -> "Dutch"
+        normalizedCode in listOf("de", "ger", "deu", "german") -> "German"
+        normalizedCode in listOf("fr", "fra", "fre", "french") -> "French"
+        normalizedCode in listOf("it", "ita", "italian") -> "Italian"
+        normalizedCode in listOf("pt", "por", "portuguese") -> "Portuguese"
+        normalizedCode in listOf("pt-br", "pob") -> "Portuguese (Brazil)"
+        normalizedCode in listOf("pt-pt") -> "Portuguese (Portugal)"
+        normalizedCode in listOf("ru", "rus", "russian") -> "Russian"
+        normalizedCode in listOf("ja", "jpn", "japanese") -> "Japanese"
+        normalizedCode in listOf("ko", "kor", "korean") -> "Korean"
+        normalizedCode in listOf("zh", "chi", "zho", "chinese") -> "Chinese"
+        normalizedCode in listOf("zh-cn", "zh-hans", "chs") -> "Chinese (Simplified)"
+        normalizedCode in listOf("zh-tw", "zh-hk", "zh-hant", "cht") -> "Chinese (Traditional)"
+        normalizedCode in listOf("ar", "ara", "arabic") -> "Arabic"
+        normalizedCode in listOf("hi", "hin", "hindi") -> "Hindi"
+        normalizedCode in listOf("te", "tel", "telugu") -> "Telugu"
+        normalizedCode in listOf("ta", "tam", "tamil") -> "Tamil"
+        normalizedCode in listOf("ml", "mal", "malayalam") -> "Malayalam"
+        normalizedCode in listOf("kn", "kan", "kannada") -> "Kannada"
+        normalizedCode in listOf("mr", "mar", "marathi") -> "Marathi"
+        normalizedCode in listOf("bn", "ben", "bengali") -> "Bengali"
+        normalizedCode in listOf("gu", "guj", "gujarati") -> "Gujarati"
+        normalizedCode in listOf("pa", "pan", "punjabi") -> "Punjabi"
+        normalizedCode in listOf("ur", "urd", "urdu") -> "Urdu"
+        normalizedCode in listOf("tr", "tur", "turkish") -> "Turkish"
+        normalizedCode in listOf("pl", "pol", "polish") -> "Polish"
+        normalizedCode in listOf("sv", "swe", "swedish") -> "Swedish"
+        normalizedCode in listOf("no", "nor", "nob", "norwegian") -> "Norwegian"
+        normalizedCode in listOf("da", "dan", "danish") -> "Danish"
+        normalizedCode in listOf("fi", "fin", "finnish") -> "Finnish"
+        normalizedCode in listOf("el", "gre", "ell", "greek") -> "Greek"
+        normalizedCode in listOf("he", "heb", "hebrew") -> "Hebrew"
+        normalizedCode in listOf("id", "ind", "indonesian") -> "Indonesian"
+        normalizedCode in listOf("vi", "vie", "vietnamese") -> "Vietnamese"
+        normalizedCode in listOf("th", "tha", "thai") -> "Thai"
+        normalizedCode in listOf("cs", "ces", "cze", "czech") -> "Czech"
+        normalizedCode in listOf("hu", "hun", "hungarian") -> "Hungarian"
+        normalizedCode in listOf("ro", "ron", "rum", "romanian") -> "Romanian"
+        normalizedCode in listOf("uk", "ukr", "ukrainian") -> "Ukrainian"
+        normalizedCode in listOf("ms", "msa", "may", "malay") -> "Malay"
+        normalizedCode in listOf("fa", "fas", "per", "persian") -> "Persian"
+        normalizedCode in listOf("tl", "tgl", "fil", "tagalog", "filipino") -> "Tagalog"
+        normalizedCode in listOf("bg", "bul", "bulgarian") -> "Bulgarian"
+        normalizedCode in listOf("sr", "srp", "serbian") -> "Serbian"
+        normalizedCode in listOf("hr", "hrv", "croatian") -> "Croatian"
+        normalizedCode in listOf("sk", "slk", "slo", "slovak") -> "Slovak"
+        normalizedCode in listOf("sl", "slv", "slovenian") -> "Slovenian"
+        normalizedCode in listOf("lt", "lit", "lithuanian") -> "Lithuanian"
+        normalizedCode in listOf("lv", "lav", "latvian") -> "Latvian"
+        normalizedCode in listOf("et", "est", "estonian") -> "Estonian"
+        normalizedCode in listOf("is", "isl", "ice", "icelandic") -> "Icelandic"
+        normalizedCode in listOf("ca", "cat", "catalan") -> "Catalan"
+        normalizedCode in listOf("eu", "eus", "baq", "basque") -> "Basque"
+        normalizedCode in listOf("gl", "glg", "galician") -> "Galician"
+        normalizedCode in listOf("hy", "hye", "arm", "armenian") -> "Armenian"
+        normalizedCode in listOf("ka", "kat", "geo", "georgian") -> "Georgian"
+        normalizedCode in listOf("az", "aze", "azerbaijani") -> "Azerbaijani"
+        normalizedCode in listOf("kk", "kaz", "kazakh") -> "Kazakh"
+        normalizedCode in listOf("uz", "uzb", "uzbek") -> "Uzbek"
+        normalizedCode in listOf("mn", "mon", "mongolian") -> "Mongolian"
+        normalizedCode in listOf("ne", "nep", "nepali") -> "Nepali"
+        normalizedCode in listOf("si", "sin", "sinhala") -> "Sinhala"
+        normalizedCode in listOf("my", "mya", "bur", "burmese") -> "Burmese"
+        normalizedCode in listOf("km", "khm", "khmer") -> "Khmer"
+        normalizedCode in listOf("lo", "lao") -> "Lao"
+        normalizedCode in listOf("am", "amh", "amharic") -> "Amharic"
+        normalizedCode in listOf("sw", "swa", "swahili") -> "Swahili"
+        normalizedCode in listOf("af", "afr", "afrikaans") -> "Afrikaans"
+        normalizedCode in listOf("sq", "sqi", "alb", "albanian") -> "Albanian"
+        normalizedCode in listOf("bs", "bos", "bosnian") -> "Bosnian"
+        normalizedCode in listOf("mk", "mkd", "mac", "macedonian") -> "Macedonian"
+        normalizedCode in listOf("cy", "cym", "wel", "welsh") -> "Welsh"
+        normalizedCode in listOf("ga", "gle", "irish") -> "Irish"
+        normalizedCode in listOf("gd", "gla", "scottish gaelic") -> "Scottish Gaelic"
+        normalizedCode in listOf("la", "lat", "latin") -> "Latin"
+        normalizedCode in listOf("eo", "epo", "esperanto") -> "Esperanto"
+        normalizedCode in listOf("und", "undetermined", "unknown") -> "Unknown"
+        else -> null
     }
+
+    if (mapped != null) return mapped
+
+    return runCatching {
+        val loc = if (normalizedCode.contains("-")) {
+            java.util.Locale.forLanguageTag(normalizedCode)
+        } else {
+            java.util.Locale.Builder().setLanguage(normalizedCode).build()
+        }
+        val display = loc.getDisplayLanguage(java.util.Locale.ENGLISH)
+        if (display.isNotBlank() && !display.equals(normalizedCode, ignoreCase = true)) {
+            display
+        } else {
+            null
+        }
+    }.getOrNull() ?: raw.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }
 
 @Composable
