@@ -61,6 +61,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Clock
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleSyncMatcher
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationManager
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationService
+import com.arflix.tv.ui.screens.player.subtitles.TRANSLATION_ERROR_CONTENT_BLOCKED
+import com.arflix.tv.ui.screens.player.subtitles.GeminiLiveTranslationService
+import com.arflix.tv.ui.screens.player.subtitles.GeminiLiveState
+import com.arflix.tv.ui.screens.player.subtitles.AudioCaptureProcessor
+import com.arflix.tv.ui.screens.player.common.NextEpisodePromptGate
+import com.arflix.tv.ui.screens.player.common.PlaybackEpisodeKey
 import javax.inject.Inject
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
@@ -168,6 +178,7 @@ data class PlayerUiState(
     val showLoadingStats: Boolean = true,
     // Skip intro/recap
     val activeSkipInterval: SkipInterval? = null,
+    val skipIntervals: List<SkipInterval> = emptyList(),
     val skipIntervalDismissed: Boolean = false,
     // Source-loading progress surfaced to the loading UI. When streams are
     // being resolved progressively, this fills from 0f→1f as addons complete.
@@ -198,12 +209,26 @@ data class PlayerUiState(
     // Full name of the preferred subtitle language (e.g. "Hebrew") — drives the "Find Best Match"
     // menu entry. Independent of AI availability: the timing scan needs no AI/API key.
     val matchLanguageName: String = "",
+    // Active media metadata fields
+    val mediaType: MediaType = MediaType.MOVIE,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null,
     // Episode title for TV shows (e.g. "The Devil's Verdict"), populated from TMDB season details
     val episodeTitle: String? = null,
     // Plot synopsis from TMDB, used in the pause overlay metadata block
     val overview: String? = null,
     // Release year extracted from TMDB releaseDate/firstAirDate (e.g. "2023")
-    val releaseYear: String? = null
+    val releaseYear: String? = null,
+    // All episodes for the active season (used in Mobile Episodes drawer)
+    val seasonEpisodes: List<com.arflix.tv.data.model.Episode> = emptyList(),
+    // Auto-skip intro preference
+    val autoSkipIntro: Boolean = false,
+    // Auto-skip outro preference
+    val autoSkipOutro: Boolean = false,
+    // Audio delay offset in milliseconds
+    val audioDelayMs: Long = 0L,
+    // Audio volume normalization preference
+    val audioNormalization: Boolean = false
 )
 
 
@@ -591,6 +616,9 @@ class PlayerViewModel @Inject constructor(
             isAiAvailable = false,
             aiTargetLanguageName = "",
             logoUrl = cachedLogoUrl,
+            mediaType = mediaType,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
             streamProgress = null,
             streamLoadPhase = null,
             sourceSearchActive = false,
@@ -603,7 +631,7 @@ class PlayerViewModel @Inject constructor(
         skipIntervals = emptyList()
         lastActiveSkipType = null
         activeSkipRequestKey = null
-        _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervalDismissed = false)
+        _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervals = emptyList(), skipIntervalDismissed = false)
         currentOriginalLanguage = cachedItem?.originalLanguage
         currentGenreIds = cachedItem?.genreIds ?: emptyList()
         currentItemTitle = cachedItem?.title ?: ""
@@ -1296,6 +1324,7 @@ class PlayerViewModel @Inject constructor(
             val posterUrl: String?
             var overview: String? = null
             var releaseYear: String? = null
+            var fetchedSeasonEpisodes = emptyList<com.arflix.tv.data.model.Episode>()
 
             if (mediaType == MediaType.TV) {
                 val tvDetails = details as com.arflix.tv.data.api.TmdbTvDetails
@@ -1316,6 +1345,7 @@ class PlayerViewModel @Inject constructor(
                     }.getOrNull()
                     currentEpisodeTitle = episodeDetails?.name?.takeIf { it.isNotBlank() }
                     overview = episodeDetails?.overview?.takeIf { it.isNotBlank() } ?: overview
+                    fetchedSeasonEpisodes = runCatching { mediaRepository.getSeasonEpisodes(mediaId, season) }.getOrDefault(emptyList())
                 }
             } else {
                 val movieDetails = details as com.arflix.tv.data.api.TmdbMovieDetails
@@ -1338,9 +1368,13 @@ class PlayerViewModel @Inject constructor(
                 backdropUrl = backdropUrl,
                 logoUrl = logoUrl ?: _uiState.value.logoUrl,
                 posterUrl = posterUrl,
+                mediaType = mediaType,
+                seasonNumber = currentSeason,
+                episodeNumber = currentEpisode,
                 episodeTitle = currentEpisodeTitle,
                 overview = overview,
                 releaseYear = releaseYear,
+                seasonEpisodes = if (mediaType == MediaType.TV && fetchedSeasonEpisodes.isNotEmpty()) fetchedSeasonEpisodes else _uiState.value.seasonEpisodes,
                 preferredAudioLanguage = resolvePreferredAudioLanguage()
             )
         } catch (e: Exception) {
@@ -1374,7 +1408,7 @@ class PlayerViewModel @Inject constructor(
             skipIntervals = intervals
             // Force a recompute on the next position tick.
             lastActiveSkipType = null
-            _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervalDismissed = false)
+            _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervals = intervals, skipIntervalDismissed = false)
         }
     }
 
@@ -2894,6 +2928,43 @@ class PlayerViewModel @Inject constructor(
                 matchStatus = null
             )
         }
+    }
+
+    fun setAutoPlayNext(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoPlayNext = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[autoPlayNextKey()] = enabled
+            }
+        }
+    }
+
+    fun setAutoSkipIntro(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoSkipIntro = enabled)
+    }
+
+    fun setAutoSkipOutro(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoSkipOutro = enabled)
+    }
+
+    fun setAudioDelayMs(delayMs: Long) {
+        _uiState.value = _uiState.value.copy(audioDelayMs = delayMs)
+    }
+
+    fun setAudioNormalization(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(audioNormalization = enabled)
+    }
+
+    fun setSubtitleSizePref(size: String) {
+        _uiState.value = _uiState.value.copy(subtitleSize = size)
+    }
+
+    fun setSubtitleColorPref(color: String) {
+        _uiState.value = _uiState.value.copy(subtitleColor = color)
+    }
+
+    fun setSubtitleOffsetPref(offset: String) {
+        _uiState.value = _uiState.value.copy(subtitleOffset = offset)
     }
 
     /**

@@ -1,5 +1,7 @@
 package com.arflix.tv.ui.screens.player
 
+import com.arflix.tv.ui.screens.player.common.NextEpisodePromptGate
+import com.arflix.tv.ui.screens.player.common.PlaybackEpisodeKey
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 

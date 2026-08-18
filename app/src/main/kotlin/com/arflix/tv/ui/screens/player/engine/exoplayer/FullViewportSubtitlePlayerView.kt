@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.engine.exoplayer
 
 import android.content.Context
 import android.view.Gravity
@@ -16,7 +16,7 @@ import kotlin.math.abs
  * Moving it to PlayerView lets ordinary captions use letterbox space, while authored
  * bitmap/positioned cues can still be constrained to the measured video frame.
  */
-internal class FullViewportSubtitlePlayerView(
+class FullViewportSubtitlePlayerView(
     context: Context
 ) : PlayerView(context) {
 
@@ -84,7 +84,7 @@ internal class FullViewportSubtitlePlayerView(
     }
 }
 
-internal fun List<Cue>.requiresVideoFrameSubtitleViewport(
+fun List<Cue>.requiresVideoFrameSubtitleViewport(
     preserveAuthoredTextPositioning: Boolean
 ): Boolean = any { cue ->
     cue.bitmap != null ||

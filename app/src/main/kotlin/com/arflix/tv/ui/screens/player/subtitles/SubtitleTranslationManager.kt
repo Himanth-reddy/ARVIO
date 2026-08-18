@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.subtitles
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred

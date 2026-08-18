@@ -1,7 +1,9 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.engine.exoplayer
 
 import android.content.Context
 import android.os.Handler
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationManager
+import com.arflix.tv.ui.screens.player.subtitles.AudioCaptureProcessor
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.DefaultRenderersFactory

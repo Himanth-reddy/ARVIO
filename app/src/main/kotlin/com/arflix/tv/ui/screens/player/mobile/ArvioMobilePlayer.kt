@@ -1,0 +1,1017 @@
+package com.arflix.tv.ui.screens.player.mobile
+
+import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.IntentFilter
+import android.database.ContentObserver
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.view.WindowManager
+import androidx.core.content.ContextCompat
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.arflix.tv.data.model.Episode
+import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.model.Subtitle
+import com.arflix.tv.data.repository.SkipInterval
+import com.arflix.tv.ui.screens.player.AudioTrackInfo
+import com.arflix.tv.ui.screens.player.PlayerUiState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
+/**
+ * Full touch-optimized mobile player container for ARVIO.
+ */
+@Composable
+fun ArvioMobilePlayer(
+    uiState: PlayerUiState,
+    isPlaying: Boolean,
+    isBuffering: Boolean,
+    hasPlaybackStarted: Boolean,
+    currentPositionMs: Long,
+    durationMs: Long,
+    bufferedPositionMs: Long,
+    audioTracks: List<AudioTrackInfo>,
+    selectedAudioIndex: Int,
+    currentPlaybackSpeed: Float,
+    aspectModeLabel: String,
+    isCasting: Boolean,
+    showCastButton: Boolean,
+    showPipButton: Boolean,
+    onTogglePlayPause: () -> Unit,
+    onSeekTo: (Long) -> Unit,
+    onRewind10: () -> Unit,
+    onForward10: () -> Unit,
+    onCycleAspectRatio: () -> Unit,
+    onSelectAspectRatio: (String) -> Unit,
+    onSelectEpisode: (Episode) -> Unit,
+    onSelectSource: (StreamSource) -> Unit,
+    onSelectAudioTrack: (AudioTrackInfo) -> Unit,
+    onSelectSubtitleTrack: (Subtitle?) -> Unit,
+    onSelectPlaybackSpeed: (Float) -> Unit,
+    onSkipIntro: () -> Unit,
+    onSkipOutro: () -> Unit,
+    onPlayNextEpisode: () -> Unit,
+    onEnterPip: () -> Unit,
+    onOpenCastChooser: () -> Unit,
+    onRetryPlayback: () -> Unit,
+    onUpdateAutoplay: (Boolean) -> Unit,
+    onUpdateAutoSkipIntro: (Boolean) -> Unit,
+    onUpdateAutoSkipOutro: (Boolean) -> Unit,
+    onUpdateAudioDelay: (Long) -> Unit,
+    onUpdateVolumeNormalization: (Boolean) -> Unit,
+    onUpdateSubtitleDelay: (Long) -> Unit,
+    onUpdateSubtitleSize: (Int) -> Unit,
+    onUpdateSubtitleColor: (String) -> Unit,
+    onUpdateSubtitlePosition: (String) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
+
+    // Reset window brightness override when leaving player
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.let { act ->
+                val lp = act.window?.attributes ?: return@let
+                lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                act.window?.attributes = lp
+            }
+        }
+    }
+
+    // Overlay Visibility & Auto-Hide State
+    var showControls by remember { mutableStateOf(true) }
+    var isLocked by remember { mutableStateOf(false) }
+    var showLockAffordance by remember { mutableStateOf(false) }
+
+    // Scrubbing State
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubPreviewMs by remember { mutableLongStateOf(0L) }
+
+    // Panels State
+    var showEpisodesDrawer by remember { mutableStateOf(false) }
+    var showSourcesDrawer by remember { mutableStateOf(false) }
+    var showAudioSheet by remember { mutableStateOf(false) }
+    var showSubtitlesSheet by remember { mutableStateOf(false) }
+    var showSpeedSheet by remember { mutableStateOf(false) }
+    var showMoreSettingsSheet by remember { mutableStateOf(false) }
+
+    val anyPanelOpen = showEpisodesDrawer || showSourcesDrawer || showAudioSheet ||
+        showSubtitlesSheet || showSpeedSheet || showMoreSettingsSheet
+
+    fun closeAllPanels() {
+        showEpisodesDrawer = false
+        showSourcesDrawer = false
+        showAudioSheet = false
+        showSubtitlesSheet = false
+        showSpeedSheet = false
+        showMoreSettingsSheet = false
+    }
+
+    // Auto-hide controls after 3.4 seconds of inactivity when playing and no panel is open
+    LaunchedEffect(showControls, isPlaying, isScrubbing, anyPanelOpen, isLocked) {
+        if (showControls && isPlaying && !isScrubbing && !anyPanelOpen && !isLocked) {
+            delay(3400)
+            showControls = false
+        }
+    }
+
+    // Lock affordance auto-hide (2.2s)
+    LaunchedEffect(showLockAffordance) {
+        if (showLockAffordance) {
+            delay(2200)
+            showLockAffordance = false
+        }
+    }
+
+    // Brightness Gesture State
+    var showBrightnessIndicator by remember { mutableStateOf(false) }
+    var brightnessLevel by remember { mutableFloatStateOf(0.7f) }
+    LaunchedEffect(activity) {
+        brightnessLevel = getInitialBrightness(activity)
+    }
+
+    // Volume Gesture State
+    var showVolumeIndicator by remember { mutableStateOf(false) }
+    var volumeLevel by remember { mutableFloatStateOf(0.7f) }
+    val maxVolume = remember(audioManager) { audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15 }
+    var lastKnownStreamVolume by remember(audioManager) {
+        mutableIntStateOf(audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: -1)
+    }
+
+    LaunchedEffect(audioManager) {
+        val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 10
+        lastKnownStreamVolume = current
+        volumeLevel = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+    }
+
+    // Trigger counters ensuring HUD indicators always restart the auto-hide timer
+    var brightnessIndicatorTrigger by remember { mutableIntStateOf(0) }
+    var volumeIndicatorTrigger by remember { mutableIntStateOf(0) }
+
+    // Hardware Physical Volume Buttons Observer (only triggers on actual STREAM_MUSIC volume delta)
+    DisposableEffect(context, audioManager, maxVolume) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                    val streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)
+                    if (streamType == AudioManager.STREAM_MUSIC || streamType == -1) {
+                        val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: return
+                        if (lastKnownStreamVolume != -1 && current != lastKnownStreamVolume) {
+                            lastKnownStreamVolume = current
+                            volumeLevel = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+                            volumeIndicatorTrigger++
+                        }
+                    }
+                }
+            }
+        }
+
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                super.onChange(selfChange)
+                val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: return
+                if (lastKnownStreamVolume != -1 && current != lastKnownStreamVolume) {
+                    lastKnownStreamVolume = current
+                    volumeLevel = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+                    volumeIndicatorTrigger++
+                }
+            }
+        }
+
+        val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+        try {
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+        } catch (_: Exception) {
+            try {
+                @Suppress("DEPRECATION")
+                context.registerReceiver(receiver, filter)
+            } catch (_: Exception) {}
+        }
+
+        try {
+            val musicVolumeUri = Settings.System.getUriFor("volume_music_speaker")
+                ?: Settings.System.getUriFor("volume_music")
+            if (musicVolumeUri != null) {
+                context.contentResolver.registerContentObserver(
+                    musicVolumeUri,
+                    false,
+                    observer
+                )
+            }
+        } catch (_: Exception) {}
+
+        onDispose {
+            runCatching { context.unregisterReceiver(receiver) }
+            runCatching { context.contentResolver.unregisterContentObserver(observer) }
+        }
+    }
+
+    // Aspect Ratio Flash Indicator
+    var showAspectFlash by remember { mutableStateOf(false) }
+    var aspectFlashText by remember { mutableStateOf(aspectModeLabel) }
+
+    // Contextual Prompt Phase State (Intro / Outro / Up Next)
+    var dismissedIntro by remember { mutableStateOf(false) }
+    var dismissedOutro by remember { mutableStateOf(false) }
+    var dismissedUpNext by remember { mutableStateOf(false) }
+
+    val activeSkip = uiState.activeSkipInterval
+    val isIntroInterval = activeSkip != null && !uiState.skipIntervalDismissed && activeSkip.type.lowercase() in listOf("intro", "op", "mixed-op", "recap")
+    val isOutroInterval = activeSkip != null && !uiState.skipIntervalDismissed && activeSkip.type.lowercase() in listOf("outro", "ed", "mixed-ed")
+
+    val isTv = uiState.mediaType == MediaType.TV || uiState.seasonNumber != null || !uiState.episodeTitle.isNullOrBlank()
+    val nextEpisode = uiState.seasonEpisodes.firstOrNull { it.episodeNumber == (uiState.episodeNumber ?: 0) + 1 }
+
+    // Reset dismiss flags when seeking backward before intervals
+    LaunchedEffect(currentPositionMs, activeSkip) {
+        if (activeSkip != null && currentPositionMs < activeSkip.startMs) {
+            dismissedIntro = false
+            dismissedOutro = false
+            dismissedUpNext = false
+        }
+    }
+
+    // Is Up Next currently active on the timeline?
+    val isUpNextActive = if (isOutroInterval && activeSkip != null && isTv && nextEpisode != null && !dismissedUpNext) {
+        val upNextEndMs = (activeSkip.startMs + 10000L).coerceAtMost(activeSkip.endMs)
+        currentPositionMs in activeSkip.startMs until upNextEndMs
+    } else if (!isOutroInterval && isTv && nextEpisode != null && !dismissedUpNext && durationMs > 20000L) {
+        val fallbackStartMs = durationMs - 15000L
+        val fallbackEndMs = durationMs - 5000L
+        currentPositionMs in fallbackStartMs until fallbackEndMs
+    } else {
+        false
+    }
+
+    // When Up Next triggers for the first time on the outro timeline, ensure controls are shown
+    LaunchedEffect(isUpNextActive) {
+        if (isUpNextActive) {
+            showControls = true
+        }
+    }
+
+    // Auto-advance to next episode when Up Next countdown reaches 10s mark
+    LaunchedEffect(currentPositionMs, isOutroInterval, activeSkip, durationMs, isTv, nextEpisode, uiState.autoPlayNext, dismissedUpNext, hasPlaybackStarted) {
+        if (!hasPlaybackStarted || !isTv || nextEpisode == null || !uiState.autoPlayNext || dismissedUpNext) return@LaunchedEffect
+        if (isOutroInterval && activeSkip != null) {
+            val upNextEndMs = (activeSkip.startMs + 10000L).coerceAtMost(activeSkip.endMs)
+            if (currentPositionMs >= upNextEndMs && currentPositionMs < (durationMs - 500L)) {
+                onPlayNextEpisode()
+            }
+        } else if (durationMs > 20000L && currentPositionMs >= (durationMs - 5000L) && currentPositionMs < (durationMs - 500L)) {
+            onPlayNextEpisode()
+        }
+    }
+
+    // Exit player on finish if Up Next was cancelled or no next episode
+    LaunchedEffect(currentPositionMs, durationMs, hasPlaybackStarted, isTv, nextEpisode, uiState.autoPlayNext, dismissedUpNext) {
+        if (durationMs > 0L && currentPositionMs >= (durationMs - 600L) && hasPlaybackStarted) {
+            if (isTv && nextEpisode != null && uiState.autoPlayNext && !dismissedUpNext) {
+                onPlayNextEpisode()
+            } else {
+                onBack()
+            }
+        }
+    }
+
+    val promptState = remember(
+        isIntroInterval,
+        isOutroInterval,
+        activeSkip,
+        currentPositionMs,
+        durationMs,
+        dismissedIntro,
+        dismissedOutro,
+        dismissedUpNext,
+        nextEpisode,
+        isTv,
+        uiState.autoPlayNext
+    ) {
+        // 1. Skip Intro / Recap
+        if (isIntroInterval && !dismissedIntro && activeSkip != null && currentPositionMs in activeSkip.startMs until activeSkip.endMs) {
+            val label = when (activeSkip.type.lowercase()) {
+                "recap" -> "Skip Recap"
+                "op", "mixed-op" -> "Skip Intro"
+                else -> "Skip Intro"
+            }
+            val totalMs = (activeSkip.endMs - activeSkip.startMs).coerceAtLeast(1000L)
+            val progress = ((activeSkip.endMs - currentPositionMs).toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+            return@remember MobileContextPromptState.SkipAction(
+                label = label,
+                isOutro = false,
+                progress = progress
+            )
+        }
+
+        // 2. Up Next Card (Shows during first 10s of outro, or fallback near end)
+        if (isOutroInterval && activeSkip != null && isTv && nextEpisode != null && !dismissedUpNext) {
+            val upNextEndMs = (activeSkip.startMs + 10000L).coerceAtMost(activeSkip.endMs)
+            if (currentPositionMs in activeSkip.startMs until upNextEndMs) {
+                val remainingMs = (upNextEndMs - currentPositionMs).coerceAtLeast(0L)
+                val countdownSeconds = ((remainingMs + 999L) / 1000L).toInt().coerceIn(0, 10)
+                val progress = (remainingMs.toFloat() / 10000f).coerceIn(0f, 1f)
+                return@remember MobileContextPromptState.UpNext(
+                    nextEpisodeTitle = "S${nextEpisode.seasonNumber} · E${nextEpisode.episodeNumber} ${nextEpisode.name}",
+                    nextEpisodeNumber = nextEpisode.episodeNumber,
+                    thumbnail = nextEpisode.stillPath,
+                    countdownSeconds = countdownSeconds,
+                    progress = progress,
+                    isAutoplay = uiState.autoPlayNext
+                )
+            }
+        } else if (!isOutroInterval && isTv && nextEpisode != null && !dismissedUpNext && durationMs > 20000L) {
+            val fallbackStartMs = durationMs - 15000L
+            val fallbackEndMs = durationMs - 5000L
+            if (currentPositionMs in fallbackStartMs until fallbackEndMs) {
+                val remainingMs = (fallbackEndMs - currentPositionMs).coerceAtLeast(0L)
+                val countdownSeconds = ((remainingMs + 999L) / 1000L).toInt().coerceIn(0, 10)
+                val progress = (remainingMs.toFloat() / 10000f).coerceIn(0f, 1f)
+                return@remember MobileContextPromptState.UpNext(
+                    nextEpisodeTitle = "S${nextEpisode.seasonNumber} · E${nextEpisode.episodeNumber} ${nextEpisode.name}",
+                    nextEpisodeNumber = nextEpisode.episodeNumber,
+                    thumbnail = nextEpisode.stillPath,
+                    countdownSeconds = countdownSeconds,
+                    progress = progress,
+                    isAutoplay = uiState.autoPlayNext
+                )
+            }
+        }
+
+        // 3. Skip Outro / Ending (Appears when in outro after Up Next is cancelled or finished)
+        if (isOutroInterval && activeSkip != null && !dismissedOutro) {
+            val upNextEndMs = if (isTv && nextEpisode != null && !dismissedUpNext) {
+                (activeSkip.startMs + 10000L).coerceAtMost(activeSkip.endMs)
+            } else {
+                activeSkip.startMs
+            }
+            if (currentPositionMs in upNextEndMs until activeSkip.endMs) {
+                val label = when (activeSkip.type.lowercase()) {
+                    "ed", "mixed-ed" -> "Skip Ending"
+                    else -> "Skip Outro"
+                }
+                val totalMs = (activeSkip.endMs - activeSkip.startMs).coerceAtLeast(1000L)
+                val progress = ((activeSkip.endMs - currentPositionMs).toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+                return@remember MobileContextPromptState.SkipAction(
+                    label = label,
+                    isOutro = true,
+                    progress = progress
+                )
+            }
+        }
+
+        MobileContextPromptState.Hidden
+    }
+
+    val isPromptShowing = promptState !is MobileContextPromptState.Hidden
+
+    // Title Block Text
+    val eyebrowText = if (uiState.episodeTitle.isNullOrBlank()) "" else uiState.title
+    val mainTitleText = if (!uiState.episodeTitle.isNullOrBlank()) {
+        "S${uiState.seasonNumber ?: 1} · E${uiState.episodeNumber ?: 1} — ${uiState.episodeTitle}"
+    } else {
+        uiState.title.ifBlank { "ARVIO Player" }
+    }
+
+    val currentAudioTrackName = audioTracks.getOrNull(selectedAudioIndex)?.let {
+        it.label?.takeIf { l -> l.isNotBlank() }
+            ?: it.language?.takeIf { l -> l.isNotBlank() }
+            ?: "Audio ${it.index + 1}"
+    } ?: "Audio"
+
+    val currentSubtitleTrackName = uiState.selectedSubtitle?.lang?.takeIf { it.isNotBlank() } ?: "Off"
+
+    // Automatically trigger HUD flash when aspect ratio changes
+    LaunchedEffect(aspectModeLabel) {
+        aspectFlashText = aspectModeLabel
+        showAspectFlash = true
+        delay(900)
+        showAspectFlash = false
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            // Gesture Detection (Tap, Double Tap)
+            .pointerInput(isLocked, uiState.error, anyPanelOpen) {
+                detectTapGestures(
+                    onTap = {
+                        if (isLocked) {
+                            showLockAffordance = true
+                        } else if (anyPanelOpen) {
+                            closeAllPanels()
+                        } else if (uiState.error == null) {
+                            showControls = !showControls
+                        }
+                    },
+                    onDoubleTap = {
+                        if (!isLocked && uiState.error == null && !anyPanelOpen) {
+                            onCycleAspectRatio()
+                        }
+                    }
+                )
+            }
+    ) {
+        // Auto-hide indicators after release (restarts on every increment of trigger)
+        LaunchedEffect(brightnessIndicatorTrigger) {
+            if (brightnessIndicatorTrigger > 0) {
+                showBrightnessIndicator = true
+                delay(1200)
+                showBrightnessIndicator = false
+            }
+        }
+        LaunchedEffect(volumeIndicatorTrigger) {
+            if (volumeIndicatorTrigger > 0) {
+                showVolumeIndicator = true
+                delay(1200)
+                showVolumeIndicator = false
+            }
+        }
+
+        // ── Left Half: Brightness Swipe (displays Brightness indicator on the Right) ──
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(0.5f)
+                .align(Alignment.CenterStart)
+                .pointerInput(isLocked, anyPanelOpen) {
+                    if (isLocked || anyPanelOpen) return@pointerInput
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            brightnessIndicatorTrigger++
+                        },
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            val screenHeight = size.height.toFloat().coerceAtLeast(1f)
+                            val delta = -(dragAmount / screenHeight) * 1.5f
+                            val newLevel = (brightnessLevel + delta).coerceIn(0.01f, 1f)
+                            brightnessLevel = newLevel
+                            brightnessIndicatorTrigger++
+                            setWindowBrightness(activity, newLevel)
+                        },
+                        onDragEnd = {
+                            brightnessIndicatorTrigger++
+                        },
+                        onDragCancel = {
+                            brightnessIndicatorTrigger++
+                        }
+                    )
+                }
+        )
+
+        // ── Right Half: Volume Swipe (displays Volume indicator on the Left) ──
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(0.5f)
+                .align(Alignment.CenterEnd)
+                .pointerInput(isLocked, anyPanelOpen, maxVolume) {
+                    if (isLocked || anyPanelOpen) return@pointerInput
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            volumeIndicatorTrigger++
+                        },
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            val screenHeight = size.height.toFloat().coerceAtLeast(1f)
+                            val delta = -(dragAmount / screenHeight) * 1.5f
+                            val newLevel = (volumeLevel + delta).coerceIn(0f, 1f)
+                            volumeLevel = newLevel
+                            volumeIndicatorTrigger++
+                            val targetVol = (newLevel * maxVolume).roundToInt().coerceIn(0, maxVolume)
+                            audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                        },
+                        onDragEnd = {
+                            volumeIndicatorTrigger++
+                        },
+                        onDragCancel = {
+                            volumeIndicatorTrigger++
+                        }
+                    )
+                }
+        )
+
+        // ── Main Controls Overlay (Top Bar, Center, Bottom) ──
+        val layoutDirection = LocalLayoutDirection.current
+        val safeInsets = WindowInsets.safeDrawing.asPaddingValues()
+        val maxHorizontalPadding = maxOf(
+            safeInsets.calculateStartPadding(layoutDirection),
+            safeInsets.calculateEndPadding(layoutDirection),
+            24.dp
+        )
+        val topSafePadding = (safeInsets.calculateTopPadding() + 8.dp).coerceAtLeast(16.dp)
+        val bottomSafePadding = (safeInsets.calculateBottomPadding() + 8.dp).coerceAtLeast(16.dp)
+
+        AnimatedVisibility(
+            visible = showControls && !isLocked && uiState.error == null,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(240)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.Black.copy(alpha = 0.60f),
+                                0.24f to Color.Black.copy(alpha = 0.24f),
+                                0.44f to Color.Transparent,
+                                0.56f to Color.Transparent,
+                                0.76f to Color.Black.copy(alpha = 0.38f),
+                                1.0f to Color.Black.copy(alpha = 0.80f)
+                            )
+                        )
+                    )
+            ) {
+                // Top Bar
+                MobilePlayerTopBar(
+                    onClose = onBack,
+                    onLock = {
+                        isLocked = true
+                        showControls = false
+                        closeAllPanels()
+                    },
+                    onPip = onEnterPip,
+                    onCast = onOpenCastChooser,
+                    onOpenMoreSettings = {
+                        closeAllPanels()
+                        showMoreSettingsSheet = true
+                    },
+                    isCasting = isCasting,
+                    showCastButton = showCastButton,
+                    showPipButton = showPipButton,
+                    horizontalPadding = maxHorizontalPadding,
+                    topPadding = topSafePadding,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+
+                // Center Play/Pause & Skip Controls
+                MobilePlayerCenterControls(
+                    isPlaying = isPlaying,
+                    isBuffering = isBuffering,
+                    onTogglePlayPause = onTogglePlayPause,
+                    onRewind10 = onRewind10,
+                    onForward10 = onForward10,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+
+                // Bottom Section (Meta, Scrubber, Utility Row)
+                MobilePlayerBottomSection(
+                    eyebrow = eyebrowText,
+                    mainTitle = mainTitleText,
+                    currentPositionMs = currentPositionMs,
+                    durationMs = durationMs,
+                    bufferedPositionMs = bufferedPositionMs,
+                    isScrubbing = isScrubbing,
+                    scrubPreviewMs = scrubPreviewMs,
+                    currentAudioTrack = currentAudioTrackName,
+                    currentSubtitleTrack = currentSubtitleTrackName,
+                    currentPlaybackSpeed = currentPlaybackSpeed,
+                    isEpisodeListAvailable = uiState.seasonEpisodes.isNotEmpty(),
+                    isPromptShowing = isPromptShowing,
+                    onOpenSources = {
+                        closeAllPanels()
+                        showSourcesDrawer = true
+                    },
+                    onOpenEpisodes = {
+                        closeAllPanels()
+                        showEpisodesDrawer = true
+                    },
+                    onOpenAudio = {
+                        closeAllPanels()
+                        showAudioSheet = true
+                    },
+                    onOpenSubtitles = {
+                        closeAllPanels()
+                        showSubtitlesSheet = true
+                    },
+                    onOpenSpeed = {
+                        closeAllPanels()
+                        showSpeedSheet = true
+                    },
+                    onSeekStart = { pct ->
+                        if (durationMs > 0L) {
+                            scrubPreviewMs = (pct * durationMs).toLong()
+                            isScrubbing = true
+                        }
+                    },
+                    onSeekMove = { pct ->
+                        if (durationMs > 0L) {
+                            scrubPreviewMs = (pct * durationMs).toLong().coerceIn(0L, durationMs)
+                            isScrubbing = true
+                        }
+                    },
+                    onSeekEnd = {
+                        if (isScrubbing) {
+                            onSeekTo(scrubPreviewMs)
+                            isScrubbing = false
+                        }
+                    },
+                    horizontalPadding = maxHorizontalPadding,
+                    bottomPadding = bottomSafePadding,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
+        }
+
+        // ── Contextual Prompt Slot (Bottom Right: stable placement above bottom section) ──
+        if (!isLocked && uiState.error == null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = maxHorizontalPadding, bottom = bottomSafePadding + 76.dp)
+                    .zIndex(8f)
+            ) {
+                MobileContextualPrompt(
+                    promptState = promptState,
+                    showControls = showControls,
+                    onSkipIntro = {
+                        dismissedIntro = true
+                        onSkipIntro()
+                    },
+                    onSkipOutro = {
+                        dismissedOutro = true
+                        onSkipOutro()
+                    },
+                    onPlayNextEpisode = {
+                        dismissedUpNext = true
+                        onPlayNextEpisode()
+                    },
+                    onCancelPrompt = {
+                        dismissedUpNext = true
+                    }
+                )
+            }
+        }
+
+        // ── Edge Swipe Indicators (Volume on Left, Brightness on Right) ──
+        MobileEdgeIndicator(
+            visible = showVolumeIndicator,
+            icon = Icons.AutoMirrored.Filled.VolumeUp,
+            levelPct = volumeLevel,
+            isLeft = true,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = maxHorizontalPadding)
+        )
+        MobileEdgeIndicator(
+            visible = showBrightnessIndicator,
+            icon = Icons.Default.BrightnessHigh,
+            levelPct = brightnessLevel,
+            isLeft = false,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = maxHorizontalPadding)
+        )
+
+        // ── Center Aspect Ratio HUD Flash Indicator ──
+        MobileAspectIndicator(
+            aspectText = aspectFlashText,
+            visible = showAspectFlash,
+            modifier = Modifier.align(Alignment.Center)
+        )
+
+        // ── Buffering Overlay ──
+        if (isBuffering && uiState.error == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(15f),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = MobilePlayerTokens.InkPrimary,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(38.dp)
+                )
+            }
+        }
+
+        // ── Lock Mode "Tap to Unlock" Affordance ──
+        AnimatedVisibility(
+            visible = isLocked && showLockAffordance,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(200)),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .zIndex(20f)
+        ) {
+            Column(
+                modifier = Modifier
+                    .clip(MobilePlayerTokens.ShapePill)
+                    .background(Color(0xB817181C))
+                    .border(1.dp, MobilePlayerTokens.PanelBorder, MobilePlayerTokens.ShapePill)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {
+                            isLocked = false
+                            showLockAffordance = false
+                            showControls = true
+                        }
+                    )
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LockOpen,
+                    contentDescription = "Unlock",
+                    tint = MobilePlayerTokens.InkPrimary,
+                    modifier = Modifier.size(26.dp)
+                )
+                Text(
+                    text = "Tap to unlock",
+                    color = MobilePlayerTokens.InkSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        // ── Error Overlay ──
+        if (uiState.error != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xDB050608))
+                    .zIndex(25f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ErrorOutline,
+                        contentDescription = null,
+                        tint = MobilePlayerTokens.InkPrimary,
+                        modifier = Modifier.size(36.dp)
+                    )
+                    Text(
+                        text = "Can't play this source",
+                        color = MobilePlayerTokens.InkPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = uiState.error.orEmpty().ifBlank {
+                            "The connection to the server was lost, or this file is no longer available."
+                        },
+                        color = MobilePlayerTokens.InkTertiary,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Retry button
+                        Box(
+                            modifier = Modifier
+                                .clip(MobilePlayerTokens.ShapeBtn)
+                                .background(Color.Transparent)
+                                .border(1.dp, Color(0x47FFFFFF), MobilePlayerTokens.ShapeBtn)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = onRetryPlayback
+                                )
+                                .padding(horizontal = 20.dp, vertical = 9.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Retry",
+                                color = MobilePlayerTokens.InkPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        // Choose Source button
+                        Box(
+                            modifier = Modifier
+                                .clip(MobilePlayerTokens.ShapeBtn)
+                                .background(Color.White)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        closeAllPanels()
+                                        showSourcesDrawer = true
+                                    }
+                                )
+                                .padding(horizontal = 20.dp, vertical = 9.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Choose Source",
+                                color = Color(0xFF0B0C10),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Shared Dim Scrim Backdrop ──
+        SharedScrimBackdrop(
+            visible = anyPanelOpen,
+            onDismiss = { closeAllPanels() }
+        )
+
+        // ── Panels: Drawers & Sheets ──
+
+        // Episodes Drawer
+        MobileEpisodesDrawer(
+            visible = showEpisodesDrawer,
+            episodes = uiState.seasonEpisodes,
+            currentEpisodeNumber = uiState.episodeNumber,
+            onSelectEpisode = onSelectEpisode,
+            onClose = { showEpisodesDrawer = false }
+        )
+
+        // Sources Drawer
+        MobileSourcesDrawer(
+            visible = showSourcesDrawer,
+            streams = uiState.streams,
+            selectedStream = uiState.selectedStream,
+            onSelectSource = onSelectSource,
+            onClose = { showSourcesDrawer = false }
+        )
+
+        // Audio Track Sheet
+        MobileAudioTrackSheet(
+            visible = showAudioSheet,
+            audioTracks = audioTracks,
+            selectedAudioIndex = selectedAudioIndex,
+            onSelectAudio = onSelectAudioTrack,
+            onClose = { showAudioSheet = false }
+        )
+
+        // Subtitles Sheet
+        MobileSubtitlesSheet(
+            visible = showSubtitlesSheet,
+            subtitles = uiState.subtitles,
+            selectedSubtitle = uiState.selectedSubtitle,
+            onSelectSubtitle = onSelectSubtitleTrack,
+            onClose = { showSubtitlesSheet = false }
+        )
+
+        // Playback Speed Sheet
+        MobilePlaybackSpeedSheet(
+            visible = showSpeedSheet,
+            currentSpeed = currentPlaybackSpeed,
+            onSelectSpeed = onSelectPlaybackSpeed,
+            onClose = { showSpeedSheet = false }
+        )
+
+        // More Settings Sheet
+        MobileMoreSettingsSheet(
+            visible = showMoreSettingsSheet,
+            autoplayNext = uiState.autoPlayNext,
+            autoSkipIntro = uiState.autoSkipIntro,
+            autoSkipOutro = uiState.autoSkipOutro,
+            aspectRatio = aspectModeLabel,
+            audioDelayMs = uiState.audioDelayMs,
+            volumeNormalization = uiState.audioNormalization,
+            subtitleDelayMs = 0L,
+            subtitleSizePct = 100,
+            subtitleColorHex = "#fff",
+            subtitlePosition = "bottom",
+            selectedSourceName = uiState.selectedStream?.source.orEmpty(),
+            onToggleAutoplay = onUpdateAutoplay,
+            onToggleAutoSkipIntro = onUpdateAutoSkipIntro,
+            onToggleAutoSkipOutro = onUpdateAutoSkipOutro,
+            onSelectAspectRatio = onSelectAspectRatio,
+            onUpdateAudioDelay = onUpdateAudioDelay,
+            onToggleVolumeNorm = onUpdateVolumeNormalization,
+            onUpdateSubtitleDelay = onUpdateSubtitleDelay,
+            onUpdateSubtitleSize = onUpdateSubtitleSize,
+            onUpdateSubtitleColor = onUpdateSubtitleColor,
+            onUpdateSubtitlePosition = onUpdateSubtitlePosition,
+            onOpenSourcesDrawer = {
+                showSourcesDrawer = true
+            },
+            onClose = { showMoreSettingsSheet = false }
+        )
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+private fun getInitialBrightness(activity: Activity?): Float {
+    val cur = activity?.window?.attributes?.screenBrightness ?: -1f
+    return if (cur in 0.01f..1.0f) cur else {
+        try {
+            val sys = Settings.System.getInt(
+                activity?.contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS,
+                128
+            )
+            (sys / 255f).coerceIn(0.01f, 1.0f)
+        } catch (_: Exception) {
+            0.7f
+        }
+    }
+}
+
+private fun setWindowBrightness(activity: Activity?, brightness: Float) {
+    activity?.let { act ->
+        val window = act.window ?: return@let
+        val lp = window.attributes ?: return@let
+        lp.screenBrightness = brightness.coerceIn(0.01f, 1.0f)
+        window.attributes = lp
+    }
+}
