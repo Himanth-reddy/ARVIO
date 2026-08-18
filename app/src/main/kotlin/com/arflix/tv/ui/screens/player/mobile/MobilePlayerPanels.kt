@@ -1,9 +1,11 @@
 package com.arflix.tv.ui.screens.player.mobile
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -462,7 +464,9 @@ fun MobileAudioTrackSheet(
 }
 
 /**
- * Subtitles Bottom Sheet.
+ * Subtitles Bottom Sheet with 2-Stage Drilldown (Option 1):
+ * Stage 1: Clean Languages Overview list with active indicators, track counts, and Off option.
+ * Stage 2: Detailed Track List for the selected language with badges (Embedded, Provider, SDH, Forced).
  */
 @Composable
 fun MobileSubtitlesSheet(
@@ -473,90 +477,309 @@ fun MobileSubtitlesSheet(
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var selectedLanguageName by remember { mutableStateOf<String?>(null) }
+
+    // Reset drilldown when sheet is dismissed
+    LaunchedEffect(visible) {
+        if (!visible) {
+            selectedLanguageName = null
+        }
+    }
+
+    // Intercept hardware/gesture back when inside Stage 2
+    BackHandler(enabled = visible && selectedLanguageName != null) {
+        selectedLanguageName = null
+    }
+
+    val subtitleGroups = remember(subtitles) {
+        subtitles
+            .groupBy { getFullLanguageName(it.lang).ifBlank { "Unknown" } }
+            .toList()
+            .sortedBy { (lang, _) -> lang }
+    }
+
+    val activeLangName = selectedSubtitle?.let { getFullLanguageName(it.lang).ifBlank { "Unknown" } }
+
+    val currentTitle = selectedLanguageName?.let { "$it Subtitles" } ?: "Subtitles"
+    val showBack = selectedLanguageName != null
+
     MobileBottomSheetBase(
         visible = visible,
-        title = "Subtitles",
-        onClose = onClose,
+        title = currentTitle,
+        showBackButton = showBack,
+        onBack = { selectedLanguageName = null },
+        onClose = {
+            selectedLanguageName = null
+            onClose()
+        },
         modifier = modifier
     ) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            // Off Option
-            item {
-                val isOffSelected = selectedSubtitle == null
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MobilePlayerTokens.ShapeCard)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {
-                                onSelectSubtitle(null)
-                                onClose()
+        val currentLang = selectedLanguageName
+        if (currentLang == null) {
+            // ── Stage 1: Languages Overview ──
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // 1. Off Option
+                item {
+                    val isOffSelected = selectedSubtitle == null
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MobilePlayerTokens.ShapeCard)
+                            .background(if (isOffSelected) MobilePlayerTokens.PanelBg2 else Color.Transparent)
+                            .then(
+                                if (isOffSelected) Modifier.border(1.dp, MobilePlayerTokens.PanelBorder, MobilePlayerTokens.ShapeCard)
+                                else Modifier
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {
+                                    onSelectSubtitle(null)
+                                    onClose()
+                                }
+                            )
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Off (Disable Subtitles)",
+                            color = if (isOffSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                            fontSize = 14.sp,
+                            fontWeight = if (isOffSelected) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                        if (isOffSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MobilePlayerTokens.InkPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 2. Language Groups
+                items(subtitleGroups, key = { it.first }) { (langName, tracks) ->
+                    val isLangActive = langName == activeLangName
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MobilePlayerTokens.ShapeCard)
+                            .background(if (isLangActive) MobilePlayerTokens.PanelBg2 else Color.Transparent)
+                            .then(
+                                if (isLangActive) Modifier.border(1.dp, MobilePlayerTokens.PanelBorder, MobilePlayerTokens.ShapeCard)
+                                else Modifier
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {
+                                    selectedLanguageName = langName
+                                }
+                            )
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = langName,
+                                    color = if (isLangActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isLangActive) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color.White.copy(alpha = 0.08f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "${tracks.size}",
+                                        color = MobilePlayerTokens.InkTertiary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
-                        )
-                        .padding(horizontal = 12.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "Off",
-                        color = if (isOffSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
-                        fontSize = 13.5.sp,
-                        fontWeight = if (isOffSelected) FontWeight.SemiBold else FontWeight.Normal
-                    )
-                    if (isOffSelected) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = MobilePlayerTokens.InkPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
+                            if (isLangActive && selectedSubtitle != null) {
+                                Text(
+                                    text = "Active: ${selectedSubtitle.label.ifBlank { langName }}",
+                                    color = MobilePlayerTokens.InkTertiary,
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (isLangActive) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = MobilePlayerTokens.InkPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = "Open $langName tracks",
+                                tint = MobilePlayerTokens.InkTertiary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
+        } else {
+            // ── Stage 2: Detailed Tracks for Chosen Language ──
+            val tracksForLang = subtitleGroups.firstOrNull { it.first == currentLang }?.second ?: emptyList()
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                itemsIndexed(tracksForLang, key = { _, sub -> sub.id }) { index, sub ->
+                    val isActive = selectedSubtitle?.id == sub.id
+                    val trackTitle = sub.label.ifBlank { "$currentLang Track ${index + 1}" }
+                    val isSdh = trackTitle.contains("sdh", ignoreCase = true) ||
+                        trackTitle.contains("cc", ignoreCase = true) ||
+                        trackTitle.contains("hearing", ignoreCase = true)
 
-            // Subtitle tracks
-            items(subtitles, key = { it.id }) { sub ->
-                val isActive = selectedSubtitle?.id == sub.id
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MobilePlayerTokens.ShapeCard)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {
-                                onSelectSubtitle(sub)
-                                onClose()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MobilePlayerTokens.ShapeCard)
+                            .background(if (isActive) MobilePlayerTokens.PanelBg2 else Color.Transparent)
+                            .then(
+                                if (isActive) Modifier.border(1.dp, MobilePlayerTokens.PanelBorder, MobilePlayerTokens.ShapeCard)
+                                else Modifier
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {
+                                    onSelectSubtitle(sub)
+                                    selectedLanguageName = null
+                                    onClose()
+                                }
+                            )
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = trackTitle,
+                                color = if (isActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal
+                            )
+
+                            // Badges Row
+                            Row(
+                                modifier = Modifier.padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (sub.isEmbedded) {
+                                    SubtitleBadge(text = "Embedded")
+                                } else if (sub.provider.isNotBlank()) {
+                                    SubtitleBadge(text = sub.provider)
+                                }
+                                if (isSdh) {
+                                    SubtitleBadge(text = "SDH")
+                                }
+                                if (sub.isForced) {
+                                    SubtitleBadge(text = "Forced")
+                                }
                             }
-                        )
-                        .padding(horizontal = 12.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = sub.lang.ifBlank { "Unknown" },
-                        color = if (isActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
-                        fontSize = 13.5.sp,
-                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal
-                    )
-                    if (isActive) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = MobilePlayerTokens.InkPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        }
+
+                        if (isActive) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MobilePlayerTokens.InkPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SubtitleBadge(text: String) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.White.copy(alpha = 0.10f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = text,
+            color = MobilePlayerTokens.InkTertiary,
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+private fun getFullLanguageName(code: String?): String {
+    if (code == null) return "Unknown"
+    val normalizedCode = code.lowercase().trim()
+    return when {
+        normalizedCode == "en" || normalizedCode == "eng" || normalizedCode == "english" -> "English"
+        normalizedCode == "es" || normalizedCode == "spa" || normalizedCode == "spanish" -> "Spanish"
+        normalizedCode == "nl" || normalizedCode == "nld" || normalizedCode == "dut" || normalizedCode == "dutch" -> "Dutch"
+        normalizedCode == "de" || normalizedCode == "ger" || normalizedCode == "deu" || normalizedCode == "german" -> "German"
+        normalizedCode == "fr" || normalizedCode == "fra" || normalizedCode == "fre" || normalizedCode == "french" -> "French"
+        normalizedCode == "it" || normalizedCode == "ita" || normalizedCode == "italian" -> "Italian"
+        normalizedCode == "pt" || normalizedCode == "por" || normalizedCode == "portuguese" -> "Portuguese"
+        normalizedCode == "pt-br" || normalizedCode == "pob" -> "Portuguese (Brazil)"
+        normalizedCode == "ru" || normalizedCode == "rus" || normalizedCode == "russian" -> "Russian"
+        normalizedCode == "ja" || normalizedCode == "jpn" || normalizedCode == "japanese" -> "Japanese"
+        normalizedCode == "ko" || normalizedCode == "kor" || normalizedCode == "korean" -> "Korean"
+        normalizedCode == "zh" || normalizedCode == "chi" || normalizedCode == "zho" || normalizedCode == "chinese" -> "Chinese"
+        normalizedCode == "ar" || normalizedCode == "ara" || normalizedCode == "arabic" -> "Arabic"
+        normalizedCode == "hi" || normalizedCode == "hin" || normalizedCode == "hindi" -> "Hindi"
+        normalizedCode == "tr" || normalizedCode == "tur" || normalizedCode == "turkish" -> "Turkish"
+        normalizedCode == "pl" || normalizedCode == "pol" || normalizedCode == "polish" -> "Polish"
+        normalizedCode == "sv" || normalizedCode == "swe" || normalizedCode == "swedish" -> "Swedish"
+        normalizedCode == "no" || normalizedCode == "nor" || normalizedCode == "norwegian" -> "Norwegian"
+        normalizedCode == "da" || normalizedCode == "dan" || normalizedCode == "danish" -> "Danish"
+        normalizedCode == "fi" || normalizedCode == "fin" || normalizedCode == "finnish" -> "Finnish"
+        normalizedCode == "el" || normalizedCode == "gre" || normalizedCode == "ell" || normalizedCode == "greek" -> "Greek"
+        normalizedCode == "he" || normalizedCode == "heb" || normalizedCode == "hebrew" -> "Hebrew"
+        normalizedCode == "id" || normalizedCode == "ind" || normalizedCode == "indonesian" -> "Indonesian"
+        normalizedCode == "vi" || normalizedCode == "vie" || normalizedCode == "vietnamese" -> "Vietnamese"
+        normalizedCode == "th" || normalizedCode == "tha" || normalizedCode == "thai" -> "Thai"
+        normalizedCode == "cs" || normalizedCode == "ces" || normalizedCode == "cze" || normalizedCode == "czech" -> "Czech"
+        normalizedCode == "hu" || normalizedCode == "hun" || normalizedCode == "hungarian" -> "Hungarian"
+        normalizedCode == "ro" || normalizedCode == "ron" || normalizedCode == "rum" || normalizedCode == "romanian" -> "Romanian"
+        normalizedCode == "uk" || normalizedCode == "ukr" || normalizedCode == "ukrainian" -> "Ukrainian"
+        normalizedCode == "ms" || normalizedCode == "msa" || normalizedCode == "may" || normalizedCode == "malay" -> "Malay"
+        normalizedCode == "fa" || normalizedCode == "fas" || normalizedCode == "per" || normalizedCode == "persian" -> "Persian"
+        normalizedCode == "tl" || normalizedCode == "tgl" || normalizedCode == "tagalog" || normalizedCode == "filipino" -> "Tagalog"
+        else -> code.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }
 }
 
