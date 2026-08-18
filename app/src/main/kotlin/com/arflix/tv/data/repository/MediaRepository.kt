@@ -374,12 +374,20 @@ class MediaRepository @Inject constructor(
     }
 
     private suspend fun resolveExternalIds(mediaType: MediaType, mediaId: Int): TmdbExternalIds? {
-        return runCatching {
+        return try {
             when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieExternalIds(mediaId, apiKey)
                 MediaType.TV -> tmdbApi.getTvExternalIds(mediaId, apiKey)
             }
-        }.getOrNull()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: retrofit2.HttpException) {
+            null
+        } catch (e: java.io.IOException) {
+            null
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private suspend fun fetchCinemetaImdbRating(mediaType: MediaType, imdbId: String): String? = withContext(Dispatchers.IO) {
@@ -390,14 +398,22 @@ class MediaRepository @Inject constructor(
             .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
             .build()
 
-        runCatching {
+        try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val body = response.body?.string().orEmpty()
                 val meta = JSONObject(body).optJSONObject("meta") ?: return@use null
                 parseCinemetaMetaRating(meta)
             }
-        }.getOrNull()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: java.io.IOException) {
+            null
+        } catch (e: org.json.JSONException) {
+            null
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun parseCinemetaMetaRating(meta: JSONObject): String? {

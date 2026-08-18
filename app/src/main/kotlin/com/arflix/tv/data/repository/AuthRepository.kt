@@ -214,13 +214,15 @@ internal fun accountSyncPayloadSaveSucceeded(
 private fun accountSyncPayloadsMatch(expected: String, actual: String?): Boolean {
     if (actual.isNullOrBlank()) return false
     if (expected == actual) return true
-    return runCatching {
+    return try {
         val expectedJson = JSONObject(expected)
         val actualJson = JSONObject(actual)
         expectedJson.remove("updatedAt")
         actualJson.remove("updatedAt")
         expectedJson.toString() == actualJson.toString()
-    }.getOrDefault(false)
+    } catch (e: org.json.JSONException) {
+        false
+    }
 }
 
 private fun safePostgrestError(body: String): String {
@@ -305,39 +307,59 @@ private fun com.google.gson.JsonObject.arraySize(key: String): Int {
 }
 
 private fun com.google.gson.JsonObject.stringValue(key: String): String {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asString
             .orEmpty()
-    }.getOrDefault("")
+    } catch (e: UnsupportedOperationException) {
+        ""
+    } catch (e: ClassCastException) {
+        ""
+    }
 }
 
 private fun com.google.gson.JsonObject.intValue(key: String): Int {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asInt
             ?: 0
-    }.getOrDefault(0)
+    } catch (e: UnsupportedOperationException) {
+        0
+    } catch (e: NumberFormatException) {
+        0
+    } catch (e: ClassCastException) {
+        0
+    }
 }
 
 private fun com.google.gson.JsonObject.longValue(key: String): Long {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asLong
             ?: 0L
-    }.getOrDefault(0L)
+    } catch (e: UnsupportedOperationException) {
+        0L
+    } catch (e: NumberFormatException) {
+        0L
+    } catch (e: ClassCastException) {
+        0L
+    }
 }
 
 private fun com.google.gson.JsonObject.booleanValue(key: String): Boolean {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asBoolean
             ?: false
-    }.getOrDefault(false)
+    } catch (e: UnsupportedOperationException) {
+        false
+    } catch (e: ClassCastException) {
+        false
+    }
 }
 
 /**
