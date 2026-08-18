@@ -682,6 +682,11 @@ class PlayerViewModel @Inject constructor(
             untranslatableSourceIds.clear()
             translationManager.reset()
 
+            val autoSkipIntro = prefs[profileManager.profileBooleanKey("auto_skip_intro")] ?: false
+            val autoSkipOutro = prefs[profileManager.profileBooleanKey("auto_skip_outro")] ?: false
+            val audioDelayMs = prefs[profileManager.profileLongKey("audio_delay_ms")] ?: 0L
+            val audioNormalization = prefs[profileManager.profileBooleanKey("audio_normalization")] ?: false
+
             _uiState.value = PlayerUiState(
                 isLoading = true,
                 isLoadingStreams = true,
@@ -702,6 +707,10 @@ class PlayerViewModel @Inject constructor(
                 subtitleStylized = subStylized,
                 subtitleOffset = subOffset,
                 autoPlayNext = autoPlayNext,
+                autoSkipIntro = autoSkipIntro,
+                autoSkipOutro = autoSkipOutro,
+                audioDelayMs = audioDelayMs,
+                audioNormalization = audioNormalization,
                 showLoadingStats = showLoadingStats,
                 volumeBoostDb = volumeBoostDb,
                 subtitlePreloadEnabled = subtitlePreloadEnabled,
@@ -2941,30 +2950,65 @@ class PlayerViewModel @Inject constructor(
 
     fun setAutoSkipIntro(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(autoSkipIntro = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("auto_skip_intro")] = enabled
+            }
+        }
     }
 
     fun setAutoSkipOutro(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(autoSkipOutro = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("auto_skip_outro")] = enabled
+            }
+        }
     }
 
     fun setAudioDelayMs(delayMs: Long) {
         _uiState.value = _uiState.value.copy(audioDelayMs = delayMs)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileLongKey("audio_delay_ms")] = delayMs
+            }
+        }
     }
 
     fun setAudioNormalization(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(audioNormalization = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("audio_normalization")] = enabled
+            }
+        }
     }
 
     fun setSubtitleSizePref(size: String) {
         _uiState.value = _uiState.value.copy(subtitleSize = size)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_size")] = size
+            }
+        }
     }
 
     fun setSubtitleColorPref(color: String) {
         _uiState.value = _uiState.value.copy(subtitleColor = color)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_color")] = color
+            }
+        }
     }
 
     fun setSubtitleOffsetPref(offset: String) {
         _uiState.value = _uiState.value.copy(subtitleOffset = offset)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_offset")] = offset
+            }
+        }
     }
 
     /**

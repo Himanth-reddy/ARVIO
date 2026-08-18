@@ -164,7 +164,9 @@ import com.arflix.tv.ui.screens.player.tv.ArvioTvPlayer
 import com.arflix.tv.ui.screens.player.engine.exoplayer.FullViewportSubtitlePlayerView
 import com.arflix.tv.ui.screens.player.engine.exoplayer.requiresVideoFrameSubtitleViewport
 import com.arflix.tv.ui.screens.player.engine.exoplayer.AiSubtitleRenderersFactory
-import com.arflix.tv.ui.screens.player.subtitles.AudioCaptureProcessor
+import com.arflix.tv.ui.screens.player.engine.PlayerEngine
+import com.arflix.tv.ui.screens.player.engine.PlayerEngineFactory
+import com.arflix.tv.ui.screens.player.engine.PlayerEngineType
 import com.arflix.tv.ui.screens.player.common.NextEpisodePromptGate
 import com.arflix.tv.ui.screens.player.common.PlaybackEpisodeKey
 import com.arflix.tv.ui.skin.LocalAccentColorOverride
@@ -1719,11 +1721,13 @@ fun PlayerScreen(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
-    val commitQuickSeekNow: () -> Unit = commitQuickSeek@{
-        val pendingJob = quickSeekCommitJob ?: return@commitQuickSeek
-        pendingJob.cancel()
-        quickSeekCommitJob = null
-        if (!playerReleased) exoPlayer.seekTo(skipPreviewPosition)
+    val playerEngine: PlayerEngine = remember(exoPlayer) {
+        PlayerEngineFactory.createEngine(
+            type = PlayerEngineType.EXOPLAYER,
+            context = context,
+            exoPlayer = exoPlayer,
+            scope = coroutineScope
+        )
     }
 
     val closeQuickSeekOverlay: (Boolean) -> Unit = { commitPending ->
@@ -1793,6 +1797,27 @@ fun PlayerScreen(
                 exoPlayer.seekTo(targetPosition)
             }
             quickSeekCommitJob = null
+        }
+    }
+
+    // Observe audio delay & route to sync processor
+    LaunchedEffect(uiState.audioDelayMs) {
+        aiRenderersFactory.syncOffsetUs.set(-uiState.audioDelayMs * 1000L)
+    }
+
+    // Auto-skip intro & outro enforcement
+    LaunchedEffect(currentPosition, uiState.activeSkipInterval, uiState.autoSkipIntro, uiState.autoSkipOutro, uiState.skipIntervalDismissed) {
+        val skip = uiState.activeSkipInterval
+        if (skip != null && !uiState.skipIntervalDismissed) {
+            val isIntro = skip.type.lowercase() in listOf("intro", "op", "mixed-op", "recap")
+            val isOutro = skip.type.lowercase() in listOf("outro", "ed", "mixed-ed")
+            if (isIntro && uiState.autoSkipIntro && currentPosition in skip.startMs..skip.endMs) {
+                playerEngine.seekTo((skip.endMs + 500L).coerceAtLeast(0L))
+                viewModel.dismissSkipInterval()
+            } else if (isOutro && uiState.autoSkipOutro && currentPosition in skip.startMs..skip.endMs) {
+                playerEngine.seekTo((skip.endMs + 500L).coerceAtLeast(0L))
+                viewModel.dismissSkipInterval()
+            }
         }
     }
 
@@ -2876,21 +2901,21 @@ fun PlayerScreen(
     // the user changes the boost in Settings (though in practice that requires reopening
     // the player since Settings changes don't propagate mid-session yet). 0 dB = no
     // effect created, no CPU cost. Issue #88.
-    DisposableEffect(uiState.volumeBoostDb, exoPlayer.audioSessionId) {
+    DisposableEffect(uiState.volumeBoostDb, uiState.audioNormalization, exoPlayer.audioSessionId) {
         val sessionId = exoPlayer.audioSessionId
-        val targetDb = uiState.volumeBoostDb
+        val targetGainMb = if (uiState.audioNormalization) {
+            maxOf(uiState.volumeBoostDb * 100, 500)
+        } else {
+            uiState.volumeBoostDb * 100
+        }
         val enhancer: android.media.audiofx.LoudnessEnhancer? =
-            if (targetDb > 0 && sessionId != C.AUDIO_SESSION_ID_UNSET) {
+            if (targetGainMb > 0 && sessionId != C.AUDIO_SESSION_ID_UNSET) {
                 try {
                     android.media.audiofx.LoudnessEnhancer(sessionId).apply {
-                        setTargetGain(targetDb * 100) // API takes millibels
+                        setTargetGain(targetGainMb)
                         enabled = true
                     }
                 } catch (e: Throwable) {
-                    // Some Android TV devices route audio through HDMI passthrough and
-                    // reject audio-session effects (particularly when passthrough is
-                    // enabled for DTS/AC3). Fail silently — user gets unboosted audio
-                    // but playback still works.
                     android.util.Log.w("PlayerScreen", "LoudnessEnhancer unavailable on this device: ${e.message}")
                     null
                 }
@@ -3640,6 +3665,258 @@ fun PlayerScreen(
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                 )
             }
+        }
+
+        // ARVIO Mobile Player Overlay (Phone & Tablet Touch Devices)
+        if (isTouchDevice && !isInPipMode) {
+            ArvioMobilePlayer(
+                uiState = uiState,
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                hasPlaybackStarted = hasPlaybackStarted,
+                currentPositionMs = currentPosition,
+                durationMs = duration,
+                bufferedPositionMs = exoPlayer.bufferedPosition,
+                audioTracks = audioTracks,
+                selectedAudioIndex = selectedAudioIndex,
+                currentPlaybackSpeed = playerEngine.state.value.playbackSpeed,
+                aspectModeLabel = aspectModeLabel,
+                isCasting = isCasting,
+                showCastButton = castAvailable && !streamNeedsHeaders,
+                showPipButton = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O,
+                onTogglePlayPause = {
+                    if (isCasting) {
+                        if (castManager.isRemotePlaying()) castManager.pause() else castManager.play()
+                    } else {
+                        playerEngine.togglePlayPause()
+                    }
+                },
+                onSeekTo = { targetMs ->
+                    if (isCasting) castManager.seekTo(targetMs)
+                    else if (!playerReleased) playerEngine.seekTo(targetMs)
+                },
+                onRewind10 = { queueControlsSeek(-10_000L) },
+                onForward10 = { queueControlsSeek(10_000L) },
+                onCycleAspectRatio = cycleAspectRatio,
+                onSelectAspectRatio = { mode ->
+                    playerResizeMode = when (mode.lowercase()) {
+                        "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                },
+                onSelectEpisode = { ep ->
+                    val season = ep.seasonNumber
+                    val episode = ep.episodeNumber
+                    val selected = uiState.selectedStream
+                    val identity = EpisodeIdentity.canonical(season, episode)
+                    playNextEpisode(
+                        identity,
+                        selected?.addonId?.takeIf { it.isNotBlank() },
+                        selected?.source?.takeIf { it.isNotBlank() },
+                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    )
+                },
+                onSelectSource = { stream ->
+                    viewModel.selectStream(stream, exoPlayer.currentPosition)
+                },
+                onSelectAudioTrack = { track ->
+                    userPickedAudioForStream = true
+                    applyAudioTrackSelection(exoPlayer, track, audioTracks)?.let {
+                        selectedAudioIndex = it
+                    }
+                },
+                onSelectSubtitleTrack = { sub ->
+                    if (sub == null) {
+                        viewModel.disableSubtitles()
+                    } else {
+                        viewModel.selectSubtitle(sub)
+                    }
+                },
+                onSelectPlaybackSpeed = { speed ->
+                    playerEngine.setPlaybackSpeed(speed)
+                },
+                onSkipIntro = {
+                    val end = uiState.activeSkipInterval?.endMs
+                    if (end != null) {
+                        playerEngine.seekTo((end + 500L).coerceAtLeast(0L))
+                        viewModel.dismissSkipInterval()
+                    } else {
+                        playerEngine.seekTo((currentPosition + 85_000L).coerceAtMost(duration))
+                    }
+                },
+                onSkipOutro = {
+                    val end = uiState.activeSkipInterval?.endMs
+                    if (end != null) {
+                        playerEngine.seekTo((end + 500L).coerceAtLeast(0L))
+                        viewModel.dismissSkipInterval()
+                    } else {
+                        val next = nextEpisodeIdentity ?: return@ArvioMobilePlayer
+                        val selected = uiState.selectedStream
+                        playNextEpisode(
+                            next,
+                            selected?.addonId?.takeIf { it.isNotBlank() },
+                            selected?.source?.takeIf { it.isNotBlank() },
+                            selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                        )
+                    }
+                },
+                onPlayNextEpisode = {
+                    val next = nextEpisodeIdentity ?: return@ArvioMobilePlayer
+                    val selected = uiState.selectedStream
+                    playNextEpisode(
+                        next,
+                        selected?.addonId?.takeIf { it.isNotBlank() },
+                        selected?.source?.takeIf { it.isNotBlank() },
+                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    )
+                },
+                onEnterPip = enterPipMode,
+                onOpenCastChooser = {
+                    if (isCasting) {
+                        castManager.disconnect()
+                    } else {
+                        val dialog = MediaRouteChooserDialog(context)
+                        dialog.routeSelector = castManager.getRouteSelector()
+                        dialog.show()
+                    }
+                },
+                onRetryPlayback = {
+                    viewModel.retry()
+                },
+                onUpdateAutoplay = { enabled ->
+                    viewModel.setAutoPlayNext(enabled)
+                },
+                onUpdateAutoSkipIntro = { enabled ->
+                    viewModel.setAutoSkipIntro(enabled)
+                },
+                onUpdateAutoSkipOutro = { enabled ->
+                    viewModel.setAutoSkipOutro(enabled)
+                },
+                onUpdateAudioDelay = { delayMs ->
+                    viewModel.setAudioDelayMs(delayMs)
+                },
+                onUpdateVolumeNormalization = { enabled ->
+                    viewModel.setAudioNormalization(enabled)
+                },
+                onUpdateSubtitleDelay = { delayMs ->
+                    subtitleSyncOffsetMs = delayMs
+                },
+                onUpdateSubtitleSize = { sizePct ->
+                    subtitleSizePct = sizePct
+                    viewModel.setSubtitleSizePref(when {
+                        sizePct <= 80 -> "Small"
+                        sizePct >= 120 -> "Large"
+                        else -> "Medium"
+                    })
+                },
+                onUpdateSubtitleColor = { colorHex ->
+                    viewModel.setSubtitleColorPref(when (colorHex.lowercase()) {
+                        "#ffe066" -> "Yellow"
+                        "#66d9ff" -> "Cyan"
+                        "#ff6666" -> "Red"
+                        else -> "White"
+                    })
+                },
+                onUpdateSubtitlePosition = { pos ->
+                    viewModel.setSubtitleOffsetPref(if (pos == "top") "High" else "Bottom")
+                },
+                onBack = onBack
+            )
+        }
+
+        // ARVIO TV Player Overlay (Android TV D-pad Devices)
+        if (!isTouchDevice && !isInPipMode) {
+            ArvioTvPlayer(
+                uiState = uiState,
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                hasPlaybackStarted = hasPlaybackStarted,
+                currentPositionMs = currentPosition,
+                durationMs = duration,
+                progress = progress,
+                audioTracks = audioTracks,
+                selectedAudioIndex = selectedAudioIndex,
+                aspectModeLabel = aspectModeLabel,
+                clockFormat = clockFormat,
+                mediaType = mediaType,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber,
+                playerAccent = playerAccent,
+                showVolumeIndicator = showVolumeIndicator,
+                currentVolume = currentVolume,
+                maxVolume = maxVolume,
+                isMuted = isMuted,
+                showAspectIndicator = showAspectIndicator,
+                showSkipOverlay = showSkipOverlay,
+                skipAmount = skipAmount,
+                skipPreviewPositionMs = skipPreviewPosition,
+                showNextEpisodePrompt = showNextEpisodePrompt,
+                pendingNextSeason = pendingNextIdentity?.displaySeason ?: 0,
+                pendingNextEpisode = pendingNextIdentity?.displayEpisode ?: 0,
+                formatTime = { timeMs: Long -> formatTime(timeMs) },
+                formatClockTime = { timeMs: Long, format: String -> formatPlayerClockTime(timeMs, format) },
+                subtitleGroups = subtitleGroups,
+                selectedSubtitle = latestUiState.selectedSubtitle,
+                onTogglePlayPause = {
+                    if (isCasting) {
+                        if (castManager.isRemotePlaying()) castManager.pause() else castManager.play()
+                    } else {
+                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                    }
+                },
+                onSeekTo = { targetMs: Long ->
+                    if (isCasting) castManager.seekTo(targetMs)
+                    else if (!playerReleased) exoPlayer.seekTo(targetMs)
+                },
+                onRewind10 = { queueControlsSeek(-10_000L) },
+                onForward10 = { queueControlsSeek(10_000L) },
+                onCycleAspectRatio = cycleAspectRatio,
+                onSelectStream = { stream: StreamSource ->
+                    viewModel.selectStream(stream, exoPlayer.currentPosition)
+                },
+                onPrewarmStreams = { stream: StreamSource ->
+                    viewModel.prewarmStreamsAround(stream, uiState.streams)
+                },
+                onSelectSubtitle = { sub: Subtitle? ->
+                    if (sub == null) viewModel.disableSubtitles()
+                    else viewModel.selectSubtitle(sub)
+                },
+                onSelectAudioTrack = { track: AudioTrackInfo ->
+                    userPickedAudioForStream = true
+                    applyAudioTrackSelection(exoPlayer, track, audioTracks)?.let {
+                        selectedAudioIndex = it
+                    }
+                },
+                onPlayNextEpisode = {
+                    val next = nextEpisodeIdentity ?: return@ArvioTvPlayer
+                    val selected = uiState.selectedStream
+                    playNextEpisode(
+                        next,
+                        selected?.addonId?.takeIf { it.isNotBlank() },
+                        selected?.source?.takeIf { it.isNotBlank() },
+                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    )
+                },
+                onDismissSkipIntro = { viewModel.dismissSkipInterval() },
+                onPlayPendingNextEpisode = playPendingNextEpisode,
+                onCancelNextEpisodePrompt = cancelNextEpisodePrompt,
+                onUpdateSubtitleDelay = { delayMs: Long -> subtitleSyncOffsetMs = delayMs },
+                onUpdateSubtitleSize = { sizePct: Int ->
+                    subtitleSizePct = sizePct
+                    viewModel.setSubtitleSizePref(when {
+                        sizePct <= 80 -> "Small"
+                        sizePct >= 120 -> "Large"
+                        else -> "Medium"
+                    })
+                },
+                onUpdateSubtitleVerticalPosition = { posPct: Int ->
+                    subtitleVerticalPct = posPct
+                    viewModel.setSubtitleOffsetPref(if (posPct >= 20) "High" else "Bottom")
+                },
+                onRetryPlayback = { viewModel.retry() },
+                onBack = onBack
+            )
         }
 
     }
