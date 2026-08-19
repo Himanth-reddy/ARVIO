@@ -95,7 +95,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             val savedUserAgent = prefs[uaKey].orEmpty()
             OkHttpProvider.setCustomUserAgent(savedUserAgent)
 
-            runCatching { OkHttpProvider.dns.lookup("image.tmdb.org") }
+            try { OkHttpProvider.dns.lookup("image.tmdb.org") } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
         }
 
         DiagnosticsManager.initialize(this)
@@ -122,9 +122,9 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         cloudSyncRepository.onPushCompleted = { realtimeSyncManager.markPush() }
 
         appScope.launch {
-            runCatching { profileManager.initialize() }
+            try { profileManager.initialize() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
             // Preload watchlist cache in background for instant display
-            runCatching { watchlistRepository.getWatchlistItems() }
+            try { watchlistRepository.getWatchlistItems() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
             delay(2_500L)
             cloudSyncCoordinator.start()
             if (!authRepository.getCurrentUserId().isNullOrBlank()) {
@@ -134,7 +134,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
                 // Pull early enough that reopening the app feels like an actual
                 // sync, while still letting the first frame and profile bootstrap land.
                 delay(3_000L)
-                runCatching { cloudSyncRepository.pullFromCloud() }
+                try { cloudSyncRepository.pullFromCloud() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
             }
         }
 
@@ -162,7 +162,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
                             if (BuildConfig.ENABLE_REALTIME_CLOUD_SYNC) {
                                 realtimeSyncManager.start()
                             }
-                            runCatching { cloudSyncRepository.pullFromCloud() }
+                            try { cloudSyncRepository.pullFromCloud() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
                         }
                     }
                     AuthState.NotAuthenticated -> {
@@ -250,7 +250,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         appImageLoader?.memoryCache?.clear()
         // Settings can replace Coil's global loader after DNS changes; clear the
         // active loader too so memory-pressure callbacks always affect what UI uses.
-        runCatching { imageLoader.memoryCache?.clear() }
+        try { imageLoader.memoryCache?.clear() } catch (e: Exception) { AppLogger.recordException(e) }
     }
 
     private fun isLowRamDevice(): Boolean {
