@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import com.arflix.tv.util.AppLogger
 import android.view.ViewTreeObserver
 import android.view.WindowManager
 import com.arflix.tv.R
@@ -256,7 +257,7 @@ class MainActivity : ComponentActivity() {
         }
 
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { iptvRepository.get().warmupFromCacheOnly() }
+            try { iptvRepository.get().warmupFromCacheOnly() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
         }
 
         setContent {
@@ -387,9 +388,9 @@ class MainActivity : ComponentActivity() {
             ArflixApplication.instance.scheduleTraktSyncIfNeeded()
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val repo = iptvRepository.get()
-                runCatching { repo.warmupFromCacheOnly() }
+                try { repo.warmupFromCacheOnly() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
                 kotlinx.coroutines.delay(60_000L)
-                runCatching { repo.prefetchFreshStartupData() }
+                try { repo.prefetchFreshStartupData() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; AppLogger.recordException(e) }
             }
         }
     }

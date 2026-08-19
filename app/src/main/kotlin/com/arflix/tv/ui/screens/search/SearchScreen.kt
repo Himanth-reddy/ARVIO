@@ -286,12 +286,12 @@ fun SearchScreen(
         // the screen is composed then immediately navigated away). Swallow that
         // specific case so it doesn't surface to the user as a crash — TalkBack
         // focus will re-claim on next frame.
-        if (!isTouchDevice) runCatching { searchFocusRequester.requestFocus() }
+        if (!isTouchDevice) try { searchFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
     LaunchedEffect(isSearchEditing, searchEditRequestNonce) {
         if (isSearchEditing) {
-            runCatching { textInputFocusRequester.requestFocus() }
+            try { textInputFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
             keyboardController?.show()
         }
     }
@@ -302,7 +302,7 @@ fun SearchScreen(
         if (isSearchEditing) {
             isSearchEditing = false
             keyboardController?.hide()
-            runCatching { searchFocusRequester.requestFocus() }
+            try { searchFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
         } else {
             when (focusZone) {
                 FocusZone.RESULTS -> {
@@ -336,7 +336,7 @@ fun SearchScreen(
             if (isSearchEditing && (event.key == Key.Back || event.key == Key.Escape)) {
                 isSearchEditing = false
                 keyboardController?.hide()
-                runCatching { searchFocusRequester.requestFocus() }
+                try { searchFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                 return@onPreviewKeyEvent true
             }
             val effectiveKey = when (event.key) {
@@ -445,7 +445,7 @@ fun SearchScreen(
                             focusedFilterIndex--
                         } else {
                             focusZone = FocusZone.SEARCH_INPUT
-                            runCatching { searchFocusRequester.requestFocus() }
+                            try { searchFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                         }
                         true
                     }
@@ -558,7 +558,7 @@ fun SearchScreen(
                         if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
                             focusedFilterIndex = 0
-                            runCatching { filtersFocusRequester.requestFocus() }
+                            try { filtersFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                         } else if (activeCategories.isNotEmpty() || hasAiResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
                             focusZone = FocusZone.RESULTS
@@ -585,7 +585,7 @@ fun SearchScreen(
                     },
                     onMoveUp = {
                         focusZone = FocusZone.SEARCH_INPUT
-                        runCatching { searchFocusRequester.requestFocus() }
+                        try { searchFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                     },
                     onMoveDown = {
                         if (activeCategories.isNotEmpty() || hasAiResults) {
@@ -600,7 +600,7 @@ fun SearchScreen(
                             focusedFilterIndex--
                         } else {
                             focusZone = FocusZone.SEARCH_INPUT
-                            runCatching { searchFocusRequester.requestFocus() }
+                            try { searchFocusRequester.requestFocus() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                         }
                     },
                     onMoveRight = {

@@ -152,7 +152,7 @@ class SearchViewModel @Inject constructor(
                     val logos = allItems.map { item ->
                         async {
                             val key = "${item.mediaType}_${item.id}"
-                            val logo = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }.getOrNull()
+                            val logo = try { mediaRepository.getLogoUrl(item.mediaType, item.id) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
                             if (logo.isNullOrBlank()) null else key to logo
                         }
                     }.awaitAll().filterNotNull().toMap()
@@ -303,7 +303,7 @@ class SearchViewModel @Inject constructor(
                 val movies = sorted.filter { it.mediaType == MediaType.MOVIE }; val tv = sorted.filter { it.mediaType == MediaType.TV }
                 val personItems = peopleRows.flatMap { it.items }
                 val top = (personItems.take(24) + movies.take(16) + tv.take(16)).distinctBy { "${it.mediaType}_${it.id}" }
-                val logos = withContext(Dispatchers.IO) { top.map { item -> async { val k = "${item.mediaType}_${item.id}"; val l = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }.getOrNull(); if (l.isNullOrBlank()) null else k to l } }.awaitAll().filterNotNull().toMap() }
+                val logos = withContext(Dispatchers.IO) { top.map { item -> async { val k = "${item.mediaType}_${item.id}"; val l = try { mediaRepository.getLogoUrl(item.mediaType, item.id) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }; if (l.isNullOrBlank()) null else k to l } }.awaitAll().filterNotNull().toMap() }
                 _uiState.value = _uiState.value.copy(isLoading = false, results = sorted, movieResults = movies, tvResults = tv, personResults = peopleRows, cardLogoUrls = logos)
             } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e
  _uiState.value = _uiState.value.copy(isLoading = false, error = e.message) }

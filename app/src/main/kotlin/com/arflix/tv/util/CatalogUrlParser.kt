@@ -40,7 +40,7 @@ data object CatalogUrlParser {
     }
 
     fun parseTrakt(url: String): ParsedCatalogUrl? {
-        val uri = runCatching { URI(normalize(url)) }.getOrNull() ?: return null
+        val uri = try { URI(normalize(url)) } catch (e: java.net.URISyntaxException) { null } ?: return null
         if (!isTraktHost(uri.host ?: return null)) return null
         val parts = uri.path.trim('/').split('/').filter { it.isNotBlank() }
         if (parts.size >= 4 && parts[0] == "users" && parts[2] == "lists") {
@@ -54,7 +54,7 @@ data object CatalogUrlParser {
 
     private fun isTraktHost(urlOrHost: String): Boolean {
         val host = if (urlOrHost.contains("://")) {
-            runCatching { URI(urlOrHost).host.orEmpty() }.getOrDefault("")
+            try { URI(urlOrHost).host.orEmpty() } catch (e: java.net.URISyntaxException) { "" }
         } else {
             urlOrHost
         }.lowercase()
@@ -63,7 +63,7 @@ data object CatalogUrlParser {
 
     private fun isMdblistHost(urlOrHost: String): Boolean {
         val host = if (urlOrHost.contains("://")) {
-            runCatching { URI(urlOrHost).host.orEmpty() }.getOrDefault("")
+            try { URI(urlOrHost).host.orEmpty() } catch (e: java.net.URISyntaxException) { "" }
         } else {
             urlOrHost
         }.lowercase()
