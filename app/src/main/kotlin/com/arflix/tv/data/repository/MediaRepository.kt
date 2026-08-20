@@ -2723,7 +2723,7 @@ class MediaRepository @Inject constructor(
     }
 
     private fun decodeCatalogRefPart(value: String): String {
-        return runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+        return try { URLDecoder.decode(value, "UTF-8") } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; value }
     }
 
     private fun normalizeAddonCatalogType(rawType: String?): String? {
@@ -3730,7 +3730,7 @@ class MediaRepository @Inject constructor(
 
     private fun parseMdblistJson(payload: String): List<Pair<MediaType, Int>> {
         val type = TypeToken.getParameterized(List::class.java, TypeToken.getParameterized(Map::class.java, String::class.java, Any::class.java).type).type
-        val rows = runCatching { gson.fromJson<List<Map<String, Any?>>>(payload, type) }.getOrNull()
+        val rows = try { gson.fromJson<List<Map<String, Any?>>>(payload, type) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             ?: return emptyList()
 
         return rows.mapNotNull { row ->

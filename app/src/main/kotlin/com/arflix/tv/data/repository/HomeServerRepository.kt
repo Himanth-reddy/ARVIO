@@ -2462,7 +2462,7 @@ class HomeServerRepository @Inject constructor(
             rating = string("CommunityRating").toDoubleOrNull(),
             primaryImageTag = obj("ImageTags")?.string("Primary").orEmpty().ifBlank { string("PrimaryImageTag") },
             backdropImageTag = array("BackdropImageTags").firstOrNull()?.asStringOrNull().orEmpty(),
-            addedAt = runCatching { Instant.parse(string("DateCreated")).toEpochMilli() }.getOrDefault(0L),
+            addedAt = try { Instant.parse(string("DateCreated")).toEpochMilli() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0L },
             librarySectionId = "",
             indexNumber = int("IndexNumber"),
             parentIndexNumber = int("ParentIndexNumber"),
