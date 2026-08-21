@@ -14,6 +14,7 @@ import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import com.google.gson.JsonSyntaxException
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -41,6 +42,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.text.Normalizer
 import java.time.Instant
+import java.time.format.DateTimeParseException
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -2462,7 +2464,7 @@ class HomeServerRepository @Inject constructor(
             rating = string("CommunityRating").toDoubleOrNull(),
             primaryImageTag = obj("ImageTags")?.string("Primary").orEmpty().ifBlank { string("PrimaryImageTag") },
             backdropImageTag = array("BackdropImageTags").firstOrNull()?.asStringOrNull().orEmpty(),
-            addedAt = runCatching { Instant.parse(string("DateCreated")).toEpochMilli() }.getOrDefault(0L),
+            addedAt = try { Instant.parse(string("DateCreated")).toEpochMilli() } catch (e: DateTimeParseException) { 0L } catch (e: NullPointerException) { 0L },
             librarySectionId = "",
             indexNumber = int("IndexNumber"),
             parentIndexNumber = int("ParentIndexNumber"),
@@ -2571,10 +2573,14 @@ class HomeServerRepository @Inject constructor(
         .replace("&gt;", ">")
 
     private fun parsePlexIdentity(body: String): Pair<String, String> {
-        val container = runCatching {
+        val container = try {
             val json = JsonParser().parse(body).asJsonObjectOrNull()
             json?.obj("MediaContainer") ?: json
-        }.getOrNull()
+        } catch (e: JsonSyntaxException) {
+            null
+        } catch (e: IllegalStateException) {
+            null
+        }
         val name = container?.string("friendlyName").orEmpty()
         val id = container?.string("machineIdentifier").orEmpty()
         if (name.isNotBlank() || id.isNotBlank()) {

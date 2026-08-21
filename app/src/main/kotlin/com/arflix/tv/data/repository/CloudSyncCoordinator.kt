@@ -43,6 +43,7 @@ class CloudSyncCoordinator @Inject constructor(
             Log.w("CloudSyncCoordinator", "Network error retrieving sync user ID", e)
             null
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Log.w("CloudSyncCoordinator", "Failed to retrieve sync user ID", e)
             null
         }
