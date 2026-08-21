@@ -10,6 +10,7 @@ import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.traktDataStore
 import com.google.gson.Gson
+import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -152,7 +153,7 @@ class WatchlistRepository @Inject constructor(
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
-            AppLogger.recordException(
+            com.arflix.tv.util.AppLogger.recordException(
                 throwable = error,
                 context = mapOf(
                     "error_area" to "WatchlistRepository",
@@ -384,7 +385,7 @@ class WatchlistRepository @Inject constructor(
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
-            AppLogger.recordException(
+            com.arflix.tv.util.AppLogger.recordException(
                 throwable = error,
                 context = mapOf(
                     "error_area" to "WatchlistRepository",
@@ -404,7 +405,7 @@ class WatchlistRepository @Inject constructor(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            AppLogger.recordException(
+            com.arflix.tv.util.AppLogger.recordException(
                 throwable = e,
                 context = mapOf(
                     "error_area" to "WatchlistRepository",
@@ -445,7 +446,7 @@ class WatchlistRepository @Inject constructor(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            AppLogger.recordException(
+            com.arflix.tv.util.AppLogger.recordException(
                 throwable = e,
                 context = mapOf(
                     "error_area" to "WatchlistRepository",
@@ -468,7 +469,7 @@ class WatchlistRepository @Inject constructor(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            AppLogger.recordException(
+            com.arflix.tv.util.AppLogger.recordException(
                 throwable = e,
                 context = mapOf(
                     "error_area" to "WatchlistRepository",
@@ -495,7 +496,7 @@ class WatchlistRepository @Inject constructor(
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
-            AppLogger.recordException(
+            com.arflix.tv.util.AppLogger.recordException(
                 throwable = error,
                 context = mapOf(
                     "error_area" to "WatchlistRepository",
@@ -563,13 +564,19 @@ class WatchlistRepository @Inject constructor(
 
     private fun parseWatchlistItems(json: String?): List<LocalWatchlistItem> {
         if (json.isNullOrBlank()) return emptyList()
-        return runCatching {
+        return try {
             val type = TypeToken.getParameterized(
                 MutableList::class.java,
                 LocalWatchlistItem::class.java
             ).type
-            gson.fromJson<List<LocalWatchlistItem>>(json, type).orEmpty()
-        }.getOrDefault(emptyList())
+            gson.fromJson<List<LocalWatchlistItem>>(json, type) ?: emptyList()
+        } catch (e: JsonSyntaxException) {
+            com.arflix.tv.util.AppLogger.e("WatchlistRepository", "Failed to parse watchlist JSON", e)
+            emptyList()
+        } catch (e: IllegalStateException) {
+            com.arflix.tv.util.AppLogger.e("WatchlistRepository", "Invalid watchlist JSON structure", e)
+            emptyList()
+        }
     }
 
     /**
@@ -586,7 +593,7 @@ class WatchlistRepository @Inject constructor(
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
-            AppLogger.breadcrumb(
+            com.arflix.tv.util.AppLogger.breadcrumb(
                 tag = "Watchlist",
                 message = "enrich_failed media_type=${item.mediaType} error=${error::class.java.simpleName}",
                 severity = "warning"
