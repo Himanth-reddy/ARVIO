@@ -634,6 +634,7 @@ class SimklSyncService @Inject constructor(
                 false
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("SimklSyncService", "Error adding to watchlist: ${e.message}")
             false
         }
@@ -687,6 +688,7 @@ class SimklSyncService @Inject constructor(
                 false
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("SimklSyncService", "Error removing from watchlist: ${e.message}")
             false
         }
@@ -724,6 +726,7 @@ class SimklSyncService @Inject constructor(
                 false
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("SimklSyncService", "Error marking watched: ${e.message}")
             false
         }
@@ -761,6 +764,7 @@ class SimklSyncService @Inject constructor(
                 false
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("SimklSyncService", "Error marking unwatched: ${e.message}")
             false
         }
@@ -812,6 +816,7 @@ class SimklSyncService @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("SimklSyncService", "Error updating season history: ${e.message}")
             false
         }
@@ -850,6 +855,7 @@ class SimklSyncService @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("SimklSyncService", "Error deleting playback: ${e.message}")
             false
         }

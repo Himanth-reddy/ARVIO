@@ -8496,10 +8496,13 @@ class IptvRepository @Inject constructor(
         if (iptvMovieSourceCacheHydrated) return
         // Deserialize outside the lock so concurrent callers don't queue on the monitor
         // waiting for a potentially large JSON parse.
-        val loaded: Map<String, CachedIptvMovieSources> = runCatching {
+        val loaded: Map<String, CachedIptvMovieSources> = try {
             val raw = iptvMovieSourcePrefs.getString(iptvMovieSourcePrefsKey, null)
             if (!raw.isNullOrBlank()) gson.fromJson(raw, PersistedMovieSourceCache::class.java)?.items else null
-        }.getOrNull().orEmpty()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }.orEmpty()
         synchronized(iptvMovieSourceLock) {
             if (iptvMovieSourceCacheHydrated) return
             iptvMovieSourceMemory.putAll(loaded)
@@ -8537,7 +8540,10 @@ class IptvRepository @Inject constructor(
     }
 
     private fun profileIdHash(): String {
-        val raw = runCatching { profileManager.getProfileIdSync() }.getOrDefault("default")
+        val raw = try { profileManager.getProfileIdSync() } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            "default"
+        }
         cachedProfileIdHashPair?.let { (cachedRaw, cachedHash) ->
             if (cachedRaw == raw) return cachedHash
         }
@@ -8585,10 +8591,12 @@ class IptvRepository @Inject constructor(
                 val snapshot = synchronized(iptvMovieSourceLock) {
                     PersistedMovieSourceCache(iptvMovieSourceMemory.toMap())
                 }
-                runCatching {
+                try {
                     iptvMovieSourcePrefs.edit()
                         .putString(iptvMovieSourcePrefsKey, gson.toJson(snapshot))
                         .apply()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                 }
             }
         }
@@ -8598,7 +8606,9 @@ class IptvRepository @Inject constructor(
         synchronized(iptvMovieSourceLock) {
             iptvMovieSourceMemory.clear()
         }
-        runCatching { iptvMovieSourcePrefs.edit().remove(iptvMovieSourcePrefsKey).apply() }
+        try { iptvMovieSourcePrefs.edit().remove(iptvMovieSourcePrefsKey).apply() } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
         synchronized(iptvPersistLock) { iptvMovieSourcePersistJob?.cancel() }
     }
 

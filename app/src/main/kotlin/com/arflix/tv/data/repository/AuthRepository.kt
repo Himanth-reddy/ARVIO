@@ -1986,7 +1986,7 @@ class AuthRepository @Inject constructor(
     private suspend fun saveAccountSyncPayloadToUserSettings(userId: String, payload: String): Result<Unit> {
         return try {
             ensureValidSession()
-            val existingSettings = runCatching {
+            val existingSettings = try {
                 supabase.postgrest
                     .from("user_settings")
                     .select {
@@ -1994,7 +1994,10 @@ class AuthRepository @Inject constructor(
                     }
                     .decodeSingleOrNull<UserSettingsAccountSyncRow>()
                     ?.settings
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }
 
             val updatedSettings = buildJsonObject {
                 existingSettings?.forEach { (key, value) -> put(key, value) }
@@ -2051,7 +2054,7 @@ class AuthRepository @Inject constructor(
     private suspend fun saveAccountSyncPayloadToProfileAddons(userId: String, payload: String): Result<Unit> {
         return try {
             ensureValidSession()
-            val existingAddons = runCatching {
+            val existingAddons = try {
                 supabase.postgrest
                     .from("profiles")
                     .select {
@@ -2059,7 +2062,10 @@ class AuthRepository @Inject constructor(
                     }
                     .decodeSingleOrNull<ProfileAccountSyncRow>()
                     ?.addons
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }
 
             val encoded = encodeProfileAccountSyncPayload(existingAddons, payload)
             supabase.postgrest
@@ -2087,25 +2093,34 @@ class AuthRepository @Inject constructor(
 
     private fun decodeProfileAccountSyncPayload(raw: String?): String? {
         if (raw.isNullOrBlank()) return null
-        return runCatching {
+        return try {
             val obj = JSONObject(raw)
             obj.optString(PROFILE_SYNC_PAYLOAD_KEY).takeIf { it.isNotBlank() }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     private fun decodeProfileAccountSyncUpdatedAt(raw: String?): Long {
         if (raw.isNullOrBlank()) return 0L
-        return runCatching {
+        return try {
             val obj = JSONObject(raw)
             parseInstantMillis(obj.optString(PROFILE_SYNC_UPDATED_AT_KEY))
-        }.getOrDefault(0L)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            0L
+        }
     }
 
     private fun payloadUpdatedAtMillis(payload: String?): Long {
         if (payload.isNullOrBlank()) return 0L
-        return runCatching {
+        return try {
             JSONObject(payload).optLong("updatedAt", 0L)
-        }.getOrDefault(0L)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            0L
+        }
     }
 
     private fun parseInstantMillis(value: String?): Long {
@@ -2127,9 +2142,12 @@ class AuthRepository @Inject constructor(
         ) {
             existing
         } else {
-            runCatching {
+            try {
                 JSONObject(existing).optString(PROFILE_SYNC_LEGACY_ADDONS_KEY)
-            }.getOrNull().orEmpty()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }.orEmpty()
         }
         return JSONObject().apply {
             put(PROFILE_SYNC_PAYLOAD_KEY, payload)

@@ -305,15 +305,22 @@ class LauncherContinueWatchingRepository @Inject constructor(
     }
 
     private fun runTvProviderCall(action: String, block: () -> Unit) {
-        runCatching(block).onFailure { error ->
+        try {
+            block()
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
             AppLogger.w(TAG, "Skipping launcher publish action: $action", error)
         }
     }
 
     private fun <T> runTvProviderCall(action: String, fallback: T, block: () -> T): T {
-        return runCatching(block).onFailure { error ->
+        return try {
+            block()
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
             AppLogger.w(TAG, "Skipping launcher publish action: $action", error)
-        }.getOrDefault(fallback)
+            fallback
+        }
     }
 
     private fun buildLaunchIntent(item: ContinueWatchingItem): Intent {

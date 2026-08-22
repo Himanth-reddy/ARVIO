@@ -3730,8 +3730,12 @@ class MediaRepository @Inject constructor(
 
     private fun parseMdblistJson(payload: String): List<Pair<MediaType, Int>> {
         val type = TypeToken.getParameterized(List::class.java, TypeToken.getParameterized(Map::class.java, String::class.java, Any::class.java).type).type
-        val rows = runCatching { gson.fromJson<List<Map<String, Any?>>>(payload, type) }.getOrNull()
-            ?: return emptyList()
+        val rows = try {
+            gson.fromJson<List<Map<String, Any?>>>(payload, type)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        } ?: return emptyList()
 
         return rows.mapNotNull { row ->
             val tmdbId = sequenceOf("tmdb_id", "tmdb", "tmdbId", "id")
@@ -3757,12 +3761,15 @@ class MediaRepository @Inject constructor(
             .url(url)
             .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
             .build()
-        return runCatching {
+        return try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 response.body?.string()
             }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 }
 private fun Any?.toIntSafe(): Int? {
