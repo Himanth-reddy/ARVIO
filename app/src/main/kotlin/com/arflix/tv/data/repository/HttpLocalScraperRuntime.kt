@@ -769,11 +769,21 @@ class HttpLocalScraperRuntime @Inject constructor(
     }
 
     private suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JsonObject? {
-        return runCatching { gson.fromJson(getText(url, headers), JsonObject::class.java) }.getOrNull()
+        return try {
+            gson.fromJson(getText(url, headers), JsonObject::class.java)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     private suspend fun getJsonElement(url: String, headers: Map<String, String> = emptyMap()): JsonElement? {
-        return runCatching { gson.fromJson(getText(url, headers), JsonElement::class.java) }.getOrNull()
+        return try {
+            gson.fromJson(getText(url, headers), JsonElement::class.java)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     private suspend fun resolveRedirectUrl(url: String, headers: Map<String, String>): String? = withContext(Dispatchers.IO) {
@@ -796,7 +806,12 @@ class HttpLocalScraperRuntime @Inject constructor(
             .build()
         okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@withContext null
-            runCatching { gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java) }.getOrNull()
+            try {
+                gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }
         }
     }
 
@@ -807,7 +822,12 @@ class HttpLocalScraperRuntime @Inject constructor(
     }
 
     private fun githubManifestUrlFor(url: String): String? {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        val uri = try {
+            URI(url)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        } ?: return null
         val host = uri.host?.lowercase(Locale.US) ?: return null
         val parts = uri.path.trim('/').split('/').filter { it.isNotBlank() }
         if (parts.size < 2) return null
@@ -905,9 +925,11 @@ class HttpLocalScraperRuntime @Inject constructor(
     private fun JsonObject.getArray(name: String): JsonArray? = get(name)?.asJsonArrayOrNull()
     private fun JsonElement.asJsonObjectOrNull(): JsonObject? = if (isJsonObject) asJsonObject else null
     private fun JsonElement.asJsonArrayOrNull(): JsonArray? = if (isJsonArray) asJsonArray else null
-    private fun JsonElement.asStringOrNull(): String? = runCatching {
+    private fun JsonElement.asStringOrNull(): String? = try {
         if (isJsonNull) null else asString
-    }.getOrNull()?.takeIf { it.isNotBlank() }
+    } catch (e: Exception) {
+        null
+    }?.takeIf { it.isNotBlank() }
 
     private data class HttpScraperManifest(
         val name: String = "",
