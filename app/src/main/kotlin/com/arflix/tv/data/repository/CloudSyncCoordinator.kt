@@ -115,6 +115,7 @@ class CloudSyncCoordinator @Inject constructor(
                     cloudSyncRepository.markLocalStateDirty()
                     CloudSyncWorker.enqueueRecovery(context)
                 } catch (error: Exception) {
+                    if (error is CancellationException) throw error
                     Log.w("CloudSyncCoordinator", "Cloud push failed after ${invalidation.scope}: ${error.message}")
                     cloudSyncRepository.markLocalStateDirty()
                     CloudSyncWorker.enqueueRecovery(context)
