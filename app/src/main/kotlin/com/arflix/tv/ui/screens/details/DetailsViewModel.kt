@@ -383,9 +383,13 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 suspend fun <T> loadDetailsPart(label: String, block: suspend () -> T): T? {
-                    return runCatching { block() }
-                        .onFailure { logDetailsLoadFailure(label, it) }
-                        .getOrNull()
+                    return try {
+                        block()
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        logDetailsLoadFailure(label, e)
+                        null
+                    }
                 }
 
                 val itemDeferred = async {
@@ -641,7 +645,12 @@ class DetailsViewModel @Inject constructor(
 
                 launch {
                     delay(180L)
-                    val trailerKey = runCatching { mediaRepository.getTrailerKey(mediaType, mediaId) }.getOrNull()
+                    val trailerKey = try {
+                        mediaRepository.getTrailerKey(mediaType, mediaId)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        null
+                    }
                     if (trailerKey != null) {
                         updateState { state -> state.copy(trailerKey = trailerKey) }
                     }
