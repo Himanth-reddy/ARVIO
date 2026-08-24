@@ -563,13 +563,18 @@ class WatchlistRepository @Inject constructor(
 
     private fun parseWatchlistItems(json: String?): List<LocalWatchlistItem> {
         if (json.isNullOrBlank()) return emptyList()
-        return runCatching {
+        return try {
             val type = TypeToken.getParameterized(
                 MutableList::class.java,
                 LocalWatchlistItem::class.java
             ).type
-            gson.fromJson<List<LocalWatchlistItem>>(json, type).orEmpty()
-        }.getOrDefault(emptyList())
+            gson.fromJson<List<LocalWatchlistItem>>(json, type) ?: emptyList()
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            emptyList()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            emptyList()
+        }
     }
 
     /**

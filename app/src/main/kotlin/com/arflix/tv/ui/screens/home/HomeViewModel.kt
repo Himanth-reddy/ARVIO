@@ -1613,7 +1613,11 @@ class HomeViewModel @Inject constructor(
                 // then the authoritative Trakt data (with correct subtitle/resume label)
                 // replaces it when the fetch completes.
                 refreshContinueWatchingOnly(force = true)
-                runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                try {
+                    launcherContinueWatchingRepository.refreshForCurrentProfile()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
         }
 
@@ -1652,7 +1656,11 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             realtimeSyncManager.accountSyncEvents.collect {
                 loadHomeData()
-                runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                try {
+                    launcherContinueWatchingRepository.refreshForCurrentProfile()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
         }
 
@@ -3436,7 +3444,11 @@ class HomeViewModel @Inject constructor(
             // device's state on top of it — preventing stale overwrites.
             if (cloudSyncRepository.isPushDirty) {
                 android.util.Log.i("HomeViewModel", "Retrying dirty push before pull")
-                runCatching { cloudSyncRepository.pushToCloud() }
+                try {
+                    cloudSyncRepository.pushToCloud()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
             val result = runCatching {
                 cloudSyncRepository.pullFromCloud()
@@ -4527,12 +4539,20 @@ class HomeViewModel @Inject constructor(
                         )
                     }
                 }
-                runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                try {
+                    launcherContinueWatchingRepository.refreshForCurrentProfile()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
                 // Push cloud snapshot so other devices see the watched-status change
                 // and the updated Continue Watching entry. Without this, the snapshot
                 // (localCW, localWatchedMovies, localWatchedEpisodes, dismissedCW)
                 // was never updated — only the Supabase watch_history table was.
-                runCatching { cloudSyncRepository.pushToCloud() }
+                try {
+                    cloudSyncRepository.pushToCloud()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
@@ -4642,9 +4662,17 @@ class HomeViewModel @Inject constructor(
                         )
                     }
                 }
-                runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                try {
+                    launcherContinueWatchingRepository.refreshForCurrentProfile()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
                 // Push cloud snapshot so other devices see watched status + CW update
-                runCatching { cloudSyncRepository.pushToCloud() }
+                try {
+                    cloudSyncRepository.pushToCloud()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
@@ -4674,7 +4702,11 @@ class HomeViewModel @Inject constructor(
                 remoteSyncManager.dismissContinueWatching(item.mediaType, item.id, season, episode)
                 traktRepository.removeFromContinueWatchingCache(item.id, null, null, item.mediaType)
                 traktRepository.dismissContinueWatching(item)
-                runCatching { cloudSyncRepository.pushToCloud() }
+                try {
+                    cloudSyncRepository.pushToCloud()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
 
                 val updatedCategories = _uiState.value.categories.map { category ->
                     if (category.id == "continue_watching") {
@@ -4691,7 +4723,11 @@ class HomeViewModel @Inject constructor(
                     toastMessage = context.getString(R.string.home_removed_continue_watching),
                     toastType = ToastType.SUCCESS
                 )
-                runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                try {
+                    launcherContinueWatchingRepository.refreshForCurrentProfile()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
                 updatedCategories.firstOrNull { it.id == "continue_watching" }?.let { category ->
                     lastContinueWatchingItems = category.items
                     lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
