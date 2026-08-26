@@ -181,6 +181,7 @@ fun ArvioMobilePlayer(
     var showControls by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
     var showLockAffordance by remember { mutableStateOf(false) }
+    var lockAffordanceTrigger by remember { mutableIntStateOf(0) }
 
     // Scrubbing State
     var isScrubbing by remember { mutableStateOf(false) }
@@ -212,6 +213,7 @@ fun ArvioMobilePlayer(
 
     BackHandler(enabled = isLocked) {
         showLockAffordance = true
+        lockAffordanceTrigger++
     }
 
     // Android system bars follow the player controls visibility state:
@@ -232,7 +234,7 @@ fun ArvioMobilePlayer(
     }
 
     // Lock affordance auto-hide (2.2s)
-    LaunchedEffect(showLockAffordance) {
+    LaunchedEffect(showLockAffordance, lockAffordanceTrigger) {
         if (showLockAffordance) {
             delay(2200)
             showLockAffordance = false
@@ -541,7 +543,7 @@ fun ArvioMobilePlayer(
             .fillMaxSize()
             // Multi-Tap Gesture Detection (Single Tap = Controls, Double Tap = Seek -10s/+10s, Triple Tap = Aspect Ratio)
             .pointerInput(isLocked, uiState.error, anyPanelOpen) {
-                if (isLocked || uiState.error != null) return@pointerInput
+                if (uiState.error != null) return@pointerInput
                 coroutineScope {
                     var tapCount = 0
                     var lastTapTime = 0L
@@ -581,6 +583,7 @@ fun ArvioMobilePlayer(
                                         if (count == 1) {
                                             if (isLocked) {
                                                 showLockAffordance = true
+                                                lockAffordanceTrigger++
                                             } else if (anyPanelOpen) {
                                                 closeAllPanels()
                                             } else if (uiState.error == null) {
