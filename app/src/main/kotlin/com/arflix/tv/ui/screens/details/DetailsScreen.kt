@@ -262,8 +262,6 @@ fun DetailsScreen(
     var showStreamSelector by remember { mutableStateOf(false) }
     var showTrailerPlayer by remember { mutableStateOf(false) }
     KeepScreenOn(active = showTrailerPlayer)
-    var pendingAutoPlayRequest by remember { mutableStateOf<PendingAutoPlayRequest?>(null) }
-    var autoPlayWaitTick by remember { mutableIntStateOf(0) }
 
     // Episode Context Menu state
     var showEpisodeContextMenu by remember { mutableStateOf(false) }
@@ -290,13 +288,34 @@ fun DetailsScreen(
             tmdbSeason = tmdbSeason,
             tmdbEpisode = tmdbEpisode
         )
-        viewModel.loadStreams(imdbId, identity)
-        autoPlayWaitTick = 0
-        pendingAutoPlayRequest = PendingAutoPlayRequest(
-            identity = identity,
-            startPositionMs = startPositionMs,
-            requestedAtMs = SystemClock.elapsedRealtime()
-        )
+        val validStreams = uiState.streams.filter(::isAutoPlayableStream)
+        val minThreshold = minQualityThreshold(uiState.autoPlayMinQuality)
+        val selectedStream = bestAutoPlayStream(validStreams, minThreshold)
+
+        viewModel.recordPlayedEpisode(mediaId, identity)
+        if (selectedStream != null && !uiState.isLoadingStreams) {
+            onNavigateToPlayer(
+                mediaType,
+                mediaId,
+                identity,
+                imdbId ?: uiState.imdbId,
+                selectedStream.url?.takeIf { it.isNotBlank() },
+                selectedStream.addonId.takeIf { it.isNotBlank() },
+                selectedStream.source.takeIf { it.isNotBlank() },
+                startPositionMs
+            )
+        } else {
+            onNavigateToPlayer(
+                mediaType,
+                mediaId,
+                identity,
+                imdbId ?: uiState.imdbId,
+                null,
+                null,
+                null,
+                startPositionMs
+            )
+        }
     }
 
     // Spoiler blur setting
@@ -364,59 +383,6 @@ fun DetailsScreen(
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
-    }
-
-    LaunchedEffect(
-        pendingAutoPlayRequest,
-        uiState.isLoadingStreams,
-        uiState.streams,
-        uiState.autoPlayMinQuality,
-        autoPlayWaitTick
-    ) {
-        val request = pendingAutoPlayRequest ?: return@LaunchedEffect
-
-        val validStreams = uiState.streams.filter(::isAutoPlayableStream)
-        val minThreshold = minQualityThreshold(uiState.autoPlayMinQuality)
-        val selectedStream = bestAutoPlayStream(validStreams, minThreshold)
-        val shouldWaitForSources = shouldWaitForAutoPlaySources(
-            isLoadingStreams = uiState.isLoadingStreams,
-            selectedStream = selectedStream,
-            elapsedMs = SystemClock.elapsedRealtime() - request.requestedAtMs
-        )
-
-        when {
-            selectedStream != null && !shouldWaitForSources -> {
-                val identity = request.identity
-                viewModel.recordPlayedEpisode(mediaId, identity)
-                onNavigateToPlayer(
-                    mediaType,
-                    mediaId,
-                    identity,
-                    uiState.imdbId,
-                    selectedStream.url?.takeIf { it.isNotBlank() },
-                    selectedStream.addonId.takeIf { it.isNotBlank() },
-                    selectedStream.source.takeIf { it.isNotBlank() },
-                    request.startPositionMs
-                )
-                pendingAutoPlayRequest = null
-            }
-            shouldWaitForSources -> {
-                delay(AUTOPLAY_SOURCE_RECHECK_MS)
-                autoPlayWaitTick += 1
-            }
-            uiState.isLoadingStreams -> Unit
-            validStreams.isNotEmpty() || uiState.streams.isNotEmpty() -> {
-                showStreamSelector = true
-                pendingAutoPlayRequest = null
-            }
-            else -> {
-                // When no streams found, show the StreamSelector with its
-                // friendly "no addons" / "no sources" empty state instead of
-                // navigating to the player which would show a scary error.
-                showStreamSelector = true
-                pendingAutoPlayRequest = null
-            }
-        }
     }
 
     // Place episode focus for whichever season is actually loaded. Keyed on currentSeason (which
@@ -543,7 +509,7 @@ fun DetailsScreen(
             val ep = state.episodes.getOrNull(idx)
             if (ep != null) {
                 episodeIndex = idx
-                if (isMobile || !state.autoPlaySingleSource) {
+                if (!state.autoPlaySingleSource) {
                     showStreamSelector = true
                     viewModel.loadStreams(state.imdbId, ep.identity)
                 } else {
@@ -1203,12 +1169,6 @@ fun DetailsScreen(
 private enum class FocusSection {
     BUTTONS, EPISODES, SEASONS, RATINGS, CAST, REVIEWS, SIMILAR, COLLECTION
 }
-
-private data class PendingAutoPlayRequest(
-    val identity: EpisodeIdentity?,
-    val startPositionMs: Long?,
-    val requestedAtMs: Long
-)
 
 private fun handleLeft(
     section: FocusSection,

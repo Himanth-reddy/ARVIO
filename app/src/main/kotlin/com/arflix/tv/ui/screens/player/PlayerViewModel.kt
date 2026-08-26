@@ -620,7 +620,7 @@ class PlayerViewModel @Inject constructor(
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber,
             streamProgress = null,
-            streamLoadPhase = null,
+            streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) "Searching for streams…" else "Preparing stream",
             sourceSearchActive = false,
             error = null,
             isSetupError = false
@@ -691,6 +691,7 @@ class PlayerViewModel @Inject constructor(
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
+                streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) "Searching for streams…" else "Preparing stream",
                 title = cachedItem?.title ?: currentItemTitle,
                 backdropUrl = cachedItem?.backdrop?.takeIf { it.isNotBlank() }
                     ?: cachedItem?.image?.takeIf { it.isNotBlank() },

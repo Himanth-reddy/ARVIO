@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
@@ -29,8 +30,10 @@ import androidx.compose.foundation.clickable
 import android.os.SystemClock
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -47,14 +50,17 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.arflix.tv.ui.screens.player.common.PlayerSystemBarsEffect
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.BrightnessHigh
@@ -84,6 +90,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -195,6 +202,23 @@ fun ArvioMobilePlayer(
         showSpeedSheet = false
         showMoreSettingsSheet = false
     }
+
+    BackHandler(enabled = anyPanelOpen) {
+        closeAllPanels()
+    }
+
+    BackHandler(enabled = isLocked) {
+        showLockAffordance = true
+    }
+
+    // Android system bars follow the player controls visibility state:
+    // Controls visible -> Show status bar and navigation bar
+    // Controls hidden (or locked) -> Hide status bar and navigation bar
+    val areControlsVisible = (showControls || anyPanelOpen) && !isLocked && uiState.error == null
+    PlayerSystemBarsEffect(
+        activity = activity,
+        showBars = areControlsVisible
+    )
 
     // Auto-hide controls after 3.4 seconds of inactivity when playing and no panel is open
     LaunchedEffect(showControls, isPlaying, isScrubbing, anyPanelOpen, isLocked) {
@@ -599,24 +623,17 @@ fun ArvioMobilePlayer(
                 .align(Alignment.CenterStart)
                 .pointerInput(isLocked, anyPanelOpen) {
                     if (isLocked || anyPanelOpen) return@pointerInput
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            brightnessIndicatorTrigger++
-                        },
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            val screenHeight = size.height.toFloat().coerceAtLeast(1f)
-                            val delta = -(dragAmount / screenHeight) * 1.5f
-                            val newLevel = (brightnessLevel + delta).coerceIn(0.01f, 1f)
+                    detectPlayerVerticalAdjustmentGesture(
+                        thresholdPx = 28.dp.toPx(),
+                        sensitivity = 0.95f,
+                        minValue = 0.01f,
+                        maxValue = 1.0f,
+                        getInitialValue = { brightnessLevel },
+                        onActivate = { brightnessIndicatorTrigger++ },
+                        onValueChange = { newLevel ->
                             brightnessLevel = newLevel
                             brightnessIndicatorTrigger++
                             setWindowBrightness(activity, newLevel)
-                        },
-                        onDragEnd = {
-                            brightnessIndicatorTrigger++
-                        },
-                        onDragCancel = {
-                            brightnessIndicatorTrigger++
                         }
                     )
                 }
@@ -630,25 +647,18 @@ fun ArvioMobilePlayer(
                 .align(Alignment.CenterEnd)
                 .pointerInput(isLocked, anyPanelOpen, maxVolume) {
                     if (isLocked || anyPanelOpen) return@pointerInput
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            volumeIndicatorTrigger++
-                        },
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            val screenHeight = size.height.toFloat().coerceAtLeast(1f)
-                            val delta = -(dragAmount / screenHeight) * 1.5f
-                            val newLevel = (volumeLevel + delta).coerceIn(0f, 1f)
+                    detectPlayerVerticalAdjustmentGesture(
+                        thresholdPx = 28.dp.toPx(),
+                        sensitivity = 0.95f,
+                        minValue = 0.0f,
+                        maxValue = 1.0f,
+                        getInitialValue = { volumeLevel },
+                        onActivate = { volumeIndicatorTrigger++ },
+                        onValueChange = { newLevel ->
                             volumeLevel = newLevel
                             volumeIndicatorTrigger++
                             val targetVol = (newLevel * maxVolume).roundToInt().coerceIn(0, maxVolume)
                             audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
-                        },
-                        onDragEnd = {
-                            volumeIndicatorTrigger++
-                        },
-                        onDragCancel = {
-                            volumeIndicatorTrigger++
                         }
                     )
                 }
@@ -718,17 +728,34 @@ fun ArvioMobilePlayer(
 
         // ── Main Controls Overlay (Top Bar, Center, Bottom) ──
         val layoutDirection = LocalLayoutDirection.current
-        val safeInsets = WindowInsets.safeDrawing.asPaddingValues()
-        val maxHorizontalPadding = maxOf(
-            safeInsets.calculateStartPadding(layoutDirection),
-            safeInsets.calculateEndPadding(layoutDirection),
-            24.dp
+        val systemBarsInsets = WindowInsets.systemBars.asPaddingValues()
+        val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+
+        // Combine live system bars and display cutout so controls avoid camera notches,
+        // status bar icons, and navigation bar buttons/pills on any edge
+        val startInset = maxOf(
+            systemBarsInsets.calculateStartPadding(layoutDirection),
+            cutoutInsets.calculateStartPadding(layoutDirection)
         )
-        val topSafePadding = (safeInsets.calculateTopPadding() + 8.dp).coerceAtLeast(16.dp)
-        val bottomSafePadding = (safeInsets.calculateBottomPadding() + 8.dp).coerceAtLeast(16.dp)
+        val endInset = maxOf(
+            systemBarsInsets.calculateEndPadding(layoutDirection),
+            cutoutInsets.calculateEndPadding(layoutDirection)
+        )
+        val maxHorizontalPadding = maxOf(startInset, endInset, 24.dp)
+
+        val topSafePadding = maxOf(
+            systemBarsInsets.calculateTopPadding() + 8.dp,
+            cutoutInsets.calculateTopPadding() + 12.dp,
+            16.dp
+        )
+        val bottomSafePadding = maxOf(
+            systemBarsInsets.calculateBottomPadding() + 8.dp,
+            cutoutInsets.calculateBottomPadding() + 12.dp,
+            16.dp
+        )
 
         AnimatedVisibility(
-            visible = showControls && !isLocked && uiState.error == null,
+            visible = hasPlaybackStarted && showControls && !isLocked && uiState.error == null,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(240)),
             modifier = Modifier.fillMaxSize()
@@ -841,7 +868,7 @@ fun ArvioMobilePlayer(
         }
 
         // ── Contextual Prompt Slot (Bottom Right: stable placement above bottom section) ──
-        if (!isLocked && uiState.error == null) {
+        if (hasPlaybackStarted && !isLocked && uiState.error == null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -897,12 +924,17 @@ fun ArvioMobilePlayer(
             modifier = Modifier.align(Alignment.Center)
         )
 
-        // ── Buffering Overlay ──
-        if (isBuffering && uiState.error == null) {
+        // ── Buffering Overlay (when controls are hidden) ──
+        AnimatedVisibility(
+            visible = hasPlaybackStarted && isBuffering && !showControls && !isLocked && uiState.error == null,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(200)),
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(15f)
+        ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(15f),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator(
@@ -1155,5 +1187,77 @@ private fun setWindowBrightness(activity: Activity?, brightness: Float) {
         val lp = window.attributes ?: return@let
         lp.screenBrightness = brightness.coerceIn(0.01f, 1.0f)
         window.attributes = lp
+    }
+}
+
+private enum class PlayerSwipeGestureState {
+    UNCLASSIFIED,
+    VERTICAL_ACTIVE,
+    HORIZONTAL_REJECTED
+}
+
+/**
+ * Shared vertical drag adjustment gesture handler for volume & brightness controls.
+ *
+ * Captures an activation baseline (activationDeltaY) once vertical dominance is established
+ * past [thresholdPx], then computes adjustments strictly from displacement past that baseline:
+ *   effectiveDeltaY = totalDeltaY - activationDeltaY
+ *   normalizedDelta = -effectiveDeltaY / playerHeight
+ *   newValue = initialValue + normalizedDelta * sensitivity
+ *
+ * This ensures:
+ * - Upward movements always strictly increase values (no sign reversal / threshold subtraction bug).
+ * - Downward movements always strictly decrease values.
+ * - Value is perfectly continuous at activation (zero jump).
+ * - Horizontal gestures and wobbles are safely filtered without breaking taps or seek gestures.
+ */
+private suspend fun PointerInputScope.detectPlayerVerticalAdjustmentGesture(
+    thresholdPx: Float,
+    sensitivity: Float = 0.95f,
+    minValue: Float,
+    maxValue: Float,
+    getInitialValue: () -> Float,
+    onActivate: () -> Unit,
+    onValueChange: (Float) -> Unit
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val initialPosition = down.position
+        val initialValue = getInitialValue()
+        val playerHeight = size.height.toFloat().coerceAtLeast(1f)
+
+        var gestureState = PlayerSwipeGestureState.UNCLASSIFIED
+        var activationDeltaY = 0f
+
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            if (!change.pressed) break
+
+            val currentPosition = change.position
+            val totalDeltaX = currentPosition.x - initialPosition.x
+            val totalDeltaY = currentPosition.y - initialPosition.y
+            val totalDistance = hypot(totalDeltaX, totalDeltaY)
+
+            if (gestureState == PlayerSwipeGestureState.UNCLASSIFIED) {
+                if (totalDistance >= thresholdPx) {
+                    if (abs(totalDeltaY) > abs(totalDeltaX) * 1.2f) {
+                        gestureState = PlayerSwipeGestureState.VERTICAL_ACTIVE
+                        activationDeltaY = totalDeltaY
+                        onActivate()
+                    } else if (abs(totalDeltaX) > abs(totalDeltaY) * 1.2f) {
+                        gestureState = PlayerSwipeGestureState.HORIZONTAL_REJECTED
+                    }
+                }
+            }
+
+            if (gestureState == PlayerSwipeGestureState.VERTICAL_ACTIVE) {
+                change.consume()
+                val effectiveDeltaY = totalDeltaY - activationDeltaY
+                val normalizedDelta = -effectiveDeltaY / playerHeight
+                val newValue = (initialValue + normalizedDelta * sensitivity).coerceIn(minValue, maxValue)
+                onValueChange(newValue)
+            }
+        }
     }
 }

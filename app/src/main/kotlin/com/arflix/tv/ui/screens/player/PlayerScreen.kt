@@ -369,41 +369,29 @@ fun PlayerScreen(
         !preferExtensionDecoder && !deviceType.isTouchDevice()
     }
 
+    // Remember the exact orientation state from before entering the player
+    val previousOrientation = remember(activity) {
+        activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+    }
+
     // Keep playback in landscape while the player is visible, regardless of the
     // device's auto-rotate lock. Restore the app's prior orientation afterward.
     DisposableEffect(activity) {
-        val previousOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
-            if (previousOrientation != null) {
-                activity.requestedOrientation = previousOrientation
-            }
+            activity?.requestedOrientation = previousOrientation
         }
     }
 
-    // On mobile, enable immersive fullscreen for the player and restore system bars on exit.
-    // TV is always in fullscreen so no change is needed there.
-    DisposableEffect(Unit) {
-        val window = activity?.window
-        if (window != null && deviceType != com.arflix.tv.util.DeviceType.TV) {
-            val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-            controller.systemBarsBehavior =
-                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose {
-            if (window != null && deviceType != com.arflix.tv.util.DeviceType.TV) {
-                @Suppress("DEPRECATION")
-                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-                controller.systemBarsBehavior =
-                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-                controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-                controller.isAppearanceLightStatusBars = false
-                controller.isAppearanceLightNavigationBars = false
-            }
+    // Synchronously restore orientation when leaving the player to prevent landscape stall on previous screen
+    val onExitPlayer: () -> Unit = remember(activity, onBack, previousOrientation) {
+        {
+            activity?.requestedOrientation = previousOrientation
+            onBack()
         }
     }
+
+
 
     // Initialize Cast SDK once on mobile entry. No-op on TV (CastState.NotAvailable).
     DisposableEffect(deviceType) {
@@ -581,7 +569,7 @@ fun PlayerScreen(
     }
     val cancelNextEpisodePrompt: () -> Unit = {
         showNextEpisodePrompt = false
-        onBack()
+        onExitPlayer()
     }
     var playerResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var subtitleMenuIndex by remember { mutableIntStateOf(0) }
@@ -2986,18 +2974,16 @@ fun PlayerScreen(
     }
 
     BackHandler(enabled = uiState.error != null) {
-        onBack()
+        onExitPlayer()
     }
 
     BackHandler(
         enabled = !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && !showSubtitleSettings && uiState.error == null
     ) {
-        if (showSkipOverlay) {
-            closeQuickSeekOverlay(false)
-        } else if (showControls) {
+        if (showControls && !deviceType.isTouchDevice()) {
             showControls = false
         } else {
-            onBack()
+            onExitPlayer()
         }
     }
 
@@ -3525,6 +3511,7 @@ fun PlayerScreen(
                     logoUrl = uiState.logoUrl,
                     title = uiState.title,
                     progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
+                    isTouchDevice = isTouchDevice,
                     // streamLoadPhase covers source discovery; startupPhase takes over from
                     // stream selection ("Loading subtitles…"/"Loading video stream…") until the
                     // first frame renders; switchNotice overlays both for 2.5s on failover.
@@ -3821,7 +3808,7 @@ fun PlayerScreen(
                 onUpdateSubtitlePosition = { pos ->
                     viewModel.setSubtitleOffsetPref(if (pos == "top") "High" else "Bottom")
                 },
-                onBack = onBack
+                onBack = onExitPlayer
             )
         }
 
@@ -3983,7 +3970,8 @@ private fun PulsingLogo(
     title: String,
     modifier: Modifier = Modifier,
     progress: Float? = null,
-    phaseLabel: String? = null
+    phaseLabel: String? = null,
+    isTouchDevice: Boolean = false
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "heartbeat")
     val scale by infiniteTransition.animateFloat(
@@ -4013,12 +4001,15 @@ private fun PulsingLogo(
         label = "progressFraction"
     )
 
+    val ringSize = if (isTouchDevice) 140.dp else 196.dp
+    val logoHeight = if (isTouchDevice) 100.dp else 152.dp
+
     Column(
         modifier = modifier.padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(196.dp),
+            modifier = Modifier.size(ringSize),
             contentAlignment = Alignment.Center
         ) {
             if (progress != null) {
@@ -4061,18 +4052,18 @@ private fun PulsingLogo(
                 if (!logoUrl.isNullOrBlank()) {
                     AsyncImage(
                         model = logoUrl, contentDescription = title, contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth(0.76f).height(152.dp)
+                        modifier = Modifier.fillMaxWidth(0.76f).height(logoHeight)
                     )
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(74.dp)
+                            .size(if (isTouchDevice) 56.dp else 74.dp)
                             .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(18.dp)
+                                .size(if (isTouchDevice) 14.dp else 18.dp)
                                 .background(Color.White.copy(alpha = 0.95f), CircleShape)
                         )
                     }
@@ -4081,17 +4072,20 @@ private fun PulsingLogo(
         }
 
         if (progress != null) {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Text(
                 text = "${(animatedProgress * 100f).toInt()}%",
-                style = ArflixTypography.sectionTitle.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+                style = ArflixTypography.sectionTitle.copy(
+                    fontSize = if (isTouchDevice) 18.sp else 22.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
                 color = Color.White
             )
         }
         // Independent of the progress ring: post-selection phases ("Loading video stream…",
         // "Loading subtitles…") have no meaningful percentage but still need to show.
         if (!phaseLabel.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(if (progress != null) 6.dp else 16.dp))
+            Spacer(modifier = Modifier.height(if (progress != null) 8.dp else 16.dp))
             Text(
                 text = phaseLabel,
                 style = ArflixTypography.caption,

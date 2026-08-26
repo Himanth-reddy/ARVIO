@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Replay10
 import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,6 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -196,7 +199,7 @@ fun MobilePlayerCenterControls(
 
         Spacer(modifier = Modifier.width(48.dp))
 
-        // Play/Pause (hidden during buffering)
+        // Play/Pause or Buffer Spinner
         Box(
             modifier = Modifier
                 .size(56.dp)
@@ -209,7 +212,13 @@ fun MobilePlayerCenterControls(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            if (!isBuffering) {
+            if (isBuffering) {
+                CircularProgressIndicator(
+                    color = MobilePlayerTokens.InkPrimary,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(38.dp)
+                )
+            } else {
                 Icon(
                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",
@@ -805,12 +814,22 @@ fun MobileIconButton(
     size: androidx.compose.ui.unit.Dp = 22.dp,
     tint: Color = MobilePlayerTokens.InkPrimary
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.88f else 1f,
+        animationSpec = tween(durationMillis = 100),
+        label = "icon_btn_scale"
+    )
+
     Box(
         modifier = modifier
-            .size(36.dp)
+            .size(38.dp)
+            .scale(scale)
             .clip(CircleShape)
+            .background(if (isPressed) Color.White.copy(alpha = 0.16f) else Color.Transparent)
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             ),
