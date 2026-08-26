@@ -159,7 +159,7 @@ fun MobileEpisodesDrawer(
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(episodes, key = { it.id }) { ep ->
+                    itemsIndexed(episodes, key = { index, ep -> "${index}_${ep.id}" }) { _, ep ->
                         val isActive = ep.episodeNumber == currentEpisodeNumber
                         EpisodeRow(
                             episode = ep,
@@ -341,7 +341,7 @@ fun MobileSourcesDrawer(
                             .padding(horizontal = 10.dp, vertical = 4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        items(effectiveStreams, key = { it.url ?: it.hashCode().toString() }) { stream ->
+                        itemsIndexed(effectiveStreams, key = { index, stream -> "${index}_${stream.addonId}_${stream.url}" }) { _, stream ->
                             val isActive = selectedStream?.url == stream.url
                             SourceRow(
                                 stream = stream,
@@ -580,7 +580,7 @@ fun MobileSubtitlesSheet(
                 }
 
                 // 2. Language Groups
-                items(subtitleGroups, key = { it.first }) { (langName, tracks) ->
+                itemsIndexed(subtitleGroups, key = { index, group -> "${index}_${group.first}" }) { _, (langName, tracks) ->
                     val isLangActive = langName == activeLangName
                     Row(
                         modifier = Modifier
@@ -653,7 +653,7 @@ fun MobileSubtitlesSheet(
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                itemsIndexed(tracksForLang, key = { _, sub -> sub.id }) { index, sub ->
+                itemsIndexed(tracksForLang, key = { index, sub -> "${index}_${sub.id}_${sub.url}" }) { index, sub ->
                     val isActive = selectedSubtitle?.id == sub.id
                     val trackTitle = sub.label.ifBlank { "$currentLang Track ${index + 1}" }
                     val isSdh = trackTitle.contains("sdh", ignoreCase = true) ||
