@@ -64,6 +64,7 @@ import com.arflix.tv.ui.screens.player.common.PlayerSystemBarsEffect
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Refresh
@@ -147,6 +148,7 @@ fun ArvioMobilePlayer(
     onEnterPip: () -> Unit,
     onOpenCastChooser: () -> Unit,
     onRetryPlayback: () -> Unit,
+    onReloadStreams: () -> Unit,
     onUpdateAutoplay: (Boolean) -> Unit,
     onUpdateAutoSkipIntro: (Boolean) -> Unit,
     onUpdateAutoSkipOutro: (Boolean) -> Unit,
@@ -538,6 +540,7 @@ fun ArvioMobilePlayer(
             .fillMaxSize()
             // Multi-Tap Gesture Detection (Single Tap = Controls, Double Tap = Seek -10s/+10s, Triple Tap = Aspect Ratio)
             .pointerInput(isLocked, uiState.error, anyPanelOpen) {
+                if (isLocked || uiState.error != null) return@pointerInput
                 coroutineScope {
                     var tapCount = 0
                     var lastTapTime = 0L
@@ -626,8 +629,8 @@ fun ArvioMobilePlayer(
                 .fillMaxHeight()
                 .fillMaxWidth(0.5f)
                 .align(Alignment.CenterStart)
-                .pointerInput(isLocked, anyPanelOpen) {
-                    if (isLocked || anyPanelOpen) return@pointerInput
+                .pointerInput(isLocked, anyPanelOpen, uiState.error) {
+                    if (isLocked || anyPanelOpen || uiState.error != null) return@pointerInput
                     detectPlayerVerticalAdjustmentGesture(
                         thresholdPx = 28.dp.toPx(),
                         sensitivity = 0.95f,
@@ -650,8 +653,8 @@ fun ArvioMobilePlayer(
                 .fillMaxHeight()
                 .fillMaxWidth(0.5f)
                 .align(Alignment.CenterEnd)
-                .pointerInput(isLocked, anyPanelOpen, maxVolume) {
-                    if (isLocked || anyPanelOpen) return@pointerInput
+                .pointerInput(isLocked, anyPanelOpen, maxVolume, uiState.error) {
+                    if (isLocked || anyPanelOpen || uiState.error != null) return@pointerInput
                     detectPlayerVerticalAdjustmentGesture(
                         thresholdPx = 28.dp.toPx(),
                         sensitivity = 0.95f,
@@ -994,65 +997,95 @@ fun ArvioMobilePlayer(
 
         // ── Error Overlay ──
         if (uiState.error != null) {
+            val hasStreams = uiState.streams.isNotEmpty()
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xDB050608))
-                    .zIndex(25f),
-                contentAlignment = Alignment.Center
+                    .background(Color(0xFF08090C))
+                    .zIndex(30f)
             ) {
+                // Top-left Close ('X') button so users can exit the player
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(
+                            top = topSafePadding + 14.dp,
+                            start = maxHorizontalPadding + 16.dp
+                        )
+                ) {
+                    MobileIconButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = "Close",
+                        onClick = onBack,
+                        size = 20.dp
+                    )
+                }
+
+                // Centered Error Content
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 36.dp),
+                        .padding(horizontal = 36.dp)
+                        .align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.ErrorOutline,
                         contentDescription = null,
-                        tint = MobilePlayerTokens.InkPrimary,
-                        modifier = Modifier.size(36.dp)
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(42.dp)
                     )
                     Text(
-                        text = "Can't play this source",
+                        text = if (!hasStreams) "No Playable Streams" else "Playback Failed",
                         color = MobilePlayerTokens.InkPrimary,
-                        fontSize = 16.sp,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = uiState.error.orEmpty().ifBlank {
-                            "The connection to the server was lost, or this file is no longer available."
+                            if (!hasStreams) {
+                                "No playable streams found for this content. Try reloading streams or checking addon settings."
+                            } else {
+                                "The connection was interrupted, or this stream format could not be played."
+                            }
                         },
                         color = MobilePlayerTokens.InkTertiary,
                         fontSize = 13.sp,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp,
+                        modifier = Modifier.fillMaxWidth(0.85f)
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        // Retry button
-                        Box(
-                            modifier = Modifier
-                                .clip(MobilePlayerTokens.ShapeBtn)
-                                .background(Color.Transparent)
-                                .border(1.dp, Color(0x47FFFFFF), MobilePlayerTokens.ShapeBtn)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onRetryPlayback
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (hasStreams) {
+                            // Retry button
+                            Box(
+                                modifier = Modifier
+                                    .clip(MobilePlayerTokens.ShapeBtn)
+                                    .background(Color.Transparent)
+                                    .border(1.dp, Color(0x47FFFFFF), MobilePlayerTokens.ShapeBtn)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = onRetryPlayback
+                                    )
+                                    .padding(horizontal = 22.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Retry",
+                                    color = MobilePlayerTokens.InkPrimary,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
-                                .padding(horizontal = 20.dp, vertical = 9.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Retry",
-                                color = MobilePlayerTokens.InkPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            }
                         }
 
-                        // Choose Source button
+                        // Reload Streams button
                         Box(
                             modifier = Modifier
                                 .clip(MobilePlayerTokens.ShapeBtn)
@@ -1060,18 +1093,15 @@ fun ArvioMobilePlayer(
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
-                                    onClick = {
-                                        closeAllPanels()
-                                        showSourcesDrawer = true
-                                    }
+                                    onClick = onReloadStreams
                                 )
-                                .padding(horizontal = 20.dp, vertical = 9.dp),
+                                .padding(horizontal = 22.dp, vertical = 10.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Choose Source",
+                                text = "Reload Streams",
                                 color = Color(0xFF0B0C10),
-                                fontSize = 13.sp,
+                                fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }

@@ -313,23 +313,44 @@ fun MobileSourcesDrawer(
                     )
                 }
 
-                // Sources list
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(streams, key = { it.url ?: it.hashCode().toString() }) { stream ->
-                        val isActive = selectedStream?.url == stream.url
-                        SourceRow(
-                            stream = stream,
-                            isActive = isActive,
-                            onClick = {
-                                onSelectSource(stream)
-                                onClose()
-                            }
+                val effectiveStreams = remember(streams, selectedStream) {
+                    if (streams.isEmpty() && selectedStream != null) listOf(selectedStream)
+                    else streams
+                }
+
+                if (effectiveStreams.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No sources available",
+                            color = MobilePlayerTokens.InkTertiary,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
                         )
+                    }
+                } else {
+                    // Sources list
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(effectiveStreams, key = { it.url ?: it.hashCode().toString() }) { stream ->
+                            val isActive = selectedStream?.url == stream.url
+                            SourceRow(
+                                stream = stream,
+                                isActive = isActive,
+                                onClick = {
+                                    onSelectSource(stream)
+                                    onClose()
+                                }
+                            )
+                        }
                     }
                 }
             }

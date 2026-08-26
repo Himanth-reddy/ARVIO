@@ -2939,11 +2939,17 @@ fun PlayerScreen(
         }
     }
 
-    // Close menus when an error occurs so the error overlay can receive input
+    // Close menus and pause playback when an error occurs so the error overlay is prominent and idle
     LaunchedEffect(uiState.error) {
         if (uiState.error != null) {
             showSourceMenu = false
             showSubtitleMenu = false
+            showSubtitleSettings = false
+            showNextEpisodePrompt = false
+            runCatching {
+                exoPlayer.pause()
+                playerEngine.pause()
+            }
         }
     }
 
@@ -3784,7 +3790,10 @@ fun PlayerScreen(
                     }
                 },
                 onRetryPlayback = {
-                    viewModel.retry()
+                    viewModel.retryPlayback()
+                },
+                onReloadStreams = {
+                    viewModel.reloadStreams()
                 },
                 onUpdateAutoplay = { enabled ->
                     viewModel.setAutoPlayNext(enabled)
@@ -5612,11 +5621,9 @@ private fun playbackErrorMessageFor(
 }
 
 /**
- * Short, user-facing reason for a playback failure — shown on the "switching source" notice and the
- * terminal error. it unwraps the cause chain for an HTTP
- * status (blocked/removed/expired/rate-limited/unavailable) and otherwise distinguishes
- * decode/unsupported vs invalid-content vs timeout/offline, so the user gets a real clue instead of
- * a generic "failed".
+ * User-facing reason for a playback failure — unwraps the cause chain for HTTP status
+ * (blocked/removed/expired/rate-limited/unavailable), decode/unsupported codecs,
+ * container corruption, and network timeouts.
  */
 private fun classifyPlaybackFailure(
     context: android.content.Context,
@@ -5633,7 +5640,7 @@ private fun classifyPlaybackFailure(
     }
     if (httpStatus > 0) {
         return when (httpStatus) {
-            403 -> context.getString(R.string.player_err_source_blocked)
+            401, 403 -> context.getString(R.string.player_err_source_blocked)
             404 -> context.getString(R.string.player_err_source_removed)
             410 -> context.getString(R.string.player_err_source_expired)
             429 -> context.getString(R.string.player_err_source_rate_limited)
@@ -5659,6 +5666,9 @@ private fun classifyPlaybackFailure(
                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
                 R.string.player_err_format_unsupported
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ->
+                R.string.player_err_format_unsupported
             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
                 R.string.player_err_unplayable_content
@@ -5666,11 +5676,14 @@ private fun classifyPlaybackFailure(
                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
                 "timeout" in msg || "timed out" in msg || "sockettimeout" in msg ->
                 R.string.player_fail_source_too_slow
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
+                R.string.player_err_source_rejected
             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
                 R.string.player_err_source_rejected
             else -> R.string.player_err_playback
         }
     )
+}
 }
 
 private fun parseSizeToBytes(sizeStr: String): Long {

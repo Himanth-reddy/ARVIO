@@ -556,6 +556,7 @@ class PlayerViewModel @Inject constructor(
         preferredBingeGroup: String?,
         startPositionMs: Long?,
         isLiveStreamPlayback: Boolean = false,
+        forceRefresh: Boolean = false,
         airDate: String? = null
     ) {
         currentAirDate = airDate
@@ -636,7 +637,8 @@ class PlayerViewModel @Inject constructor(
         currentGenreIds = cachedItem?.genreIds ?: emptyList()
         currentItemTitle = cachedItem?.title ?: ""
 
-        viewModelScope.launch {
+        mediaLoadJob?.cancel()
+        mediaLoadJob = viewModelScope.launch {
             // Autoplay should always use the current highest-ranked source list.
             // Explicit source navigation still passes preferred fields or a URL below.
             val preferredAudioLanguage = resolvePreferredAudioLanguage()
@@ -810,6 +812,7 @@ class PlayerViewModel @Inject constructor(
                     isLoading = false,
                     isLoadingStreams = false,
                     sourceSearchActive = true,
+                    streams = listOfNotNull(resolvedProvidedStream),
                     selectedStream = resolvedProvidedStream,
                     selectedStreamUrl = resolvedProvidedUrl,
                     savedPosition = resumeData.positionMs
@@ -1058,7 +1061,8 @@ class PlayerViewModel @Inject constructor(
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = effectiveStreamId,
                         title = currentItemTitle,
-                        year = null
+                        year = null,
+                        forceRefresh = forceRefresh
                     )
                 } else {
                     streamRepository.resolveEpisodeStreamsProgressive(
@@ -1070,6 +1074,7 @@ class PlayerViewModel @Inject constructor(
                         genreIds = currentGenreIds,
                         originalLanguage = currentOriginalLanguage,
                         title = currentItemTitle,
+                        forceRefresh = forceRefresh,
                         animeQueryOverride = animeQueryOverride,
                         airDate = currentAirDate
                     )
@@ -1099,8 +1104,9 @@ class PlayerViewModel @Inject constructor(
                             u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                         }
                     val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
+                    val activeStreamList = listOfNotNull(_uiState.value.selectedStream)
                     val mergedStreams = sortStreamsByQualityAndSize(
-                        (allStreams + existingVod)
+                        (allStreams + existingVod + activeStreamList)
                             .distinctBy(::providerScopedStreamIdentity),
                         preferredLanguage
                     )
@@ -1112,14 +1118,17 @@ class PlayerViewModel @Inject constructor(
                         progressive.isFinal &&
                         mergedStreams.isEmpty() &&
                         !hasHomeServerConnections &&
-                        !supplementalSourcesStillLoading
+                        !supplementalSourcesStillLoading &&
+                        _uiState.value.selectedStreamUrl == null
                     ) {
                         if (streamingAddonCount == 0) {
                             PlayerMessage.Res(R.string.player_error_no_streaming_addons)
                         } else {
                             PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
                         }
-                    } else null
+                    } else {
+                        null
+                    }
                     if (errorMessage != null && !sourceEmptyReported) {
                         sourceEmptyReported = true
                         AppLogger.recordException(
@@ -4195,6 +4204,22 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun retry() {
+        retryPlayback()
+    }
+
+    fun reloadStreams() {
+        mediaLoadJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            error = null,
+            isLoading = false,
+            isLoadingStreams = true,
+            sourceSearchActive = true,
+            streams = emptyList(),
+            selectedStream = null,
+            selectedStreamUrl = null,
+            streamProgress = 0f,
+            streamLoadPhase = "Searching for streams…"
+        )
         loadMedia(
             mediaType = currentMediaType,
             mediaId = currentMediaId,
@@ -4209,8 +4234,20 @@ class PlayerViewModel @Inject constructor(
             preferredSourceName = currentPreferredSourceName,
             preferredBingeGroup = currentPreferredBingeGroup,
             startPositionMs = currentStartPositionMs,
-            isLiveStreamPlayback = currentIsLiveStreamPlayback
+            isLiveStreamPlayback = currentIsLiveStreamPlayback,
+            forceRefresh = true,
+            airDate = currentAirDate
         )
+    }
+
+    fun retryPlayback() {
+        val stream = _uiState.value.selectedStream
+        if (stream != null) {
+            _uiState.value = _uiState.value.copy(error = null)
+            selectStream(stream, currentStartPositionMs)
+        } else {
+            reloadStreams()
+        }
     }
 
     private data class ResumeData(
@@ -4663,6 +4700,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     private var progressSaveJob: Job? = null
+    private var mediaLoadJob: Job? = null
     private var subtitleRefreshJob: Job? = null
     private var vodAppendJob: Job? = null
     private var homeServerAppendJob: Job? = null
@@ -4896,7 +4934,11 @@ class PlayerViewModel @Inject constructor(
                 }
 
             val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
-            val mergedStreams = (allStreams + existingVod)
+            val activeStreamList = listOfNotNull(
+                _uiState.value.selectedStream,
+                if (playbackUrl.isNotBlank()) StreamSource(url = playbackUrl, quality = "Direct", source = "Direct") else null
+            )
+            val mergedStreams = (allStreams + existingVod + activeStreamList)
                 .distinctBy(::providerScopedStreamIdentity)
 
             val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
