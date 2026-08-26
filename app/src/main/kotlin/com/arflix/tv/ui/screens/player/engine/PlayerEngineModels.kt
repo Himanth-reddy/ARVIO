@@ -3,13 +3,21 @@ package com.arflix.tv.ui.screens.player.engine
 import androidx.compose.runtime.Immutable
 
 enum class ResizeMode(val label: String) {
-    FIT("Fit"),
-    FILL("Fill"),
-    ZOOM("Zoom");
+    AUTO("Auto"),
+    FIT("Fit to Screen"),
+    STRETCH("Stretch"),
+    CROP("Crop");
 
     companion object {
         fun fromString(str: String?): ResizeMode {
-            return entries.firstOrNull { it.name.equals(str, ignoreCase = true) || it.label.equals(str, ignoreCase = true) } ?: FIT
+            if (str.isNullOrBlank()) return AUTO
+            return when (str.trim().lowercase()) {
+                "auto" -> AUTO
+                "fit", "fit to screen" -> FIT
+                "fill", "stretch" -> STRETCH
+                "zoom", "crop" -> CROP
+                else -> entries.firstOrNull { it.name.equals(str, ignoreCase = true) || it.label.equals(str, ignoreCase = true) } ?: AUTO
+            }
         }
     }
 }
@@ -63,7 +71,7 @@ data class PlayerEngineState(
     val isBuffering: Boolean = false,
     val hasPlaybackStarted: Boolean = false,
     val playbackSpeed: Float = 1.0f,
-    val resizeMode: ResizeMode = ResizeMode.FIT,
+    val resizeMode: ResizeMode = ResizeMode.AUTO,
     val audioTracks: List<AudioTrackItem> = emptyList(),
     val selectedAudioIndex: Int = 0,
     val subtitleTracks: List<SubtitleTrackItem> = emptyList(),

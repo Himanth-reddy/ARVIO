@@ -1051,7 +1051,7 @@ fun MobileMoreSettingsSheet(
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    listOf("Fit", "Fill", "Zoom").forEach { mode ->
+                    listOf("Auto", "Fit to Screen", "Stretch", "Crop").forEach { mode ->
                         val isActive = mode.equals(aspectRatio, ignoreCase = true)
                         Row(
                             modifier = Modifier

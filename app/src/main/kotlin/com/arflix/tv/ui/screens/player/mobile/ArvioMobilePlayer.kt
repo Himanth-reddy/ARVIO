@@ -520,8 +520,13 @@ fun ArvioMobilePlayer(
 
     val currentSubtitleTrackName = uiState.selectedSubtitle?.lang?.takeIf { it.isNotBlank() } ?: "Off"
 
-    // Automatically trigger HUD flash when aspect ratio changes
+    var initialAspectSeen by remember { mutableStateOf(false) }
+    // Automatically trigger HUD flash when aspect ratio changes (suppressed on initial load)
     LaunchedEffect(aspectModeLabel) {
+        if (!initialAspectSeen) {
+            initialAspectSeen = true
+            return@LaunchedEffect
+        }
         aspectFlashText = aspectModeLabel
         showAspectFlash = true
         delay(900)

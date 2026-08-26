@@ -24,9 +24,10 @@ interface PlayerEngine {
     fun setResizeMode(mode: ResizeMode)
     fun cycleResizeMode() {
         val next = when (state.value.resizeMode) {
-            ResizeMode.FIT -> ResizeMode.ZOOM
-            ResizeMode.ZOOM -> ResizeMode.FILL
-            ResizeMode.FILL -> ResizeMode.FIT
+            ResizeMode.AUTO -> ResizeMode.FIT
+            ResizeMode.FIT -> ResizeMode.STRETCH
+            ResizeMode.STRETCH -> ResizeMode.CROP
+            ResizeMode.CROP -> ResizeMode.AUTO
         }
         setResizeMode(next)
     }

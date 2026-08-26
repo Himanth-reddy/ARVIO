@@ -242,6 +242,26 @@ import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewAspectRatio
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 import com.arflix.tv.ui.screens.player.preview.seekPreviewDisplayAspectRatio
 
+enum class AspectRatioMode(val label: String, val resizeMode: Int) {
+    AUTO("Auto", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    FIT("Fit to Screen", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    STRETCH("Stretch", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    CROP("Crop", AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+
+    companion object {
+        fun fromLabel(label: String?): AspectRatioMode {
+            if (label.isNullOrBlank()) return AUTO
+            return when (label.trim().lowercase()) {
+                "auto" -> AUTO
+                "fit", "fit to screen" -> FIT
+                "fill", "stretch" -> STRETCH
+                "zoom", "crop" -> CROP
+                else -> entries.firstOrNull { it.label.equals(label, ignoreCase = true) || it.name.equals(label, ignoreCase = true) } ?: AUTO
+            }
+        }
+    }
+}
+
 private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
@@ -571,7 +591,8 @@ fun PlayerScreen(
         showNextEpisodePrompt = false
         onExitPlayer()
     }
-    var playerResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var currentAspectRatioMode by remember { mutableStateOf(AspectRatioMode.AUTO) }
+    val playerResizeMode = currentAspectRatioMode.resizeMode
     var subtitleMenuIndex by remember { mutableIntStateOf(0) }
     var subtitleMenuTab by remember { mutableIntStateOf(0) } // 0 = Subtitles, 1 = Audio
     var subtitleLangIndex by remember { mutableIntStateOf(0) }
@@ -2997,16 +3018,14 @@ fun PlayerScreen(
     val subtitleStylePref = uiState.subtitleStyle
     val subtitleFontPref = uiState.subtitleFont
     val subtitleStylizedPref = uiState.subtitleStylized
-    val aspectModeLabel = when (playerResizeMode) {
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> stringResource(R.string.player_aspect_zoom)
-        AspectRatioFrameLayout.RESIZE_MODE_FILL -> stringResource(R.string.player_aspect_fill)
-        else -> stringResource(R.string.player_aspect_fit)
-    }
+    val subtitleOffsetPref = uiState.subtitleOffset
+    val aspectModeLabel = currentAspectRatioMode.label
     val cycleAspectRatio: () -> Unit = {
-        playerResizeMode = when (playerResizeMode) {
-            AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        currentAspectRatioMode = when (currentAspectRatioMode) {
+            AspectRatioMode.AUTO -> AspectRatioMode.FIT
+            AspectRatioMode.FIT -> AspectRatioMode.STRETCH
+            AspectRatioMode.STRETCH -> AspectRatioMode.CROP
+            AspectRatioMode.CROP -> AspectRatioMode.AUTO
         }
         aspectIndicatorTrigger++
     }
@@ -3686,11 +3705,7 @@ fun PlayerScreen(
                 onForward10 = { queueControlsSeek(10_000L) },
                 onCycleAspectRatio = cycleAspectRatio,
                 onSelectAspectRatio = { mode ->
-                    playerResizeMode = when (mode.lowercase()) {
-                        "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
+                    currentAspectRatioMode = AspectRatioMode.fromLabel(mode)
                 },
                 onSelectEpisode = { ep ->
                     val season = ep.seasonNumber
