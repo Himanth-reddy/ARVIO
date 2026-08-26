@@ -3,6 +3,14 @@
 package com.arflix.tv.ui.screens.player
 
 import com.arflix.tv.ui.screens.player.mobile.ArvioMobilePlayer
+import com.arflix.tv.ui.screens.player.mobile.MobileIconButton
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.ui.platform.LocalLayoutDirection
 
 import android.app.Activity
 import android.app.ActivityManager
@@ -3515,7 +3523,9 @@ fun PlayerScreen(
         // Loading screen overlay - keep visible until player is fully started.
         if (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(50f),
                 contentAlignment = Alignment.Center
             ) {
                 if (uiState.backdropUrl != null) {
@@ -3530,6 +3540,43 @@ fun PlayerScreen(
                             .fillMaxSize()
                             .background(Color.Black.copy(alpha = 0.7f))
                     )
+                }
+
+                if (isTouchDevice) {
+                    val layoutDirection = LocalLayoutDirection.current
+                    val systemBarsInsets = WindowInsets.systemBars.asPaddingValues()
+                    val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+
+                    val startInset = maxOf(
+                        systemBarsInsets.calculateStartPadding(layoutDirection),
+                        cutoutInsets.calculateStartPadding(layoutDirection)
+                    )
+                    val endInset = maxOf(
+                        systemBarsInsets.calculateEndPadding(layoutDirection),
+                        cutoutInsets.calculateEndPadding(layoutDirection)
+                    )
+                    val maxHorizontalPadding = maxOf(startInset, endInset, 24.dp)
+                    val topSafePadding = maxOf(
+                        systemBarsInsets.calculateTopPadding() + 8.dp,
+                        cutoutInsets.calculateTopPadding() + 12.dp,
+                        16.dp
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(
+                                top = topSafePadding,
+                                start = maxHorizontalPadding
+                            )
+                            .zIndex(52f)
+                    ) {
+                        MobileIconButton(
+                            icon = Icons.Default.Close,
+                            contentDescription = "Close",
+                            onClick = onExitPlayer
+                        )
+                    }
                 }
 
                 PulsingLogo(

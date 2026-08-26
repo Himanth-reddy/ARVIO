@@ -225,6 +225,8 @@ fun ArvioMobilePlayer(
         showBars = areControlsVisible
     )
 
+    val isHeartbeatLoading = uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted
+
     // Auto-hide controls after 3.4 seconds of inactivity when playing and no panel is open
     LaunchedEffect(showControls, isPlaying, isScrubbing, anyPanelOpen, isLocked) {
         if (showControls && isPlaying && !isScrubbing && !anyPanelOpen && !isLocked) {
@@ -542,8 +544,8 @@ fun ArvioMobilePlayer(
         modifier = modifier
             .fillMaxSize()
             // Multi-Tap Gesture Detection (Single Tap = Controls, Double Tap = Seek -10s/+10s, Triple Tap = Aspect Ratio)
-            .pointerInput(isLocked, uiState.error, anyPanelOpen) {
-                if (uiState.error != null) return@pointerInput
+            .pointerInput(isLocked, uiState.error, anyPanelOpen, isHeartbeatLoading) {
+                if (uiState.error != null || isHeartbeatLoading) return@pointerInput
                 coroutineScope {
                     var tapCount = 0
                     var lastTapTime = 0L
@@ -633,8 +635,8 @@ fun ArvioMobilePlayer(
                 .fillMaxHeight()
                 .fillMaxWidth(0.5f)
                 .align(Alignment.CenterStart)
-                .pointerInput(isLocked, anyPanelOpen, uiState.error) {
-                    if (isLocked || anyPanelOpen || uiState.error != null) return@pointerInput
+                .pointerInput(isLocked, anyPanelOpen, uiState.error, isHeartbeatLoading) {
+                    if (isLocked || anyPanelOpen || uiState.error != null || isHeartbeatLoading) return@pointerInput
                     detectPlayerVerticalAdjustmentGesture(
                         thresholdPx = 28.dp.toPx(),
                         sensitivity = 0.95f,
@@ -657,8 +659,8 @@ fun ArvioMobilePlayer(
                 .fillMaxHeight()
                 .fillMaxWidth(0.5f)
                 .align(Alignment.CenterEnd)
-                .pointerInput(isLocked, anyPanelOpen, maxVolume, uiState.error) {
-                    if (isLocked || anyPanelOpen || uiState.error != null) return@pointerInput
+                .pointerInput(isLocked, anyPanelOpen, maxVolume, uiState.error, isHeartbeatLoading) {
+                    if (isLocked || anyPanelOpen || uiState.error != null || isHeartbeatLoading) return@pointerInput
                     detectPlayerVerticalAdjustmentGesture(
                         thresholdPx = 28.dp.toPx(),
                         sensitivity = 0.95f,
