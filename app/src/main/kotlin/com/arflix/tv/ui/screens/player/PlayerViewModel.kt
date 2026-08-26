@@ -4936,7 +4936,7 @@ class PlayerViewModel @Inject constructor(
             val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
             val activeStreamList = listOfNotNull(
                 _uiState.value.selectedStream,
-                if (playbackUrl.isNotBlank()) StreamSource(url = playbackUrl, quality = "Direct", source = "Direct") else null
+                if (playbackUrl.isNotBlank()) StreamSource(source = "Direct", addonName = "Direct", quality = "Direct", size = "", url = playbackUrl) else null
             )
             val mergedStreams = (allStreams + existingVod + activeStreamList)
                 .distinctBy(::providerScopedStreamIdentity)

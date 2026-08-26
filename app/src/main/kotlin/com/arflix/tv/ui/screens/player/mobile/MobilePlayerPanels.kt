@@ -55,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -500,9 +501,9 @@ fun MobileSubtitlesSheet(
 ) {
     var selectedLanguageName by remember { mutableStateOf<String?>(null) }
 
-    // Reset drilldown when sheet is dismissed
+    // Reset drilldown when sheet becomes visible (opening fresh), NOT while exiting
     LaunchedEffect(visible) {
-        if (!visible) {
+        if (visible) {
             selectedLanguageName = null
         }
     }
@@ -529,10 +530,7 @@ fun MobileSubtitlesSheet(
         title = currentTitle,
         showBackButton = showBack,
         onBack = { selectedLanguageName = null },
-        onClose = {
-            selectedLanguageName = null
-            onClose()
-        },
+        onClose = onClose,
         modifier = modifier
     ) {
         val currentLang = selectedLanguageName
@@ -944,10 +942,17 @@ fun MobileMoreSettingsSheet(
 ) {
     val viewStack = remember { mutableStateListOf("root") }
 
-    // Reset view stack when closed
-    if (!visible && (viewStack.size > 1 || viewStack.firstOrNull() != "root")) {
-        viewStack.clear()
-        viewStack.add("root")
+    // Reset view stack when opening fresh, NOT during exit animation
+    LaunchedEffect(visible) {
+        if (visible) {
+            viewStack.clear()
+            viewStack.add("root")
+        }
+    }
+
+    // Intercept hardware/gesture back when inside sub-pages
+    BackHandler(enabled = visible && viewStack.size > 1) {
+        viewStack.removeAt(viewStack.lastIndex)
     }
 
     val currentView = viewStack.lastOrNull() ?: "root"
