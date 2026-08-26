@@ -63,6 +63,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import com.arflix.tv.ui.screens.player.common.PlayerSystemBarsEffect
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward10
@@ -634,7 +635,7 @@ fun ArvioMobilePlayer(
                     detectPlayerVerticalAdjustmentGesture(
                         thresholdPx = 28.dp.toPx(),
                         sensitivity = 0.95f,
-                        minValue = 0.01f,
+                        minValue = 0.0f,
                         maxValue = 1.0f,
                         getInitialValue = { brightnessLevel },
                         onActivate = { brightnessIndicatorTrigger++ },
@@ -915,11 +916,13 @@ fun ArvioMobilePlayer(
                 .align(Alignment.CenterStart)
                 .padding(start = maxHorizontalPadding)
         )
+        val isAutoBrightness = brightnessLevel <= 0.005f
         MobileEdgeIndicator(
             visible = showBrightnessIndicator,
-            icon = Icons.Default.BrightnessHigh,
+            icon = if (isAutoBrightness) Icons.Filled.BrightnessAuto else Icons.Default.BrightnessHigh,
             levelPct = brightnessLevel,
             isLeft = false,
+            isAuto = isAutoBrightness,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = maxHorizontalPadding)
@@ -1203,16 +1206,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 private fun getInitialBrightness(activity: Activity?): Float {
     val cur = activity?.window?.attributes?.screenBrightness ?: -1f
     return if (cur in 0.01f..1.0f) cur else {
-        try {
-            val sys = Settings.System.getInt(
-                activity?.contentResolver,
-                Settings.System.SCREEN_BRIGHTNESS,
-                128
-            )
-            (sys / 255f).coerceIn(0.01f, 1.0f)
-        } catch (_: Exception) {
-            0.7f
-        }
+        0f // Default to Auto Brightness (BRIGHTNESS_OVERRIDE_NONE)
     }
 }
 
@@ -1220,7 +1214,11 @@ private fun setWindowBrightness(activity: Activity?, brightness: Float) {
     activity?.let { act ->
         val window = act.window ?: return@let
         val lp = window.attributes ?: return@let
-        lp.screenBrightness = brightness.coerceIn(0.01f, 1.0f)
+        if (brightness <= 0.005f) {
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        } else {
+            lp.screenBrightness = brightness.coerceIn(0.01f, 1.0f)
+        }
         window.attributes = lp
     }
 }

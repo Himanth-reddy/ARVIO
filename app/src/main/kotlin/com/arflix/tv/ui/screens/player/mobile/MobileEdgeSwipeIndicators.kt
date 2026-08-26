@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
@@ -42,6 +43,7 @@ fun MobileEdgeIndicator(
     icon: ImageVector,
     levelPct: Float, // 0.0f .. 1.0f
     isLeft: Boolean,
+    isAuto: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -56,7 +58,7 @@ fun MobileEdgeIndicator(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(
-                imageVector = icon,
+                imageVector = if (isAuto) Icons.Filled.BrightnessAuto else icon,
                 contentDescription = null,
                 tint = MobilePlayerTokens.InkPrimary,
                 modifier = Modifier.size(20.dp)
@@ -74,14 +76,14 @@ fun MobileEdgeIndicator(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .fillMaxHeight(levelPct.coerceIn(0f, 1f))
+                        .fillMaxHeight(if (isAuto) 0f else levelPct.coerceIn(0f, 1f))
                         .background(MobilePlayerTokens.InkPrimary, RoundedCornerShape(2.dp))
                 )
             }
 
-            // Percentage value label
+            // Percentage or "Auto" value label
             Text(
-                text = "${(levelPct * 100).toInt()}",
+                text = if (isAuto) "Auto" else "${(levelPct * 100).toInt()}",
                 color = MobilePlayerTokens.InkPrimary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
