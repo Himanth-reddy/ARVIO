@@ -12,6 +12,7 @@ import com.arflix.tv.core.plugin.PluginManager
 
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,16 +70,49 @@ class PluginViewModel @Inject constructor(
                     nextState.scrapers.filter { it.enabled }
                 } else {
                     nextState.scrapers
-                }
+                }.sortedBy { it.name.lowercase() }
+
+                val sortedRepos = nextState.repositories.sortedBy { it.name.lowercase() }
+
                 _uiState.update {
                     it.copy(
                         pluginsEnabled = nextState.pluginsEnabled,
                         groupStreamsByRepository = nextState.groupStreamsByRepository,
-                        repositories = nextState.repositories,
+                        repositories = sortedRepos,
                         scrapers = visibleScrapers
                     )
                 }
+                refreshScrapersWithSettings(visibleScrapers)
             }
+        }
+    }
+
+    private val settingsCheckCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private var settingsCheckJob: kotlinx.coroutines.Job? = null
+
+    private fun refreshScrapersWithSettings(scrapers: List<com.arflix.tv.domain.model.ScraperInfo>) {
+        settingsCheckJob?.cancel()
+        settingsCheckJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val known = _uiState.value.scrapersWithSettings
+            val supported = known.toMutableSet()
+            for (scraper in scrapers) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (settingsCheckCache.containsKey(scraper.id)) {
+                    if (settingsCheckCache[scraper.id] == true) supported.add(scraper.id) else supported.remove(scraper.id)
+                    continue
+                }
+                val hasSettings = try {
+                    pluginManager.hasPluginSettings(scraper.id)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    false
+                }
+                settingsCheckCache[scraper.id] = hasSettings
+                if (hasSettings) supported.add(scraper.id) else supported.remove(scraper.id)
+            }
+            supported.retainAll(scrapers.map { it.id }.toSet())
+            _uiState.update { it.copy(scrapersWithSettings = supported) }
         }
     }
 
@@ -90,6 +124,7 @@ class PluginViewModel @Inject constructor(
             is PluginUiEvent.ToggleScraper -> toggleScraper(event.scraperId, event.enabled)
             is PluginUiEvent.ToggleAllScrapersForRepo -> toggleAllScrapersForRepo(event.repoId, event.enabled)
             is PluginUiEvent.TestScraper -> testScraper(event.scraperId)
+            is PluginUiEvent.OpenPluginSettings -> openPluginSettings(event.scraperId, event.activity)
             is PluginUiEvent.SetPluginsEnabled -> setPluginsEnabled(event.enabled)
             is PluginUiEvent.SetGroupStreamsByRepository -> setGroupStreamsByRepository(event.enabled)
             PluginUiEvent.ClearTestResults -> _uiState.update { it.copy(testResults = null, testDiagnostics = null, testScraperId = null) }
@@ -102,6 +137,20 @@ class PluginViewModel @Inject constructor(
             PluginUiEvent.ConfirmPendingScraperEnable -> confirmPendingScraperEnable()
             PluginUiEvent.DismissPendingScraperEnable -> dismissPendingScraperEnable()
             PluginUiEvent.ResetAllPlugins -> resetAllPlugins()
+        }
+    }
+
+    private fun openPluginSettings(scraperId: String, activity: android.app.Activity) {
+        viewModelScope.launch {
+            val opened = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { pluginManager.openPluginSettings(scraperId, activity) }
+                    .getOrDefault(false)
+            }
+            if (!opened) {
+                _uiState.update {
+                    it.copy(errorMessage = context.getString(R.string.plugin_settings_not_available))
+                }
+            }
         }
     }
 
@@ -141,6 +190,7 @@ class PluginViewModel @Inject constructor(
     }
 
     private fun removeRepository(repoId: String) {
+        settingsCheckCache.clear()
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             pluginManager.removeRepository(repoId)
@@ -154,6 +204,7 @@ class PluginViewModel @Inject constructor(
     }
 
     private fun refreshRepository(repoId: String) {
+        settingsCheckCache.clear()
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
@@ -257,6 +308,7 @@ class PluginViewModel @Inject constructor(
     }
 
     private fun resetAllPlugins() {
+        settingsCheckCache.clear()
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             pluginManager.clearAllPlugins()

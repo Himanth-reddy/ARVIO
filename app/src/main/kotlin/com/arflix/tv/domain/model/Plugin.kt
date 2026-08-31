@@ -21,6 +21,9 @@ data class RemotePluginInfo(
 /**
  * Represents a plugin repository containing scrapers
  */
+/**
+ * Represents a plugin repository containing scrapers
+ */
 data class PluginRepository(
     val id: String,
     val name: String,
@@ -29,7 +32,8 @@ data class PluginRepository(
     val enabled: Boolean = true,
     val lastUpdated: Long = 0L,
     val scraperCount: Int = 0,
-    val type: RepositoryType = RepositoryType.NUVIO_JS
+    val type: RepositoryType = RepositoryType.NUVIO_JS,
+    val iconUrl: String? = null
 )
 
 /**
@@ -41,6 +45,9 @@ data class PluginManifest(
     val version: String,
     val description: String? = null,
     val author: String? = null,
+    val iconUrl: String? = null,
+    val logo: String? = null,
+    val icon: String? = null,
     val scrapers: List<ScraperManifestInfo>? = null,
     val providers: List<ScraperManifestInfo>? = null
 ) {
@@ -62,6 +69,8 @@ data class ScraperManifestInfo(
     val supportedTypes: List<String> = listOf("movie", "tv"),
     val enabled: Boolean = true,
     val logo: String? = null,
+    val icon: String? = null,
+    val iconUrl: String? = null,
     val contentLanguage: List<String>? = null,
     val supportedPlatforms: List<String>? = null,
     val disabledPlatforms: List<String>? = null,
@@ -129,7 +138,10 @@ data class ExternalRepoManifest(
     val name: String,
     val description: String? = null,
     val manifestVersion: Int = 1,
-    val pluginLists: List<String>
+    val pluginLists: List<String> = emptyList(),
+    val iconUrl: String? = null,
+    val icon: String? = null,
+    val logo: String? = null
 )
 
 /**
@@ -146,6 +158,8 @@ data class ExternalPluginEntry(
     val authors: List<String>? = null,
     val tvTypes: List<String>? = null,
     val iconUrl: String? = null,
+    val icon: String? = null,
+    val logo: String? = null,
     val url: String,
     val fileSize: Long? = null,
     val repositoryUrl: String? = null

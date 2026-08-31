@@ -423,6 +423,8 @@ fun SettingsScreen(
     var activeZone by remember { mutableStateOf(Zone.CONTENT) }
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
 
+    // Sub-focus for plugin rows: 0 = primary/toggle/refresh, 1 = settings/delete
+    var pluginActionIndex by remember { mutableIntStateOf(0) }
     // Sub-focus for addon rows: 0 = toggle, 1 = delete
     var addonActionIndex by remember { mutableIntStateOf(0) }
     // Sub-focus for catalog rows: 0 = edit, 1 = up, 2 = down, 3 = layout, 4 = delete
@@ -860,6 +862,8 @@ fun SettingsScreen(
                                     val stalkerEnd = m3uCount + 1 + stalkerCount
                                     if (currentSection == "stremio" && contentFocusIndex < stremioAddons.size && addonActionIndex > 0) {
                                         addonActionIndex--
+                                    } else if (currentSection == "plugins" && pluginActionIndex > 0) {
+                                        pluginActionIndex--
                                     } else if (currentSection == "iptv" &&
                                         iptvActionIndex > 0 &&
                                         (
@@ -873,6 +877,7 @@ fun SettingsScreen(
                                     } else {
                                         activeZone = Zone.SECTION
                                         addonActionIndex = 0
+                                        pluginActionIndex = 0
                                         iptvActionIndex = 0
                                         catalogActionIndex = 0
                                     }
@@ -898,6 +903,7 @@ fun SettingsScreen(
                                 Zone.SECTION -> {
                                     activeZone = Zone.CONTENT
                                     addonActionIndex = 0
+                                    pluginActionIndex = 0
                                     iptvActionIndex = 0
                                     catalogActionIndex = 0
                                 }
@@ -912,6 +918,8 @@ fun SettingsScreen(
                                         addonActionIndex < focusedStremioAddonMaxAction
                                     ) {
                                         addonActionIndex++
+                                    } else if (currentSection == "plugins" && pluginActionIndex < 1) {
+                                        pluginActionIndex++
                                     } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex >= firstIptvGroupIndex(uiState.iptvSelectedPlaylistId.orEmpty(), orderedIptvGroups(uiState.iptvSelectedPlaylistId.orEmpty(), uiState.iptvAvailableGroups, uiState.iptvGroupOrder), stalkerIds) && iptvActionIndex < 2) {
                                         iptvActionIndex++
                                     } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..m3uCount && iptvActionIndex < iptvRowMaxAction()) {
@@ -933,6 +941,7 @@ fun SettingsScreen(
                                         sectionIndex--
                                         contentFocusIndex = 0 // Reset content focus when changing section
                                         addonActionIndex = 0
+                                        pluginActionIndex = 0
                                         iptvActionIndex = 0
                                         catalogActionIndex = 0
                                         showIptvCategoriesSettings = false
@@ -945,6 +954,7 @@ fun SettingsScreen(
                                     if (contentFocusIndex > 0) {
                                         contentFocusIndex--
                                         addonActionIndex = 0 // Reset to toggle when changing rows
+                                        pluginActionIndex = 0
                                         iptvActionIndex = 0
                                         catalogActionIndex = 0
                                     } else {
@@ -965,6 +975,7 @@ fun SettingsScreen(
                                         sectionIndex++
                                         contentFocusIndex = 0 // Reset content focus when changing section
                                         addonActionIndex = 0
+                                        pluginActionIndex = 0
                                         iptvActionIndex = 0
                                         catalogActionIndex = 0
                                         showIptvCategoriesSettings = false
@@ -975,6 +986,7 @@ fun SettingsScreen(
                                     if (contentFocusIndex < maxIndex) {
                                         contentFocusIndex++
                                         addonActionIndex = 0 // Reset to toggle when changing rows
+                                        pluginActionIndex = 0
                                         iptvActionIndex = 0
                                         catalogActionIndex = 0
                                     }
@@ -1471,6 +1483,7 @@ fun SettingsScreen(
                                     "home_server" -> Icons.Default.Cloud
                                     "catalogs" -> Icons.Default.Widgets
                                     "stremio" -> Icons.Default.Extension
+                                    "plugins" -> Icons.Default.Extension
                                     "accounts" -> Icons.Default.Person
                                     else -> Icons.Default.Settings
                                 },
@@ -1486,6 +1499,7 @@ fun SettingsScreen(
                                     "home_server" -> stringResource(R.string.settings_home_server)
                                     "catalogs" -> stringResource(R.string.catalogs)
                                     "stremio" -> stringResource(R.string.addons)
+                                    "plugins" -> stringResource(R.string.settings_cat_plugins_extensions)
                                     "accounts" -> stringResource(R.string.accounts)
                                     else -> section.replaceFirstChar { it.uppercase() }
                                 },
@@ -1856,6 +1870,7 @@ fun SettingsScreen(
                         "plugins" -> {
                             com.arflix.tv.ui.screens.plugin.PluginScreen(
                                 focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
+                                focusedActionIndex = pluginActionIndex,
                                 onFocusedIndexChanged = { contentFocusIndex = it },
                                 onMaxIndexChanged = { pluginsMaxIndex = it },
                                 enterTrigger = if (activeZone == Zone.CONTENT) pluginsEnterTrigger else -1,
@@ -5222,7 +5237,7 @@ private fun tvSettingsSidebarGroup(section: String): String {
     return when (section) {
         "accounts", "profiles" -> stringResource(R.string.settings_group_profile)
         "playback", "language", "subtitles", "ai_subtitles" -> stringResource(R.string.playback)
-        "iptv", "stremio", "catalogs", "home_server" -> stringResource(R.string.sources)
+        "iptv", "stremio", "catalogs", "home_server", "plugins" -> stringResource(R.string.sources)
         else -> stringResource(R.string.settings_group_system)
     }
 }
@@ -5503,6 +5518,7 @@ private fun tvSettingsSectionTitle(section: String): String {
         "home_server" -> stringResource(R.string.settings_home_server)
         "catalogs" -> stringResource(R.string.catalogs)
         "stremio" -> stringResource(R.string.addons)
+        "plugins" -> stringResource(R.string.settings_cat_plugins_extensions)
         "accounts" -> stringResource(R.string.accounts)
         else -> section.replaceFirstChar { it.uppercase() }
     }
@@ -5522,6 +5538,7 @@ private fun tvSettingsSectionDescription(section: String): String {
         "home_server" -> stringResource(R.string.settings_desc_home_server)
         "catalogs" -> stringResource(R.string.settings_desc_catalogs)
         "stremio" -> stringResource(R.string.settings_desc_stremio)
+        "plugins" -> stringResource(R.string.plugin_screen_add_repo_desc)
         "accounts" -> stringResource(R.string.settings_desc_accounts)
         else -> stringResource(R.string.settings_desc_default)
     }

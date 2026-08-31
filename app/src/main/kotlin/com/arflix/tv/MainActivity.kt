@@ -8,6 +8,7 @@ import android.view.ViewTreeObserver
 import android.view.WindowManager
 import com.arflix.tv.R
 import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -134,7 +135,7 @@ private sealed interface ActiveProfileLoadState {
  * Uses Android 12+ Splash Screen API for instant launch feedback
  */
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var authRepository: Lazy<AuthRepository>
@@ -228,6 +229,7 @@ class MainActivity : ComponentActivity() {
 
         // Initialize Discord RPC Manager
         com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.init(this)
+        com.arflix.tv.core.runtime.PluginRuntimeHooks.onActivityCreate(this)
         intent?.data?.let { uri ->
             android.util.Log.d("MainActivity", "Received intent data URI in onCreate: $uri")
             if (uri.scheme == "arvio" && uri.host == "discord" && uri.path == "/auth") {
@@ -427,6 +429,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        com.arflix.tv.core.runtime.PluginRuntimeHooks.onActivityDestroy()
         jankStats?.isTrackingEnabled = false
         jankStats = null
         super.onDestroy()

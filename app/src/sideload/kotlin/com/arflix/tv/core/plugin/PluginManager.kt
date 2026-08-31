@@ -1,5 +1,6 @@
 package com.arflix.tv.core.plugin
 
+import android.app.Activity
 import android.util.Log
 import com.arflix.tv.core.plugin.cloudstream.toNuvioType
 import com.arflix.tv.core.plugin.cloudstream.tvTypeFromString
@@ -381,6 +382,14 @@ class PluginManager @Inject constructor(
         canonicalManifestUrl: String,
         manifest: PluginManifest
     ): Result<PluginRepository> {
+        val rawLogo = manifest.iconUrl ?: manifest.logo ?: manifest.icon
+        val resolvedLogo = rawLogo?.let { logoUrl ->
+            if (logoUrl.startsWith("http://") || logoUrl.startsWith("https://")) logoUrl
+            else {
+                val base = canonicalManifestUrl.substringBeforeLast('/')
+                if (logoUrl.startsWith("/")) "$base$logoUrl" else "$base/$logoUrl"
+            }
+        }
         val repo = PluginRepository(
             id = UUID.randomUUID().toString(),
             name = manifest.name,
@@ -388,7 +397,8 @@ class PluginManager @Inject constructor(
             enabled = true,
             lastUpdated = System.currentTimeMillis(),
             scraperCount = manifest.getActiveScrapers().size,
-            type = RepositoryType.NUVIO_JS
+            type = RepositoryType.NUVIO_JS,
+            iconUrl = resolvedLogo
         )
 
         dataStore.addRepository(repo)
@@ -419,7 +429,8 @@ class PluginManager @Inject constructor(
             enabled = true,
             lastUpdated = System.currentTimeMillis(),
             scraperCount = parseResult.plugins.size,
-            type = RepositoryType.EXTERNAL_DEX
+            type = RepositoryType.EXTERNAL_DEX,
+            iconUrl = parseResult.iconUrl
         )
 
         dataStore.addRepository(repo)
@@ -906,6 +917,20 @@ class PluginManager @Inject constructor(
         }
     }
 
+    /**
+     * Checks if an installed plugin/extension has a configurable settings UI.
+     */
+    fun hasPluginSettings(scraperId: String): Boolean {
+        return externalExtensionLoader.hasSettings(scraperId)
+    }
+
+    /**
+     * Opens the internal settings UI for the given plugin/extension.
+     */
+    fun openPluginSettings(scraperId: String, activity: Activity): Boolean {
+        return externalExtensionLoader.openSettings(scraperId, activity)
+    }
+
     private suspend fun fetchManifest(url: String): PluginManifest? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
@@ -1002,6 +1027,15 @@ class PluginManager @Inject constructor(
                 }
 
                 val defaultEnabled = info.enabled
+                val resolvedLogo = info.logo?.let { logoStr ->
+                    if (logoStr.startsWith("http://") || logoStr.startsWith("https://")) {
+                        logoStr
+                    } else {
+                        val base = baseUrl.trimEnd('/')
+                        if (logoStr.startsWith("/")) "$base$logoStr" else "$base/$logoStr"
+                    }
+                }
+
                 val scraper = ScraperInfo(
                     id = scraperId,
                     repositoryId = repoId,
@@ -1012,7 +1046,7 @@ class PluginManager @Inject constructor(
                     supportedTypes = info.supportedTypes,
                     enabled = existingScraper?.enabled ?: defaultEnabled,
                     manifestEnabled = info.enabled,
-                    logo = info.logo,
+                    logo = resolvedLogo,
                     contentLanguage = info.contentLanguage ?: emptyList(),
                     formats = info.formats
                 )
@@ -1067,6 +1101,9 @@ class PluginManager @Inject constructor(
                             ?.ifEmpty { listOf("movie", "tv") }
                             ?: listOf("movie", "tv")
 
+                        val rawLogo = plugin.iconUrl ?: plugin.icon ?: plugin.logo
+                        val logoUrl = rawLogo ?: externalExtensionLoader.extractIconFromZip(scraperId, file)
+
                         val scraper = ScraperInfo(
                             id = scraperId,
                             repositoryId = repoId,
@@ -1077,7 +1114,7 @@ class PluginManager @Inject constructor(
                             supportedTypes = supportedTypes,
                             enabled = true,
                             manifestEnabled = plugin.status == 1,
-                            logo = plugin.iconUrl,
+                            logo = logoUrl,
                             contentLanguage = emptyList(),
                             formats = null,
                             type = RepositoryType.EXTERNAL_DEX

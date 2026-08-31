@@ -79,4 +79,8 @@ class PluginManager @Inject constructor() {
     suspend fun testScraper(scraperId: String): Result<Pair<List<LocalScraperResult>, TestDiagnostics>> {
         return Result.failure(Exception("Plugins are not supported in this version"))
     }
+
+    fun hasPluginSettings(scraperId: String): Boolean = false
+
+    fun openPluginSettings(scraperId: String, activity: android.app.Activity): Boolean = false
 }

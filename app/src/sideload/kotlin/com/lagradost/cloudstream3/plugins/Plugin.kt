@@ -20,11 +20,14 @@ open class Plugin {
     val registeredMainAPIs: List<MainAPI> get() = _registeredMainAPIs
     val registeredExtractorAPIs: List<ExtractorApi> get() = _registeredExtractorAPIs
 
-    /** Extensions can set this to provide a settings UI callback. No-op in NuvioTV. */
-    var openSettings: ((Context) -> Unit)? = null
+    /** Extensions can set this to provide a settings UI callback. Invoked by ARVIO to display settings dialogs. */
+    open var openSettings: ((Context) -> Unit)? = null
 
     /** Full file path to the plugin (matches BasePlugin's property). */
-    var filename: String? = null
+    open var filename: String? = null
+
+    /** Plugin-specific resources loaded from the plugin's package. */
+    open var resources: android.content.res.Resources? = null
 
     /**
      * No-arg load matching BasePlugin's pattern. Extensions compiled against
@@ -42,6 +45,17 @@ open class Plugin {
         load()
     }
 
+    /**
+     * Upstream CloudStream primary load overload.
+     */
+    open fun load(context: Context) {
+        if (context is Activity) {
+            load(context as Activity?)
+        } else {
+            load()
+        }
+    }
+
     fun registerMainAPI(element: MainAPI) {
         Log.d("CS3Plugin", "registerMainAPI called: ${element.name} (${element.javaClass.name})")
         _registeredMainAPIs.add(element)
@@ -57,10 +71,5 @@ open class Plugin {
         _registeredExtractorAPIs.add(element)
         element.sourcePlugin = this.filename
         extractorApis.add(element)
-    }
-
-    // Some extensions call these overloads
-    open fun load(context: Context) {
-        load(context as? Activity)
     }
 }

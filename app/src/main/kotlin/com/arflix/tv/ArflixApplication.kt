@@ -77,6 +77,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
     override fun onCreate() {
         super.onCreate()
         instance = this
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
 
         // OkHttpProvider.init(context) just stashes the app context; it does
         // not build the OkHttpClient. Safe to keep on the main thread — it's

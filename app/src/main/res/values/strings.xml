@@ -294,6 +294,8 @@
     <string name="plugin_risky_enable_confirm">Enable</string>
     <string name="plugin_prefix">Plugin: </string>
     <string name="plugins_loading">Plugins: %1$s</string>
+    <string name="plugin_settings">Extension Settings</string>
+    <string name="plugin_settings_not_available">No settings available for this extension</string>
 
     <!-- IPTV / Live TV Quick Zap Navigation -->
     <string name="select_category">Select Category</string>
@@ -810,13 +812,32 @@
     <string name="telegram_try_again">TRY AGAIN</string>
     <string name="telegram_disconnect_confirm_title">Disconnect Telegram?</string>
     <string name="telegram_disconnect_confirm_desc">You\'ll need to sign in again to use Telegram as a source.</string>
-    <string name="plugin_screen_title">Plugins (Testing)</string>
+    <string name="plugin_screen_title">Plugins &amp; Extensions</string>
     <string name="plugin_screen_add_repo">Add Repository</string>
+    <string name="plugin_screen_add_repo_desc">Install JS plugin or external DEX extension repository via URL</string>
     <string name="plugin_screen_installed_repos">Installed Repositories</string>
-    <string name="plugin_screen_installed_scrapers">Installed Scrapers</string>
-    <string name="plugin_screen_no_scrapers">No scrapers installed.</string>
+    <string name="plugin_screen_installed_scrapers">Installed Providers &amp; Scrapers</string>
+    <string name="plugin_screen_no_repos">No repositories installed</string>
+    <string name="plugin_screen_no_repos_desc">Add a repository URL above to load extensions</string>
+    <string name="plugin_screen_no_scrapers">No scrapers installed</string>
+    <string name="plugin_screen_no_scrapers_desc">Scrapers from your installed repositories will appear here</string>
+    <string name="plugin_screen_enable_title">Enable Plugins &amp; Extensions</string>
+    <string name="plugin_screen_enable_desc">Allow plugins and external DEX extensions to fetch streams</string>
+    <string name="plugin_screen_group_title">Group Streams by Repository</string>
+    <string name="plugin_screen_group_desc">Group stream results under their repository in player source picker</string>
+    <string name="plugin_screen_reset_title">Reset Plugins &amp; Extensions</string>
+    <string name="plugin_screen_reset_desc">Deletes all repositories, scrapers, and local code data</string>
+    <string name="plugin_screen_reset_confirm">Are you sure you want to delete all plugins, scrapers, and local code data? This action cannot be undone.</string>
+    <string name="plugin_screen_section_preferences">Preferences</string>
+    <string name="plugin_screen_section_danger">Danger Zone</string>
+    <string name="plugin_screen_delete_repo_confirm">Are you sure you want to remove \'%1$s\'?</string>
     <string name="plugin_screen_add_repo_dialog_title">Add Plugin Repository</string>
     <string name="plugin_screen_repo_url">Repository URL</string>
+    <string name="plugin_screen_repo_url_hint">https://example.com/manifest.json</string>
+    <string name="plugin_test_title">Scraper Diagnostics &amp; Test</string>
+    <string name="plugin_test_running">Testing scraper...</string>
+    <string name="plugin_type_js">NATIVE JS</string>
+    <string name="plugin_type_dex">EXTERNAL DEX</string>
 
     <!-- Extracted from code: Profile, Login and Collections -->
     <string name="profile_edit_title">Edit Profile</string>

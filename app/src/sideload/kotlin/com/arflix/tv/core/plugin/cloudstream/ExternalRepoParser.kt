@@ -23,7 +23,8 @@ private const val TAG = "ExternalRepoParser"
 data class ExternalRepoParseResult(
     val name: String,
     val description: String?,
-    val plugins: List<ExternalPluginEntry>
+    val plugins: List<ExternalPluginEntry>,
+    val iconUrl: String? = null
 )
 
 /**
@@ -69,10 +70,13 @@ class ExternalRepoParser @Inject constructor(
                             }
                         }.awaitAll().flatten()
                     }
+                    val rawLogo = manifest.iconUrl ?: manifest.icon ?: manifest.logo
+                    val resolvedLogo = rawLogo?.let { resolveUrl(url, it) }
                     return@withContext ExternalRepoParseResult(
                         name = manifest.name,
                         description = manifest.description,
-                        plugins = allPlugins
+                        plugins = allPlugins,
+                        iconUrl = resolvedLogo
                     )
                 }
             } catch (e: Exception) {
@@ -87,10 +91,18 @@ class ExternalRepoParser @Inject constructor(
                 if (!plugins.isNullOrEmpty() && plugins.first().internalName.isNotBlank()) {
                     Log.d(TAG, "Parsed as direct plugins list: ${plugins.size} plugins")
                     val repoName = fallbackName ?: inferRepoName(url)
+                    val resolvedPlugins = plugins.map { entry ->
+                        val rawEntryLogo = entry.iconUrl ?: entry.icon ?: entry.logo
+                        val resolvedEntryLogo = rawEntryLogo?.let { resolveUrl(url, it) }
+                        entry.copy(
+                            url = resolveUrl(url, entry.url),
+                            iconUrl = resolvedEntryLogo
+                        )
+                    }
                     return@withContext ExternalRepoParseResult(
                         name = repoName,
                         description = null,
-                        plugins = plugins
+                        plugins = resolvedPlugins
                     )
                 }
             } catch (e: Exception) {
@@ -106,9 +118,11 @@ class ExternalRepoParser @Inject constructor(
         try {
             val list = pluginListAdapter.fromJson(body.trim()) ?: return@withContext null
             list.map { entry ->
+                val rawEntryLogo = entry.iconUrl ?: entry.icon ?: entry.logo
+                val resolvedEntryLogo = rawEntryLogo?.let { resolveUrl(url, it) }
                 entry.copy(
                     url = resolveUrl(url, entry.url),
-                    iconUrl = entry.iconUrl?.let { resolveUrl(url, it) }
+                    iconUrl = resolvedEntryLogo
                 )
             }
         } catch (e: Exception) {

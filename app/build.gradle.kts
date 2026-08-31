@@ -437,6 +437,8 @@ ksp {
     add("sideloadImplementation", "org.mozilla:rhino:1.8.1")
     add("sideloadImplementation", "com.google.re2j:re2j:1.8")
     add("sideloadImplementation", "org.webjars.npm:crypto-js:4.2.0")
+    add("sideloadImplementation", "com.google.android.material:material:1.12.0")
+    add("sideloadImplementation", "androidx.appcompat:appcompat:1.7.0")
 
     // Unit Testing
     testImplementation("junit:junit:4.13.2")

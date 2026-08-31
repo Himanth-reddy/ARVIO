@@ -1,8 +1,12 @@
 package com.arflix.tv.core.plugin.cloudstream
 
+import android.app.Activity
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import androidx.appcompat.view.ContextThemeWrapper
 import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.APIHolder
 import com.lagradost.cloudstream3.MainAPI
@@ -84,6 +88,7 @@ private class ReflectivePluginWrapper(private val foreignInstance: Any) : Plugin
 
         val clazz = foreignInstance.javaClass
         var loaded = false
+        val activity = (context as? android.app.Activity) ?: AcraApplication.getActivity()
 
         // Try load(Context) first
         try {
@@ -93,10 +98,10 @@ private class ReflectivePluginWrapper(private val foreignInstance: Any) : Plugin
         } catch (e: java.lang.reflect.InvocationTargetException) {
             val cause = e.cause
             if (cause is ClassCastException) {
-                Log.d(TAG, "ReflectivePluginWrapper: load(Context) got ClassCastException, retrying with null Activity")
+                Log.d(TAG, "ReflectivePluginWrapper: load(Context) got ClassCastException, retrying with Activity")
                 try {
                     val m = clazz.getMethod("load", android.app.Activity::class.java)
-                    m.invoke(foreignInstance, null)
+                    m.invoke(foreignInstance, activity)
                     loaded = true
                 } catch (e2: Exception) {
                     Log.w(TAG, "ReflectivePluginWrapper: load(Activity) also failed: ${e2.message}")
@@ -108,7 +113,7 @@ private class ReflectivePluginWrapper(private val foreignInstance: Any) : Plugin
             // Try load(Activity?) next
             try {
                 val m = clazz.getMethod("load", android.app.Activity::class.java)
-                m.invoke(foreignInstance, null)
+                m.invoke(foreignInstance, activity)
                 loaded = true
             } catch (_: NoSuchMethodException) {
                 // Try no-arg load() (BasePlugin pattern)
@@ -158,6 +163,104 @@ private class ReflectivePluginWrapper(private val foreignInstance: Any) : Plugin
                 newExtractors.forEach { registerExtractorAPI(it) }
             }
         }
+
+    }
+
+    override var openSettings: ((Context) -> Unit)?
+        get() {
+            var callback: Any? = null
+            var currClass: Class<*>? = foreignInstance.javaClass
+            while (currClass != null && currClass != Any::class.java) {
+                try {
+                    val getter = currClass.getDeclaredMethod("getOpenSettings")
+                    getter.isAccessible = true
+                    val res = getter.invoke(foreignInstance)
+                    if (res != null) {
+                        callback = res
+                        break
+                    }
+                } catch (_: Throwable) {}
+
+                try {
+                    val field = currClass.getDeclaredField("openSettings")
+                    field.isAccessible = true
+                    val res = field.get(foreignInstance)
+                    if (res != null) {
+                        callback = res
+                        break
+                    }
+                } catch (_: Throwable) {}
+
+                currClass = currClass.superclass
+            }
+
+            if (callback != null) {
+                if (callback is Function1<*, *>) {
+                    @Suppress("UNCHECKED_CAST")
+                    val fn = callback as (Context) -> Unit
+                    return { ctx ->
+                        try {
+                            fn.invoke(ctx)
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "ReflectivePluginWrapper: openSettings Function1 invocation threw: ${e.message}", e)
+                        }
+                    }
+                } else if (callback is Function0<*>) {
+                    val fn = callback as () -> Unit
+                    return { _ ->
+                        try {
+                            fn.invoke()
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "ReflectivePluginWrapper: openSettings Function0 invocation threw: ${e.message}", e)
+                        }
+                    }
+                } else {
+                    val invokeMethod = callback.javaClass.methods.firstOrNull { it.name == "invoke" }
+                    if (invokeMethod != null) {
+                        return { ctx ->
+                            try {
+                                if (invokeMethod.parameterTypes.size == 1) {
+                                    invokeMethod.invoke(callback, ctx)
+                                } else {
+                                    invokeMethod.invoke(callback)
+                                }
+                            } catch (e: Throwable) {
+                                Log.e(TAG, "ReflectivePluginWrapper: openSettings reflective invoke threw: ${e.message}", e)
+                            }
+                        }
+                    }
+                }
+            }
+            return super.openSettings
+        }
+        set(value) {
+            super.openSettings = value
+        }
+
+    fun setResourcesOnForeign(res: android.content.res.Resources?) {
+        try {
+            val setter = foreignInstance.javaClass.getMethod("setResources", android.content.res.Resources::class.java)
+            setter.invoke(foreignInstance, res)
+        } catch (_: Exception) {
+            try {
+                val field = foreignInstance.javaClass.getDeclaredField("resources")
+                field.isAccessible = true
+                field.set(foreignInstance, res)
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun setFilenameOnForeign(path: String?) {
+        try {
+            val setter = foreignInstance.javaClass.getMethod("setFilename", String::class.java)
+            setter.invoke(foreignInstance, path)
+        } catch (_: Exception) {
+            try {
+                val field = foreignInstance.javaClass.getDeclaredField("filename")
+                field.isAccessible = true
+                field.set(foreignInstance, path)
+            } catch (_: Exception) {}
+        }
     }
 }
 
@@ -180,6 +283,9 @@ class ExternalExtensionLoader @Inject constructor(
     /** Cache of loaded MainAPI instances by scraper ID */
     private val apiCache = ConcurrentHashMap<String, MainAPI>()
 
+    /** Cache of loaded Plugin instances by scraper ID */
+    private val pluginCache = ConcurrentHashMap<String, Plugin>()
+
     /** Cache of loaded class loaders by scraper ID */
     private val classLoaderCache = ConcurrentHashMap<String, DexClassLoader>()
 
@@ -201,6 +307,7 @@ class ExternalExtensionLoader @Inject constructor(
      * Returns the local file path, or null on failure.
      */
     suspend fun downloadExtension(scraperId: String, downloadUrl: String): File? = withContext(Dispatchers.IO) {
+        evictCache(scraperId)
         com.arflix.tv.core.runtime.PluginRuntimeHooks.ensureCloudstreamInitialized()
         try {
             val targetFile = File(extensionsDir, "${safeFileName(scraperId)}.cs3")
@@ -258,7 +365,10 @@ class ExternalExtensionLoader @Inject constructor(
      */
     fun loadExtension(scraperId: String): List<MainAPI> {
         // Check cache first
-        apiCache[scraperId]?.let { return listOf(it) }
+        val cachedApi = apiCache[scraperId]
+        if (cachedApi != null && pluginCache[scraperId] != null) {
+            return listOf(cachedApi)
+        }
         com.arflix.tv.core.runtime.PluginRuntimeHooks.ensureCloudstreamInitialized()
 
         val dexFile = File(extensionsDir, "${safeFileName(scraperId)}.cs3")
@@ -397,11 +507,13 @@ class ExternalExtensionLoader @Inject constructor(
             if (apis.isNotEmpty()) {
                 apiCache[scraperId] = apis.first()
             }
+            pluginCache[scraperId] = plugin
 
             Log.d(TAG, "Loaded extension $scraperId: ${apis.size} providers (${apis.joinToString { it.name }})")
             apis
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load extension $scraperId: ${e.message}", e)
+            pluginCache.remove(scraperId)
             emptyList()
         } catch (e: Error) {
             val missingClass = extractMissingClassName(e)
@@ -410,6 +522,7 @@ class ExternalExtensionLoader @Inject constructor(
             } else {
                 Log.e(TAG, "Failed to load extension $scraperId (linkage error): ${e.message}", e)
             }
+            pluginCache.remove(scraperId)
             emptyList()
         }
     }
@@ -555,14 +668,17 @@ class ExternalExtensionLoader @Inject constructor(
             if (apis.isNotEmpty()) {
                 apiCache[scraperId] = apis.first()
             }
+            pluginCache[scraperId] = plugin
 
             apis
         } catch (e: Exception) {
             diagnostics.addStep("FAILED: ${e.javaClass.simpleName}: ${e.message?.take(200)}")
+            pluginCache.remove(scraperId)
             emptyList()
         } catch (e: Error) {
             val missing = extractMissingClassName(e)
             diagnostics.addStep("FAILED: ${missing ?: e.message?.take(200)}")
+            pluginCache.remove(scraperId)
             emptyList()
         }
     }
@@ -615,6 +731,7 @@ class ExternalExtensionLoader @Inject constructor(
                     if (plugin.registeredExtractorAPIs.isNotEmpty()) {
                         extractorRegistry.registerAll(plugin.registeredExtractorAPIs)
                         totalExtractors += plugin.registeredExtractorAPIs.size
+                        pluginCache[scraperId] = plugin
                         continue
                     }
                 }
@@ -652,6 +769,7 @@ class ExternalExtensionLoader @Inject constructor(
 
     fun deleteExtension(scraperId: String) {
         val cachedApis = apiCache.keys.filter { it.startsWith(scraperId) }.mapNotNull { apiCache.remove(it) }
+        pluginCache.remove(scraperId)
         classLoaderCache.remove(scraperId)
         extractorPreloadedIds.remove(scraperId)
         File(extensionsDir, "${safeFileName(scraperId)}.cs3").delete()
@@ -665,6 +783,7 @@ class ExternalExtensionLoader @Inject constructor(
 
     fun clearAllExtensions() {
         apiCache.clear()
+        pluginCache.clear()
         classLoaderCache.clear()
         extractorPreloadedIds.clear()
         extensionsDir.listFiles()?.forEach { it.delete() }
@@ -677,8 +796,187 @@ class ExternalExtensionLoader @Inject constructor(
 
     fun evictCache(scraperId: String) {
         apiCache.keys.filter { it.startsWith(scraperId) }.forEach { apiCache.remove(it) }
+        pluginCache.remove(scraperId)
         classLoaderCache.remove(scraperId)
         extractorPreloadedIds.remove(scraperId)
+    }
+
+    /**
+     * Get or load the Plugin instance for the given scraper ID.
+     */
+    fun getOrLoadPlugin(scraperId: String): Plugin? {
+        pluginCache[scraperId]?.let { return it }
+        loadExtension(scraperId)
+        return pluginCache[scraperId]
+    }
+
+    /**
+     * Checks if a plugin defines a settings UI callback.
+     */
+    fun hasSettings(scraperId: String): Boolean {
+        val plugin = getOrLoadPlugin(scraperId)
+        if (plugin?.openSettings != null) return true
+
+        if (plugin != null) {
+            for (api in plugin.registeredMainAPIs) {
+                if (hasApiSettings(api)) return true
+            }
+        }
+        val api = apiCache[scraperId]
+        if (api != null && hasApiSettings(api)) return true
+
+        return false
+    }
+
+    private fun hasApiSettings(api: Any): Boolean {
+        var currClass: Class<*>? = api.javaClass
+        while (currClass != null && currClass != Any::class.java) {
+            try {
+                val getter = currClass.getDeclaredMethod("getOpenSettings")
+                getter.isAccessible = true
+                if (getter.invoke(api) != null) return true
+            } catch (_: Throwable) {}
+            try {
+                val field = currClass.getDeclaredField("openSettings")
+                field.isAccessible = true
+                if (field.get(api) != null) return true
+            } catch (_: Throwable) {}
+            currClass = currClass.superclass
+        }
+        return false
+    }
+
+    private fun extractApiSettingsAction(api: Any): ((Context) -> Unit)? {
+        var callback: Any? = null
+        var currClass: Class<*>? = api.javaClass
+        while (currClass != null && currClass != Any::class.java) {
+            try {
+                val getter = currClass.getDeclaredMethod("getOpenSettings")
+                getter.isAccessible = true
+                val res = getter.invoke(api)
+                if (res != null) {
+                    callback = res
+                    break
+                }
+            } catch (_: Throwable) {}
+            try {
+                val field = currClass.getDeclaredField("openSettings")
+                field.isAccessible = true
+                val res = field.get(api)
+                if (res != null) {
+                    callback = res
+                    break
+                }
+            } catch (_: Throwable) {}
+            currClass = currClass.superclass
+        }
+
+        if (callback == null) return null
+        if (callback is Function1<*, *>) {
+            @Suppress("UNCHECKED_CAST")
+            val fn = callback as (Context) -> Unit
+            return { ctx -> fn.invoke(ctx) }
+        } else if (callback is Function0<*>) {
+            val fn = callback as () -> Unit
+            return { _ -> fn.invoke() }
+        } else {
+            val m = callback.javaClass.methods.firstOrNull { it.name == "invoke" }
+            if (m != null) {
+                return { ctx ->
+                    if (m.parameterTypes.size == 1) m.invoke(callback, ctx)
+                    else m.invoke(callback)
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Invokes the plugin's settings UI callback safely on the main thread.
+     */
+    fun openSettings(scraperId: String, activity: Activity): Boolean {
+        com.arflix.tv.core.runtime.PluginRuntimeHooks.ensureCloudstreamInitialized()
+        AcraApplication.setActivity(activity)
+        AcraApplication.context = activity.applicationContext
+
+        val plugin = getOrLoadPlugin(scraperId) ?: run {
+            Log.w(TAG, "openSettings: plugin not found for $scraperId")
+            return false
+        }
+
+        var openAction = plugin.openSettings
+        if (openAction == null) {
+            for (api in plugin.registeredMainAPIs) {
+                val action = extractApiSettingsAction(api)
+                if (action != null) {
+                    openAction = action
+                    break
+                }
+            }
+        }
+        if (openAction == null) {
+            val api = apiCache[scraperId]
+            if (api != null) {
+                openAction = extractApiSettingsAction(api)
+            }
+        }
+
+        if (openAction == null) {
+            Log.w(TAG, "openSettings: plugin/scraper $scraperId has no openSettings handler")
+            return false
+        }
+
+        return try {
+            val themedContext = try {
+                ContextThemeWrapper(
+                    activity,
+                    com.google.android.material.R.style.Theme_MaterialComponents_Dialog_Alert
+                )
+            } catch (_: Throwable) {
+                try {
+                    ContextThemeWrapper(
+                        activity,
+                        androidx.appcompat.R.style.Theme_AppCompat_Dialog_Alert
+                    )
+                } catch (_: Throwable) {
+                    activity
+                }
+            }
+
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                invokeSettingsSafely(openAction, activity, themedContext)
+            } else {
+                Handler(Looper.getMainLooper()).post {
+                    invokeSettingsSafely(openAction, activity, themedContext)
+                }
+            }
+            true
+        } catch (e: Throwable) {
+            Log.e(TAG, "openSettings: failed to invoke settings for $scraperId: ${e.message}", e)
+            false
+        }
+    }
+
+    private fun invokeSettingsSafely(
+        openAction: (Context) -> Unit,
+        activity: Activity,
+        themedContext: Context
+    ) {
+        try {
+            openAction.invoke(themedContext)
+        } catch (e: Throwable) {
+            Log.w(TAG, "openSettings: invoke(themedContext) failed, retrying with Activity: ${e.message}")
+            try {
+                openAction.invoke(activity)
+            } catch (e2: Throwable) {
+                Log.w(TAG, "openSettings: invoke(Activity) also failed, retrying with ApplicationContext: ${e2.message}")
+                try {
+                    openAction.invoke(activity.applicationContext)
+                } catch (e3: Throwable) {
+                    Log.e(TAG, "openSettings: all invocation attempts failed: ${e3.message}", e3)
+                }
+            }
+        }
     }
 
     /**
@@ -698,6 +996,59 @@ class ExternalExtensionLoader @Inject constructor(
         return match?.groupValues?.get(1)?.replace('/', '.')
     }
 
+    private fun createPluginResources(dexFile: File): android.content.res.Resources? {
+        return try {
+            val assetManager = android.content.res.AssetManager::class.java.getDeclaredConstructor().newInstance()
+            val addAssetPath = android.content.res.AssetManager::class.java.getMethod("addAssetPath", String::class.java)
+            addAssetPath.invoke(assetManager, dexFile.absolutePath)
+            android.content.res.Resources(assetManager, context.resources.displayMetrics, context.resources.configuration)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun setupPluginInstance(plugin: Plugin, dexFile: File): Plugin {
+        plugin.filename = dexFile.absolutePath
+        val res = createPluginResources(dexFile)
+        plugin.resources = res
+        if (plugin is ReflectivePluginWrapper) {
+            plugin.setFilenameOnForeign(dexFile.absolutePath)
+            plugin.setResourcesOnForeign(res)
+        }
+        return plugin
+    }
+
+    fun extractIconFromZip(scraperId: String, cs3File: File): String? {
+        return try {
+            val iconFile = File(extensionsDir, "${safeFileName(scraperId)}_icon.png")
+            if (iconFile.exists() && iconFile.length() > 0) {
+                return iconFile.absolutePath
+            }
+
+            ZipFile(cs3File).use { zip ->
+                val entries = zip.entries().asSequence().toList()
+                val iconEntry = entries.firstOrNull { entry ->
+                    val name = entry.name.lowercase()
+                    (name == "icon.png" || name == "icon.webp" || name == "logo.png" || name == "logo.webp" ||
+                     name.endsWith("/icon.png") || name.endsWith("/icon.webp") || name.endsWith("/logo.png") || name.endsWith("/logo.webp")) &&
+                    !entry.isDirectory
+                }
+                if (iconEntry != null) {
+                    zip.getInputStream(iconEntry).use { input ->
+                        iconFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    Log.d(TAG, "Extracted icon from cs3 for $scraperId to ${iconFile.absolutePath}")
+                    iconFile.absolutePath
+                } else null
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not extract icon from cs3 for $scraperId: ${e.message}")
+            null
+        }
+    }
+
     private fun findAndLoadPlugin(classLoader: DexClassLoader, cs3File: File): Plugin? {
         val pluginClassName = readPluginClassNameFromZip(cs3File)
         if (pluginClassName != null) {
@@ -706,11 +1057,17 @@ class ExternalExtensionLoader @Inject constructor(
                 val clazz = classLoader.loadClass(pluginClassName)
                 val instance = clazz.getDeclaredConstructor().newInstance()
                 if (instance is Plugin) {
-                    return instance
+                    return setupPluginInstance(instance, cs3File)
                 }
                 if (looksLikePlugin(instance)) {
                     Log.d(TAG, "Using reflective wrapper for $pluginClassName (non-standard base class)")
-                    return ReflectivePluginWrapper(instance)
+                    return setupPluginInstance(ReflectivePluginWrapper(instance), cs3File)
+                }
+                if (instance is MainAPI) {
+                    Log.d(TAG, "Manifest class $pluginClassName is a MainAPI directly: ${instance.name}")
+                    val wrapper = Plugin()
+                    wrapper.registerMainAPI(instance)
+                    return setupPluginInstance(wrapper, cs3File)
                 }
                 Log.w(TAG, "Class $pluginClassName is not a Plugin and has no plugin methods")
             } catch (e: Exception) {
@@ -742,6 +1099,8 @@ class ExternalExtensionLoader @Inject constructor(
             @Suppress("DEPRECATION")
             val dex = dalvik.system.DexFile(cs3File)
             val entries = dex.entries()
+            val fallbackApis = mutableListOf<MainAPI>()
+            val fallbackExtractors = mutableListOf<ExtractorApi>()
 
             while (entries.hasMoreElements()) {
                 val className = entries.nextElement()
@@ -752,23 +1111,43 @@ class ExternalExtensionLoader @Inject constructor(
                         val instance = clazz.getDeclaredConstructor().newInstance()
                         if (instance is Plugin) {
                             dex.close()
-                            return instance
+                            return setupPluginInstance(instance, cs3File)
                         }
                         if (looksLikePlugin(instance)) {
                             Log.d(TAG, "Using reflective wrapper for $className (non-standard base class)")
                             dex.close()
-                            return ReflectivePluginWrapper(instance)
+                            return setupPluginInstance(ReflectivePluginWrapper(instance), cs3File)
                         }
-                        Log.w(TAG, "Annotated class $className has no plugin methods")
+                        if (instance is MainAPI) {
+                            val wrapper = Plugin()
+                            wrapper.registerMainAPI(instance)
+                            dex.close()
+                            return setupPluginInstance(wrapper, cs3File)
+                        }
+                    } else if (MainAPI::class.java.isAssignableFrom(clazz) && !java.lang.reflect.Modifier.isAbstract(clazz.modifiers) && !clazz.isInterface) {
+                        try {
+                            val api = clazz.getDeclaredConstructor().newInstance() as MainAPI
+                            fallbackApis.add(api)
+                        } catch (_: Throwable) {}
+                    } else if (ExtractorApi::class.java.isAssignableFrom(clazz) && !java.lang.reflect.Modifier.isAbstract(clazz.modifiers)) {
+                        try {
+                            val ext = clazz.getDeclaredConstructor().newInstance() as ExtractorApi
+                            fallbackExtractors.add(ext)
+                        } catch (_: Throwable) {}
                     }
-                } catch (_: ClassNotFoundException) {
-                } catch (_: NoClassDefFoundError) {
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error inspecting class $className: ${e.message}")
+                } catch (_: Throwable) {
                 }
             }
 
             dex.close()
+
+            if (fallbackApis.isNotEmpty() || fallbackExtractors.isNotEmpty()) {
+                Log.d(TAG, "Found ${fallbackApis.size} MainAPIs and ${fallbackExtractors.size} extractors via DEX scan")
+                val wrapper = Plugin()
+                fallbackApis.forEach { wrapper.registerMainAPI(it) }
+                fallbackExtractors.forEach { wrapper.registerExtractorAPI(it) }
+                return setupPluginInstance(wrapper, cs3File)
+            }
         } catch (e: Exception) {
             Log.d(TAG, "DexFile scan fallback failed: ${e.message}")
         }
