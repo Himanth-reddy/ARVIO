@@ -76,6 +76,13 @@ private const val PLAYBACK_DIAGNOSTICS = true
 // side-loaded at startup (each becomes a MediaItem SubtitleConfiguration read at prepare).
 private const val MAX_PRELOAD_SUBS = 15
 
+/**
+ * How long a manual subtitle pick waits for its local (correctly decoded) copy before falling back
+ * to the remote URL. Generous enough for a normal ~100 KB fetch, short enough that a stalled addon
+ * doesn't make the menu feel broken.
+ */
+private const val SUBTITLE_LOCALIZE_TIMEOUT_MS = 6_000L
+
 private fun playbackDiag(message: String) {
     if (PLAYBACK_DIAGNOSTICS) {
         System.err.println("[PlaybackDiag] $message")
@@ -2741,14 +2748,59 @@ class PlayerViewModel @Inject constructor(
             updateMatchCacheForManualPick(subtitle)
         }
         subtitleSelectionJob?.cancel()
+        subtitleLocalizeJob?.cancel()
         translationManager.isEnabled = false
+
+        // Handing ExoPlayer the addon URL makes media3 decode the file as UTF-8, which turns a
+        // legacy code page (windows-1255 Hebrew is still common) into rows of U+FFFD. Only a
+        // locally decoded copy is safe — the same reason the matched/remembered paths localize.
+        // Preload covers the first MAX_PRELOAD_SUBS tracks; anything past that (or picked before
+        // preload finished) must be fetched here, or it renders as symbols.
+        val preloaded = preloadedCopyFor(subtitle)
+        if (preloaded != null || !needsLocalDecode(subtitle)) {
+            applySelectedSubtitle(preloaded ?: subtitle, original = subtitle)
+            return
+        }
+        subtitleLocalizeJob = viewModelScope.launch {
+            // Bounded: a slow addon must not hold the pick hostage — falling back to the remote
+            // URL is exactly today's behaviour, so the worst case is unchanged.
+            val localized = withTimeoutOrNull(SUBTITLE_LOCALIZE_TIMEOUT_MS) {
+                SubtitleSyncMatcher.loadRaw(subtitle.url, subtitle.lang)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { raw -> localizeSubtitle(subtitle, raw) }
+                    ?.takeIf { it.url.startsWith("file:") }
+            }
+            if (localized == null) {
+                Log.w("SubMatch", "manual pick not localized (serving remote): ${subtitle.label}")
+            }
+            applySelectedSubtitle(localized ?: subtitle, original = subtitle)
+        }
+    }
+
+    /** True for external subtitles still pointing at a remote URL of unknown character encoding. */
+    private fun needsLocalDecode(subtitle: Subtitle): Boolean =
+        !subtitle.isEmbedded &&
+            subtitle.url.isNotBlank() &&
+            !subtitle.url.startsWith("file:")
+
+    /** An already-downloaded local copy of [subtitle] from the preload pass, if there is one. */
+    private fun preloadedCopyFor(subtitle: Subtitle): Subtitle? {
+        if (subtitle.isEmbedded) return null
+        val key = "${subtitle.provider}|${subtitle.id}"
+        return _uiState.value.preloadedSubtitles.firstOrNull {
+            it.url.startsWith("file:") && "${it.provider}|${it.id}" == key
+        }
+    }
+
+    /** Commits [served] as the playing subtitle; [original] is what the user actually picked. */
+    private fun applySelectedSubtitle(served: Subtitle, original: Subtitle) {
         // Keep isAiAvailable/aiTargetLanguageName so the AI entry stays in the menu for re-selection
         _uiState.value = _uiState.value.copy(
-            selectedSubtitle = subtitle,
+            selectedSubtitle = served,
             isAiTranslating = false,
             subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
         )
-        recordSubtitleUsage(subtitle)
+        recordSubtitleUsage(original)
     }
 
     /** Cancel a running/queued "Find best match" scan and clear its transient state. */
@@ -3056,7 +3108,7 @@ class PlayerViewModel @Inject constructor(
                     // slow addon server (download bounded by the matcher's client timeouts).
                     // Re-bake the remembered rescue offset, if any.
                     val offsetMs = cached.offsetMs
-                    val raw = SubtitleSyncMatcher.loadRaw(remembered.url)
+                    val raw = SubtitleSyncMatcher.loadRaw(remembered.url, remembered.lang)
                     // A remembered OFFSET can only be honoured if we can download the text to bake
                     // the shift in. If that download fails, DON'T serve the un-shifted remote copy
                     // under an "auto-offset" label (the sub would be mistimed while the UI claims it
@@ -3085,7 +3137,7 @@ class PlayerViewModel @Inject constructor(
             if (exactNameMatch != null) {
                 // Serve from a local copy for the same reason the remembered path does: the
                 // MediaItem rebuild would otherwise stall on a slow addon server.
-                val exactRaw = SubtitleSyncMatcher.loadRaw(exactNameMatch.url)
+                val exactRaw = SubtitleSyncMatcher.loadRaw(exactNameMatch.url, exactNameMatch.lang)
                 val exactLocal = exactRaw?.let { localizeSubtitle(exactNameMatch, it) } ?: exactNameMatch
                 endMatch()
                 selectSubtitle(exactLocal, isUserAction = false)
@@ -3116,7 +3168,7 @@ class PlayerViewModel @Inject constructor(
             // ExoPlayer from a local cache file (already downloaded here) instead of re-fetching
             // a possibly slow addon server during the MediaItem rebuild.
             val loadedRaw = candidates.map { sub ->
-                async { sub to SubtitleSyncMatcher.loadRaw(sub.url) }
+                async { sub to SubtitleSyncMatcher.loadRaw(sub.url, sub.lang) }
             }.awaitAll()
             val rawBySubKey = loadedRaw.mapNotNull { (sub, raw) ->
                 raw?.let { "${sub.provider}|${sub.id}" to it }
@@ -3785,7 +3837,7 @@ class PlayerViewModel @Inject constructor(
         subtitlePreloadJob = viewModelScope.launch {
             val localized = candidates.map { sub ->
                 async(Dispatchers.IO) {
-                    SubtitleSyncMatcher.loadRaw(sub.url)
+                    SubtitleSyncMatcher.loadRaw(sub.url, sub.lang)
                         ?.takeIf { it.isNotBlank() }
                         ?.let { raw -> localizeSubtitle(sub, raw) }
                         ?.takeIf { it.url.startsWith("file:") }
@@ -4332,6 +4384,8 @@ class PlayerViewModel @Inject constructor(
     private var vodAppendJob: Job? = null
     private var homeServerAppendJob: Job? = null
     private var subtitleSelectionJob: Job? = null
+    /** Downloads+decodes a manually picked subtitle before it is served (see selectSubtitle). */
+    private var subtitleLocalizeJob: Job? = null
     private var streamPrewarmJob: Job? = null
     private var focusedStreamPrewarmJob: Job? = null
     private var streamSelectionJob: Job? = null
