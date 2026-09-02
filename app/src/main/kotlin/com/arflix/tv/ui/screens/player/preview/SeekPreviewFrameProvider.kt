@@ -73,6 +73,23 @@ internal fun acceleratedSeekPreviewStepMs(repeatCount: Int): Long = when {
     else -> 10_000L
 }
 
+internal fun fitSeekPreviewDimensions(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    maxWidth: Int,
+    maxHeight: Int,
+): Pair<Int, Int> {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || maxWidth <= 0 || maxHeight <= 0) {
+        return maxWidth.coerceAtLeast(1) to maxHeight.coerceAtLeast(1)
+    }
+    val scale = minOf(
+        maxWidth.toFloat() / sourceWidth.toFloat(),
+        maxHeight.toFloat() / sourceHeight.toFloat(),
+    )
+    return (sourceWidth * scale).roundToInt().coerceAtLeast(1) to
+        (sourceHeight * scale).roundToInt().coerceAtLeast(1)
+}
+
 /**
  * Extracts sparse seek thumbnails on the device. The source URL and credentials never leave the
  * device; only small JPEG previews are retained in the app-private cache directory.
@@ -334,19 +351,12 @@ class SeekPreviewFrameProvider(
             } else {
                 sourceWidth to sourceHeight
             }
-            val targetWidth: Int
-            val targetHeight: Int
-            if (displayWidth >= displayHeight) {
-                targetWidth = PREVIEW_WIDTH_PX
-                targetHeight = (PREVIEW_WIDTH_PX * displayHeight.toFloat() / displayWidth.toFloat())
-                    .roundToInt()
-                    .coerceIn(72, PREVIEW_MAX_HEIGHT_PX)
-            } else {
-                targetHeight = PREVIEW_MAX_HEIGHT_PX
-                targetWidth = (PREVIEW_MAX_HEIGHT_PX * displayWidth.toFloat() / displayHeight.toFloat())
-                    .roundToInt()
-                    .coerceIn(72, PREVIEW_WIDTH_PX)
-            }
+            val (targetWidth, targetHeight) = fitSeekPreviewDimensions(
+                sourceWidth = displayWidth,
+                sourceHeight = displayHeight,
+                maxWidth = PREVIEW_WIDTH_PX,
+                maxHeight = PREVIEW_MAX_HEIGHT_PX,
+            )
 
             val extracted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 retriever.getScaledFrameAtTime(

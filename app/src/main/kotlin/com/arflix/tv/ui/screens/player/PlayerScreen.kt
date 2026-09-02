@@ -236,6 +236,7 @@ import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
 import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
+import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewDimensions
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 
 private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
@@ -6556,7 +6557,13 @@ private suspend fun captureRenderedSeekPreview(
     val surface = playerView.videoSurfaceView ?: return@withContext null
     if (surface.width <= 0 || surface.height <= 0) return@withContext null
 
-    val output = Bitmap.createBitmap(416, 234, Bitmap.Config.ARGB_8888)
+    val (previewWidth, previewHeight) = fitSeekPreviewDimensions(
+        sourceWidth = surface.width,
+        sourceHeight = surface.height,
+        maxWidth = 416,
+        maxHeight = 234,
+    )
+    val output = Bitmap.createBitmap(previewWidth, previewHeight, Bitmap.Config.ARGB_8888)
     when (surface) {
         is TextureView -> {
             runCatching { surface.getBitmap(output) }
@@ -6644,7 +6651,8 @@ private fun buildSeekPreviewCacheIdentity(
     episodeNumber: Int?,
     stream: StreamSource?,
 ): String = buildString {
-    append("v1|")
+    // Bump when preview rendering changes so malformed frames from older builds are not reused.
+    append("v2|")
     append(mediaType.name).append('|').append(mediaId)
     append('|').append(seasonNumber ?: 0).append('|').append(episodeNumber ?: 0)
     if (stream != null) {

@@ -37,4 +37,19 @@ class SeekPreviewFrameProviderTest {
         assertEquals(30_000L, acceleratedSeekPreviewStepMs(17))
         assertEquals(60_000L, acceleratedSeekPreviewStepMs(18))
     }
+
+    @Test
+    fun `preview dimensions preserve widescreen aspect ratio`() {
+        assertEquals(416 to 173, fitSeekPreviewDimensions(1920, 800, 416, 234))
+    }
+
+    @Test
+    fun `preview dimensions preserve four by three aspect ratio`() {
+        assertEquals(312 to 234, fitSeekPreviewDimensions(1440, 1080, 416, 234))
+    }
+
+    @Test
+    fun `preview dimensions keep sixteen by nine within bounds`() {
+        assertEquals(416 to 234, fitSeekPreviewDimensions(1920, 1080, 416, 234))
+    }
 }
