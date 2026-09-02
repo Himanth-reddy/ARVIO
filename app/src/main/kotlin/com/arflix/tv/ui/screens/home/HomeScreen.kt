@@ -380,18 +380,18 @@ internal fun resolveHomeCategoryIndex(
 internal fun resolveHomeItemIndex(
     itemKeys: List<String>,
     preferredItemKey: String?,
-    fallbackIndex: Int,
-    hasMore: Boolean
+    fallbackIndex: Int
 ): Int {
     val preferredIndex = preferredItemKey?.let(itemKeys::indexOf) ?: -1
     if (preferredIndex >= 0) return preferredIndex
+    if (itemKeys.isEmpty()) return 0
+    return fallbackIndex.coerceIn(0, itemKeys.lastIndex)
+}
 
-    val safeFallback = fallbackIndex.coerceAtLeast(0)
-    if (itemKeys.isEmpty() || safeFallback <= itemKeys.lastIndex) return safeFallback
-
-    // A paged row can temporarily contain fewer items while it is refreshing.
-    // Preserve the intended index until the page arrives instead of snapping left.
-    return if (hasMore) safeFallback else itemKeys.lastIndex
+internal fun clampHomeItemIndex(items: List<MediaItem>, index: Int): Int {
+    val realItemCount = items.count { !it.isPlaceholder }
+    val navigableItemCount = if (realItemCount > 0) realItemCount else items.size
+    return if (navigableItemCount == 0) 0 else index.coerceIn(0, navigableItemCount - 1)
 }
 
 @androidx.compose.runtime.Immutable
@@ -2455,17 +2455,15 @@ private fun HomeInputLayer(
             stableHomeRowItemKeys(focusedCategory.id, focusedCategory.items)
         }
     }
-    val focusedRowHasMore = focusedCategoryId?.let { categoryHasMoreMap[it] == true } == true
-
-    // Restore the same title when a row is reordered or refreshed. Empty and
-    // partial paged results keep the pending index instead of resetting to zero.
-    LaunchedEffect(focusedCategoryId, focusedItemKeys, focusedRowHasMore) {
+    // Restore the same title when a row is reordered or refreshed. Always clamp
+    // to a real item: an out-of-range index can otherwise scroll a paged rail
+    // entirely into its loading placeholders.
+    LaunchedEffect(focusedCategoryId, focusedItemKeys) {
         val categoryId = focusedCategoryId ?: return@LaunchedEffect
         val resolvedIndex = resolveHomeItemIndex(
             itemKeys = focusedItemKeys,
             preferredItemKey = focusState.rowItemKeysByCategoryId[categoryId],
-            fallbackIndex = focusState.currentItemIndex,
-            hasMore = focusedRowHasMore
+            fallbackIndex = focusState.currentItemIndex
         )
         if (focusState.currentItemIndex != resolvedIndex) {
             focusState.currentItemIndex = resolvedIndex
@@ -2600,9 +2598,12 @@ private fun HomeInputLayer(
                             }
                             focusState.currentRowIndex--
                             // Restore saved position for the target row (or 0 if never visited)
-                            val targetCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
-                            focusState.currentItemIndex = targetCategoryId
+                            val targetCategory = categories.getOrNull(focusState.currentRowIndex)
+                            val restoredIndex = targetCategory?.id
                                 ?.let(focusState.rowItemIndicesByCategoryId::get)
+                                ?: 0
+                            focusState.currentItemIndex = targetCategory
+                                ?.let { clampHomeItemIndex(it.items, restoredIndex) }
                                 ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
@@ -2620,10 +2621,13 @@ private fun HomeInputLayer(
                         focusState.userHasNavigated = true
                         if (focusState.isSidebarFocused) {
                             focusState.isSidebarFocused = false
-                            val targetCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
-                            focusState.currentItemIndex = targetCategoryId
+                            val targetCategory = categories.getOrNull(focusState.currentRowIndex)
+                            val restoredIndex = targetCategory?.id
                                 ?.let(focusState.rowItemIndicesByCategoryId::get)
                                 ?: focusState.currentItemIndex
+                            focusState.currentItemIndex = targetCategory
+                                ?.let { clampHomeItemIndex(it.items, restoredIndex) }
+                                ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
                         } else if (!focusState.isSidebarFocused && focusState.currentRowIndex < categories.size - 1) {
@@ -2633,9 +2637,12 @@ private fun HomeInputLayer(
                             }
                             focusState.currentRowIndex++
                             // Restore saved position for the target row (or 0 if never visited)
-                            val targetCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
-                            focusState.currentItemIndex = targetCategoryId
+                            val targetCategory = categories.getOrNull(focusState.currentRowIndex)
+                            val restoredIndex = targetCategory?.id
                                 ?.let(focusState.rowItemIndicesByCategoryId::get)
+                                ?: 0
+                            focusState.currentItemIndex = targetCategory
+                                ?.let { clampHomeItemIndex(it.items, restoredIndex) }
                                 ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
@@ -3354,7 +3361,11 @@ private fun TvHomeRowsLayer(
                             categoryHasMore = categoryHasMoreMap[category.id] == true,
                             smoothScrolling = smoothScrolling,
                             onLoadMore = onRowLoadMore,
-                            focusedItemIndex = if (rowIsFocused) focusState.currentItemIndex else -1,
+                            focusedItemIndex = if (rowIsFocused) {
+                                clampHomeItemIndex(category.items, focusState.currentItemIndex)
+                            } else {
+                                -1
+                            },
                             isFastScrolling = rowIsFocused && isFastScrolling,
                             featuredTrailerKey = if (rowIsFocused) featuredTrailerKey else null,
                             featuredTrailerDelayMs = featuredTrailerDelayMs,
@@ -3594,7 +3605,7 @@ private fun ContentRow(
     val cardAspectRatio = if (effectivePosterMode) 2f / 3f else 16f / 9f
     val itemWidth = if (effectivePosterMode) 105.dp else 210.dp
     val itemSpacing = 14.dp
-    val itemsToRender = remember(category.items, effectiveCategoryHasMore, effectivePosterMode) {
+    val itemsToRender = remember(category.items) {
         if (category.items.isEmpty()) {
             (1..8).map { index ->
                 MediaItem(
@@ -3604,17 +3615,9 @@ private fun ContentRow(
                     isPlaceholder = true
                 )
             }
-        } else if (effectiveCategoryHasMore) {
-            val skeletonCount = if (effectivePosterMode) 12 else 7
-            category.items + List(skeletonCount) { idx ->
-                MediaItem(
-                    id = -1000 - idx,
-                    title = "",
-                    isPlaceholder = true
-                )
-            }
         } else {
-            category.items
+            val realItems = category.items.filterNot { it.isPlaceholder }
+            realItems.ifEmpty { category.items }
         }
     }
     val itemKeys = remember(category.id, itemsToRender) {
@@ -3812,12 +3815,8 @@ private fun ContentRow(
                         }
                     }
                 ) { index, item ->
-                if (item.isPlaceholder) {
-                    LaunchedEffect(item.id) {
-                        onLoadMore()
-                    }
-                } else if (effectiveCategoryHasMore && index >= category.items.size - 5) {
-                    LaunchedEffect(category.items.size) {
+                if (!item.isPlaceholder && effectiveCategoryHasMore && index >= itemsToRender.size - 5) {
+                    LaunchedEffect(itemsToRender.size) {
                         onLoadMore()
                     }
                 }
