@@ -593,8 +593,10 @@
     <string name="settings_section_options">OPTIONS</string>
     <string name="settings_iptv_channel_order">Channel order</string>
     <string name="settings_iptv_channel_order_description">Choose how channels are ordered within each group</string>
-    <string name="settings_epg_vod_actions">TV guide streaming options</string>
-    <string name="settings_epg_vod_actions_desc">On a second click, offer Stream Now for matched movies and shows; otherwise open live TV fullscreen</string>
+    <string name="settings_iptv_vod_search">IPTV VOD streams</string>
+    <string name="settings_iptv_vod_search_desc">Include IPTV movies and shows when fetching streams</string>
+    <string name="settings_epg_vod_actions">TV guide Stream Now</string>
+    <string name="settings_epg_vod_actions_desc">Show streaming options on matched TV guide events</string>
     <string name="settings_iptv_order_provider">Provider order</string>
     <string name="settings_iptv_order_number">Channel number</string>
     <string name="settings_iptv_order_name">Alphabetical (A-Z)</string>
