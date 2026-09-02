@@ -23,6 +23,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -97,36 +98,63 @@ class SeekPreviewFrameProvider(
     ) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
+    private val diskCacheLock = Any()
 
     private var session: PreviewSession? = null
+    @Volatile private var activeCache: ActiveCache? = null
     @Volatile private var closed = false
 
     init {
         executor.execute { pruneDiskCache() }
     }
 
-    suspend fun configure(source: SeekPreviewSource?) = withContext(dispatcher) {
-        if (closed) return@withContext
+    suspend fun configure(source: SeekPreviewSource?) {
+        if (closed) return
         val usable = source?.takeIf { candidate ->
             !candidate.isLive &&
                 candidate.durationMs > 0L &&
                 candidate.url.isNotBlank() &&
                 Uri.parse(candidate.url).scheme?.lowercase() in setOf("http", "https", "file", "content")
         }
-        val old = session
-        if (usable == null) {
+        activeCache = usable?.let { candidate ->
+            ActiveCache(
+                keyPrefix = stableHash(candidate.cacheIdentity),
+                durationMs = candidate.durationMs,
+            )
+        }
+        withContext(dispatcher) {
+            if (closed) return@withContext
+            val old = session
+            if (usable == null) {
+                old?.close()
+                session = null
+                return@withContext
+            }
+            val signature = sourceSignature(usable)
+            if (old?.signature == signature) {
+                old.source = usable
+                return@withContext
+            }
             old?.close()
-            session = null
-            return@withContext
+            session = PreviewSession(usable, signature)
+            Log.i(TAG, "configured adaptive=${usable.isAdaptive} durationMs=${usable.durationMs}")
         }
-        val signature = sourceSignature(usable)
-        if (old?.signature == signature) {
-            old.source = usable
-            return@withContext
+    }
+
+    /** Reads only app-private cache and never waits behind an active video decoder request. */
+    suspend fun cachedFrameAt(positionMs: Long): SeekPreviewFrame? = withContext(Dispatchers.IO) {
+        if (closed) return@withContext null
+        val cache = activeCache ?: return@withContext null
+        val bucket = quantizeSeekPreviewPosition(positionMs, cache.durationMs)
+        val frameKey = "${cache.keyPrefix}_$bucket"
+        memoryCache.get(frameKey)?.let { bitmap ->
+            return@withContext SeekPreviewFrame(bitmap, bucket)
         }
-        old?.close()
-        session = PreviewSession(usable, signature)
-        Log.i(TAG, "configured adaptive=${usable.isAdaptive} durationMs=${usable.durationMs}")
+        readDiskFrame(frameKey)?.let { bitmap ->
+            memoryCache.put(frameKey, bitmap)
+            return@withContext SeekPreviewFrame(bitmap, bucket)
+        }
+        null
     }
 
     suspend fun frameAt(positionMs: Long, cacheOnly: Boolean = false): SeekPreviewFrame? =
@@ -162,32 +190,33 @@ class SeekPreviewFrameProvider(
             active.failureCount = 0
             active.retryAfterMs = 0L
             memoryCache.put(frameKey, bitmap)
-            writeDiskFrame(frameKey, bitmap)
+            synchronized(diskCacheLock) { writeDiskFrame(frameKey, bitmap) }
             Log.i(TAG, "frame ready positionMs=$bucket latencyMs=${System.currentTimeMillis() - startedAt}")
             SeekPreviewFrame(bitmap, bucket)
         }
 
     suspend fun rememberRenderedFrame(positionMs: Long, bitmap: Bitmap): SeekPreviewFrame? =
-        withContext(dispatcher) {
+        withContext(Dispatchers.IO) {
             if (closed) {
                 bitmap.recycle()
                 return@withContext null
             }
-            val active = session ?: run {
+            val cache = activeCache ?: run {
                 bitmap.recycle()
                 return@withContext null
             }
-            val bucket = quantizeSeekPreviewPosition(positionMs, active.source.durationMs)
-            val frameKey = "${stableHash(active.source.cacheIdentity)}_$bucket"
+            val bucket = quantizeSeekPreviewPosition(positionMs, cache.durationMs)
+            val frameKey = "${cache.keyPrefix}_$bucket"
             val normalized = normalizeFrame(bitmap)
             memoryCache.put(frameKey, normalized)
-            writeDiskFrame(frameKey, normalized)
+            synchronized(diskCacheLock) { writeDiskFrame(frameKey, normalized) }
             SeekPreviewFrame(normalized, bucket)
         }
 
     override fun close() {
         if (closed) return
         closed = true
+        activeCache = null
         executor.execute {
             session?.close()
             session = null
@@ -196,6 +225,11 @@ class SeekPreviewFrameProvider(
         dispatcher.close()
         executor.shutdown()
     }
+
+    private data class ActiveCache(
+        val keyPrefix: String,
+        val durationMs: Long,
+    )
 
     private inner class PreviewSession(
         var source: SeekPreviewSource,
