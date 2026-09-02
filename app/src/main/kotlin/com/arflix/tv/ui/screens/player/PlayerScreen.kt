@@ -21,7 +21,6 @@ import android.view.TextureView
 import com.arflix.tv.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -243,7 +242,7 @@ private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
 private const val CONTROLS_SEEK_COMMIT_DELAY_MS = 700L
-private const val QUICK_SEEK_COMMIT_DELAY_MS = 480L
+private const val QUICK_SEEK_COMMIT_DELAY_MS = 160L
 private const val QUICK_SEEK_DISMISS_DELAY_MS = 2_200L
 private const val SEEK_PREVIEW_DEBOUNCE_MS = 16L
 private const val SEEK_PREVIEW_TIMEOUT_MS = 4_500L
@@ -1661,17 +1660,26 @@ fun PlayerScreen(
         if (!hasPlaybackStarted || duration <= 0L || isLiveStream || isCasting) return@LaunchedEffect
         var lastCapturedBucket = Long.MIN_VALUE
         while (!playerReleased) {
-            delay(400L)
-            if (isBuffering || showSkipOverlay) continue
+            if (isBuffering || showSkipOverlay) {
+                delay(120L)
+                continue
+            }
             val renderedUs = lastRenderedVideoFrameUs.get()
-            if (renderedUs == C.TIME_UNSET) continue
+            if (renderedUs == C.TIME_UNSET) {
+                delay(40L)
+                continue
+            }
             val renderedPositionMs = (renderedUs / 1_000L).coerceIn(0L, duration)
             val bucket = quantizeSeekPreviewPosition(renderedPositionMs, duration)
-            if (bucket == lastCapturedBucket) continue
+            if (bucket == lastCapturedBucket) {
+                delay(250L)
+                continue
+            }
             lastCapturedBucket = bucket
             val cachedFrame = seekPreviewProvider.cachedFrameAt(bucket)
             if (cachedFrame != null) {
                 latestRenderedSeekPreview = cachedFrame
+                delay(250L)
                 continue
             }
             playerViewForSeekPreview?.let { playerView ->
@@ -1680,6 +1688,7 @@ fun PlayerScreen(
                         seekPreviewProvider.rememberRenderedFrame(bucket, bitmap)
                 }
             }
+            delay(250L)
         }
     }
 
@@ -6541,18 +6550,12 @@ private fun SeekPreviewCard(
             .border(1.dp, Color.White.copy(alpha = 0.68f), shape)
             .clip(shape)
     ) {
-        Crossfade(
-            targetState = frame,
-            animationSpec = animTween(100),
-            label = "seekPreviewFrame",
-        ) { displayedFrame ->
-            Image(
-                bitmap = displayedFrame.bitmap.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        Image(
+            bitmap = frame.bitmap.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
