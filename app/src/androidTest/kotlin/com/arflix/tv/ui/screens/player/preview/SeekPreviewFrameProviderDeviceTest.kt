@@ -55,6 +55,10 @@ class SeekPreviewFrameProviderDeviceTest {
                 "Timeline previews must change as the scrub position changes",
                 openingFrame!!.bitmap.sameAs(endingFrame!!.bitmap),
             )
+            assertTrue(
+                "A decoded frame must be immediately available from memory",
+                provider.memoryFrameAt(2_000L)?.bitmap === openingFrame.bitmap,
+            )
         } finally {
             provider.close()
             sourceFile.delete()

@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
-import android.graphics.Rect
 import com.arflix.tv.util.findActivity
 import android.media.AudioManager
 import android.net.Uri
@@ -236,14 +235,16 @@ import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
 import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
-import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewDimensions
+import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewAspectRatio
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
+import com.arflix.tv.ui.screens.player.preview.seekPreviewDisplayAspectRatio
 
 private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
 private const val CONTROLS_SEEK_COMMIT_DELAY_MS = 700L
 private const val QUICK_SEEK_COMMIT_DELAY_MS = 160L
+private const val CONSTRAINED_SEEK_COMMIT_DELAY_MS = 60L
 private const val QUICK_SEEK_DISMISS_DELAY_MS = 2_200L
 private const val SEEK_PREVIEW_DEBOUNCE_MS = 16L
 private const val SEEK_PREVIEW_TIMEOUT_MS = 4_500L
@@ -1580,53 +1581,55 @@ fun PlayerScreen(
             (deviceType.isTouchDevice() || !isLikelyHeavyStream(uiState.selectedStream))
 
     val resolveSeekPreviewFrame: suspend (Long) -> SeekPreviewFrame? = { previewBucket ->
-        seekPreviewProvider.cachedFrameAt(previewBucket) ?: supervisorScope {
-            val results = Channel<SeekPreviewFrame?>(capacity = 2)
-            val jobs = mutableListOf<Job>()
-            jobs += launch {
-                val renderedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                    val targetUs = previewBucket * 1_000L
-                    while (
-                        lastRenderedVideoFrameUs.get() == C.TIME_UNSET ||
-                        abs(lastRenderedVideoFrameUs.get() - targetUs) > 5_500_000L
-                    ) {
-                        if (playerReleased) return@withTimeoutOrNull null
-                        delay(25L)
-                    }
-                    delay(25L)
-                    playerViewForSeekPreview?.let { playerView ->
-                        captureRenderedSeekPreview(playerView)
-                    }
-                }?.let { renderedBitmap ->
-                    seekPreviewProvider.rememberRenderedFrame(
-                        positionMs = previewBucket,
-                        bitmap = renderedBitmap,
-                    )
-                }
-                results.send(renderedFrame)
-            }
-
-            if (allowSecondarySeekPreviewDecoder) {
+        seekPreviewProvider.memoryFrameAt(previewBucket)
+            ?: seekPreviewProvider.cachedFrameAt(previewBucket)
+            ?: supervisorScope {
+                val results = Channel<SeekPreviewFrame?>(capacity = 2)
+                val jobs = mutableListOf<Job>()
                 jobs += launch {
-                    val extractedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                        seekPreviewProvider.frameAt(previewBucket)
+                    val renderedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+                        val targetUs = previewBucket * 1_000L
+                        while (
+                            lastRenderedVideoFrameUs.get() == C.TIME_UNSET ||
+                            abs(lastRenderedVideoFrameUs.get() - targetUs) > 5_500_000L
+                        ) {
+                            if (playerReleased) return@withTimeoutOrNull null
+                            delay(16L)
+                        }
+                        delay(16L)
+                        playerViewForSeekPreview?.let { playerView ->
+                            captureRenderedSeekPreview(playerView)
+                        }
+                    }?.let { renderedBitmap ->
+                        seekPreviewProvider.rememberRenderedFrame(
+                            positionMs = previewBucket,
+                            bitmap = renderedBitmap,
+                        )
                     }
-                    results.send(extractedFrame)
+                    results.send(renderedFrame)
                 }
-            }
 
-            var winner: SeekPreviewFrame? = null
-            for (ignored in jobs.indices) {
-                val candidate = results.receive()
-                if (candidate != null) {
-                    winner = candidate
-                    break
+                if (allowSecondarySeekPreviewDecoder) {
+                    jobs += launch {
+                        val extractedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+                            seekPreviewProvider.frameAt(previewBucket)
+                        }
+                        results.send(extractedFrame)
+                    }
                 }
+
+                var winner: SeekPreviewFrame? = null
+                for (ignored in jobs.indices) {
+                    val candidate = results.receive()
+                    if (candidate != null) {
+                        winner = candidate
+                        break
+                    }
+                }
+                jobs.forEach { it.cancel() }
+                results.close()
+                winner
             }
-            jobs.forEach { it.cancel() }
-            results.close()
-            winner
-        }
     }
 
     LaunchedEffect(
@@ -1726,31 +1729,58 @@ fun PlayerScreen(
 
     val playbackPreviewBucket = quantizeSeekPreviewPosition(currentPosition, duration)
 
-    // Devices with decoder headroom also prepare the next two forward buckets. On low-memory TVs
+    // Devices with decoder headroom also prepare nearby buckets. On low-memory TVs
     // this is deliberately disabled so preview work can never compete with primary playback.
     LaunchedEffect(
         playbackPreviewBucket,
         uiState.selectedStreamUrl,
         uiState.streamSelectionNonce,
+        hasPlaybackStarted,
     ) {
         if (
             !hasPlaybackStarted ||
             duration <= 0L ||
             isLiveStream ||
-            isCasting ||
-            !allowSecondarySeekPreviewDecoder
+            isCasting
         ) return@LaunchedEffect
-        delay(1_000L)
-        if (playerReleased || isBuffering) return@LaunchedEffect
-        val bufferAheadMs = (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
-        if (isPlaying && bufferAheadMs < 20_000L) return@LaunchedEffect
-        listOf(10_000L, 20_000L).forEach { offset ->
-            val position = (playbackPreviewBucket + offset).coerceAtMost(duration)
-            if (position != playbackPreviewBucket) {
-                if (seekPreviewProvider.cachedFrameAt(position) != null) return@forEach
-                withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                    seekPreviewProvider.frameAt(position)
-                }
+
+        val nearbyPositions = listOf(10_000L, -10_000L, 20_000L)
+            .map { offset -> (playbackPreviewBucket + offset).coerceIn(0L, duration) }
+            .filter { position -> position != playbackPreviewBucket }
+            .distinct()
+        val missingPositions = nearbyPositions.filter { position ->
+            seekPreviewProvider.cachedFrameAt(position) == null
+        }
+        if (!allowSecondarySeekPreviewDecoder || isBuffering || missingPositions.isEmpty()) {
+            return@LaunchedEffect
+        }
+
+        // Prepare the next D-pad target first, as soon as the first video frame is visible.
+        val firstForwardPosition = (playbackPreviewBucket + 10_000L).coerceIn(0L, duration)
+        if (firstForwardPosition in missingPositions) {
+            withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+                seekPreviewProvider.frameAt(firstForwardPosition)
+            }
+        }
+
+        var bufferAheadMs = 0L
+        var bufferChecks = 0
+        while (bufferChecks < 8 && isPlaying && bufferAheadMs < 12_000L) {
+            delay(250L)
+            if (!playerReleased && !isBuffering) {
+                bufferAheadMs =
+                    (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
+            }
+            bufferChecks += 1
+        }
+        if (playerReleased || isBuffering || (isPlaying && bufferAheadMs < 12_000L)) {
+            return@LaunchedEffect
+        }
+        missingPositions.forEach { position ->
+            if (position == firstForwardPosition) return@forEach
+            if (seekPreviewProvider.memoryFrameAt(position) != null) return@forEach
+            withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+                seekPreviewProvider.frameAt(position)
             }
         }
     }
@@ -1856,12 +1886,21 @@ fun PlayerScreen(
         }
         val targetPosition = (skipPreviewPosition + deltaMs).coerceIn(0L, duration)
         skipPreviewPosition = targetPosition
+        seekPreviewProvider.memoryFrameAt(targetPosition)?.let { warmedFrame ->
+            seekPreviewFrame = warmedFrame
+        }
         lastSkipTime = now
         showSkipOverlay = true
 
         quickSeekCommitJob?.cancel()
         quickSeekCommitJob = coroutineScope.launch {
-            delay(QUICK_SEEK_COMMIT_DELAY_MS)
+            delay(
+                if (allowSecondarySeekPreviewDecoder) {
+                    QUICK_SEEK_COMMIT_DELAY_MS
+                } else {
+                    CONSTRAINED_SEEK_COMMIT_DELAY_MS
+                }
+            )
             if (!playerReleased) exoPlayer.seekTo(skipPreviewPosition)
             quickSeekCommitJob = null
         }
@@ -1882,10 +1921,19 @@ fun PlayerScreen(
         val unclamped = (basePosition + deltaMs).coerceAtLeast(0L)
         val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
         scrubPreviewPosition = targetPosition
+        seekPreviewProvider.memoryFrameAt(targetPosition)?.let { warmedFrame ->
+            controlsSeekPreviewFrame = warmedFrame
+        }
         isControlScrubbing = true
         controlsSeekJob?.cancel()
         controlsSeekJob = coroutineScope.launch {
-            delay(CONTROLS_SEEK_COMMIT_DELAY_MS)
+            delay(
+                if (allowSecondarySeekPreviewDecoder) {
+                    CONTROLS_SEEK_COMMIT_DELAY_MS
+                } else {
+                    CONSTRAINED_SEEK_COMMIT_DELAY_MS
+                }
+            )
             if (!playerReleased) {
                 exoPlayer.seekTo(scrubPreviewPosition)
             }
@@ -6557,9 +6605,17 @@ private suspend fun captureRenderedSeekPreview(
     val surface = playerView.videoSurfaceView ?: return@withContext null
     if (surface.width <= 0 || surface.height <= 0) return@withContext null
 
-    val (previewWidth, previewHeight) = fitSeekPreviewDimensions(
-        sourceWidth = surface.width,
-        sourceHeight = surface.height,
+    val videoSize = playerView.player?.videoSize
+    val displayAspectRatio = seekPreviewDisplayAspectRatio(
+        videoWidth = videoSize?.width ?: 0,
+        videoHeight = videoSize?.height ?: 0,
+        pixelWidthHeightRatio = videoSize?.pixelWidthHeightRatio ?: 1f,
+        unappliedRotationDegrees = videoSize?.unappliedRotationDegrees ?: 0,
+        fallbackWidth = surface.width,
+        fallbackHeight = surface.height,
+    )
+    val (previewWidth, previewHeight) = fitSeekPreviewAspectRatio(
+        aspectRatio = displayAspectRatio,
         maxWidth = 416,
         maxHeight = 234,
     )
@@ -6580,10 +6636,8 @@ private suspend fun captureRenderedSeekPreview(
                 return@withContext null
             }
             suspendCancellableCoroutine { continuation ->
-                val sourceRect = Rect(0, 0, surface.width, surface.height)
                 PixelCopy.request(
                     surface,
-                    sourceRect,
                     output,
                     { result ->
                         if (!continuation.isActive) {
@@ -6652,7 +6706,7 @@ private fun buildSeekPreviewCacheIdentity(
     stream: StreamSource?,
 ): String = buildString {
     // Bump when preview rendering changes so malformed frames from older builds are not reused.
-    append("v2|")
+    append("v3|")
     append(mediaType.name).append('|').append(mediaId)
     append('|').append(seasonNumber ?: 0).append('|').append(episodeNumber ?: 0)
     if (stream != null) {

@@ -52,4 +52,49 @@ class SeekPreviewFrameProviderTest {
     fun `preview dimensions keep sixteen by nine within bounds`() {
         assertEquals(416 to 234, fitSeekPreviewDimensions(1920, 1080, 416, 234))
     }
+
+    @Test
+    fun `display aspect ratio respects anamorphic pixels`() {
+        val ratio = seekPreviewDisplayAspectRatio(
+            videoWidth = 720,
+            videoHeight = 576,
+            pixelWidthHeightRatio = 64f / 45f,
+            unappliedRotationDegrees = 0,
+            fallbackWidth = 1920,
+            fallbackHeight = 1080,
+        )
+
+        assertEquals(16f / 9f, ratio, 0.001f)
+        assertEquals(416 to 234, fitSeekPreviewAspectRatio(ratio, 416, 234))
+    }
+
+    @Test
+    fun `display aspect ratio preserves cinema width without cropping`() {
+        val ratio = seekPreviewDisplayAspectRatio(
+            videoWidth = 1920,
+            videoHeight = 800,
+            pixelWidthHeightRatio = 1f,
+            unappliedRotationDegrees = 0,
+            fallbackWidth = 1920,
+            fallbackHeight = 1080,
+        )
+
+        assertEquals(2.4f, ratio, 0.001f)
+        assertEquals(416 to 173, fitSeekPreviewAspectRatio(ratio, 416, 234))
+    }
+
+    @Test
+    fun `display aspect ratio accounts for unapplied rotation`() {
+        val ratio = seekPreviewDisplayAspectRatio(
+            videoWidth = 1920,
+            videoHeight = 1080,
+            pixelWidthHeightRatio = 1f,
+            unappliedRotationDegrees = 90,
+            fallbackWidth = 1920,
+            fallbackHeight = 1080,
+        )
+
+        assertEquals(9f / 16f, ratio, 0.001f)
+        assertEquals(132 to 234, fitSeekPreviewAspectRatio(ratio, 416, 234))
+    }
 }
