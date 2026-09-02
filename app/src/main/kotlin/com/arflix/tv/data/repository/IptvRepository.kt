@@ -13,6 +13,7 @@ import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.R
+import com.arflix.tv.util.IPTV_VOD_SEARCH_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.JsonArray
@@ -173,9 +174,9 @@ data class IptvPlaylistEntry(
     val enabled: Boolean = true,
     val epgUrls: List<String> = emptyList(),
     // NEW FIELDS: Selective Import
-    val importLiveTv: Boolean = true,
-    val importVod: Boolean = true,
-    val importSeries: Boolean = true
+    val importLiveTv: Boolean? = true,
+    val importVod: Boolean? = true,
+    val importSeries: Boolean? = true
 )
 
 /**
@@ -584,6 +585,16 @@ class IptvRepository @Inject constructor(
         profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
             decodeGroupOrder(prefs)
         }
+
+    fun observeVodSearchEnabled(): Flow<Boolean> =
+        context.settingsDataStore.data.map { prefs ->
+            prefs[IPTV_VOD_SEARCH_ENABLED_KEY] ?: true
+        }
+
+    suspend fun isVodSearchEnabled(): Boolean =
+        runCatching {
+            context.settingsDataStore.data.first()[IPTV_VOD_SEARCH_ENABLED_KEY] ?: true
+        }.getOrDefault(true)
 
     fun observeTvSessionState(): Flow<IptvTvSessionState> =
         profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
@@ -1016,10 +1027,10 @@ class IptvRepository @Inject constructor(
             epgUrl = epgUrls.firstOrNull().orEmpty(),
             enabled = runCatching { playlist.enabled }.getOrDefault(true),
             epgUrls = epgUrls,
-            // NEW: Save preferences when reading from disk
-            importLiveTv = runCatching { playlist.importLiveTv }.getOrDefault(true),
-            importVod = runCatching { playlist.importVod }.getOrDefault(true),
-            importSeries = runCatching { playlist.importSeries }.getOrDefault(true)
+            // Selective import settings default to true for existing playlists
+            importLiveTv = playlist.importLiveTv ?: true,
+            importVod = playlist.importVod ?: true,
+            importSeries = playlist.importSeries ?: true
         )
     }
 
@@ -3678,7 +3689,7 @@ class IptvRepository @Inject constructor(
     playlist: IptvPlaylistEntry,
     onProgress: (IptvLoadProgress) -> Unit
 ): List<IptvChannel> {
-    if (!playlist.importLiveTv) {
+    if (playlist.importLiveTv == false) {
             return emptyList()
     }
     resolveXtreamCredentials(playlist)?.let { creds ->
@@ -4666,10 +4677,10 @@ class IptvRepository @Inject constructor(
     }
 
     internal fun activeVodPlaylists(config: IptvConfig): List<IptvPlaylistEntry> =
-        activePlaylists(config).filter { it.importVod }
+        activePlaylists(config).filter { it.importVod ?: true }
 
     internal fun activeSeriesPlaylists(config: IptvConfig): List<IptvPlaylistEntry> =
-        activePlaylists(config).filter { it.importSeries }
+        activePlaylists(config).filter { it.importSeries ?: true }
 
     private fun xtreamCredentialsForVodImport(config: IptvConfig): List<XtreamCredentials> =
         activeVodPlaylists(config)
@@ -4703,6 +4714,7 @@ class IptvRepository @Inject constructor(
         allowNetwork: Boolean = true
     ): List<StreamSource> {
         return withContext(Dispatchers.IO) {
+            if (!isVodSearchEnabled()) return@withContext emptyList()
             val config = observeConfig().first()
             xtreamCredentialsForVodImport(config)
                 .flatMap { creds ->
@@ -4837,6 +4849,7 @@ class IptvRepository @Inject constructor(
         allowNetwork: Boolean = true
     ): List<StreamSource> {
         return withContext(Dispatchers.IO) {
+            if (!isVodSearchEnabled()) return@withContext emptyList()
             val config = observeConfig().first()
             xtreamCredentialsForSeriesImport(config)
                 .flatMap { creds ->
@@ -4933,34 +4946,30 @@ class IptvRepository @Inject constructor(
             return sortVodSources(cachedSeriesSources)
         }
 
-        val networkSeriesSources = withTimeoutOrNull(3_500L) {
-            seriesResolver.resolveEpisodeVariants(
-                providerKey = providerKey,
-                creds = creds,
-                showTitle = title,
-                season = season,
-                episode = episode,
-                tmdbId = tmdbId,
-                imdbId = imdbId,
-                year = parseYear(title),
-                allowNetwork = true
-            ).toSeriesVodSources()
-        }.orEmpty()
+        val networkSeriesSources = seriesResolver.resolveEpisodeVariants(
+            providerKey = providerKey,
+            creds = creds,
+            showTitle = title,
+            season = season,
+            episode = episode,
+            tmdbId = tmdbId,
+            imdbId = imdbId,
+            year = parseYear(title),
+            allowNetwork = true
+        ).toSeriesVodSources()
         if (networkSeriesSources.isNotEmpty()) {
             return sortVodSources(networkSeriesSources)
         }
 
-        val vodCatalogSources = withTimeoutOrNull(3_000L) {
-            findEpisodeVodFromVodCatalogFallbackSources(
-                creds = creds,
-                title = title,
-                season = season,
-                episode = episode,
-                normalizedImdb = normalizedImdb,
-                normalizedTmdb = normalizedTmdb,
-                allowNetwork = true
-            )
-        }.orEmpty()
+        val vodCatalogSources = findEpisodeVodFromVodCatalogFallbackSources(
+            creds = creds,
+            title = title,
+            season = season,
+            episode = episode,
+            normalizedImdb = normalizedImdb,
+            normalizedTmdb = normalizedTmdb,
+            allowNetwork = true
+        )
         return sortVodSources(vodCatalogSources + cachedSeriesSources)
     }
 
@@ -5091,6 +5100,7 @@ class IptvRepository @Inject constructor(
 
     suspend fun warmXtreamVodCachesIfPossible() {
         withContext(Dispatchers.IO) {
+            if (!isVodSearchEnabled()) return@withContext
             val config = observeConfig().first()
             xtreamCredentialsForVodImport(config).forEach { creds ->
                 runCatching {
@@ -5116,6 +5126,7 @@ class IptvRepository @Inject constructor(
         tmdbId: Int? = null
     ) {
         withContext(Dispatchers.IO) {
+            if (!isVodSearchEnabled()) return@withContext
             val config = observeConfig().first()
             val activeProfileId = runCatching { profileManager.getProfileIdSync() }.getOrDefault("default")
             xtreamCredentialsForSeriesImport(config).forEach { creds ->
@@ -5143,6 +5154,7 @@ class IptvRepository @Inject constructor(
         tmdbId: Int? = null
     ) {
         withContext(Dispatchers.IO) {
+            if (!isVodSearchEnabled()) return@withContext
             val config = observeConfig().first()
             val activeProfileId = runCatching { profileManager.getProfileIdSync() }.getOrDefault("default")
             xtreamCredentialsForSeriesImport(config).forEach { creds ->
@@ -5279,7 +5291,7 @@ class IptvRepository @Inject constructor(
                 requestJson(
                     url,
                     TypeToken.getParameterized(List::class.java, XtreamVodStream::class.java).type,
-                    client = if (fast) xtreamLookupHttpClient else iptvHttpClient
+                    client = iptvHttpClient
                 ) ?: emptyList()
             val elapsed = System.currentTimeMillis() - downloadStart
             System.err.println("[VOD-Cache] Downloaded ${vod.size} VOD streams in ${elapsed}ms")
@@ -5359,7 +5371,7 @@ class IptvRepository @Inject constructor(
                 requestJson(
                     url,
                     TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type,
-                    client = if (fast) xtreamLookupHttpClient else iptvHttpClient
+                    client = iptvHttpClient
                 ) ?: emptyList()
             val elapsed = System.currentTimeMillis() - downloadStart
             System.err.println("[VOD-Cache] Downloaded ${series.size} series in ${elapsed}ms")
@@ -8461,9 +8473,9 @@ class IptvRepository @Inject constructor(
                 playlist.epgUrl.trim(),
                 playlist.epgUrls.orEmpty().joinToString(",") { it.trim() },
                 playlist.enabled.toString(),
-                playlist.importLiveTv.toString(),
-                playlist.importVod.toString(),
-                playlist.importSeries.toString()
+                (playlist.importLiveTv ?: true).toString(),
+                (playlist.importVod ?: true).toString(),
+                (playlist.importSeries ?: true).toString()
             ).joinToString("|")
         }
         val raw = listOf(
@@ -8485,9 +8497,9 @@ class IptvRepository @Inject constructor(
                 playlist.name.trim(),
                 playlist.m3uUrl.trim(),
                 playlist.enabled.toString(),
-                playlist.importLiveTv.toString(),
-                playlist.importVod.toString(),
-                playlist.importSeries.toString()
+                (playlist.importLiveTv ?: true).toString(),
+                (playlist.importVod ?: true).toString(),
+                (playlist.importSeries ?: true).toString()
             ).joinToString("|")
         }
         val raw = listOf(

@@ -166,4 +166,25 @@ class IptvActivePlaylistsTest {
         assertEquals(1, repository.activeVodPlaylists(config).size)
         assertEquals(1, repository.activeSeriesPlaylists(config).size)
     }
+
+    @Test
+    fun `playlist entry with null import flags defaults to enabled for vod and series`() {
+        val repository = newRepository()
+        val entryWithNullFlags = IptvPlaylistEntry(
+            id = "legacy_list",
+            name = "Legacy Provider",
+            m3uUrl = "http://provider.example/get.php?username=user&password=pass&type=m3u_plus",
+            enabled = true,
+            importLiveTv = null,
+            importVod = null,
+            importSeries = null
+        )
+        val config = IptvConfig(
+            m3uUrl = entryWithNullFlags.m3uUrl,
+            playlists = listOf(entryWithNullFlags)
+        )
+
+        assertEquals(listOf(entryWithNullFlags), repository.activeVodPlaylists(config))
+        assertEquals(listOf(entryWithNullFlags), repository.activeSeriesPlaylists(config))
+    }
 }

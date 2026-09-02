@@ -66,6 +66,7 @@ import com.arflix.tv.updater.VersionUtils
 import com.arflix.tv.util.AuthEmailValidator
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
 import com.arflix.tv.util.IPTV_EPG_VOD_ACTIONS_ENABLED_KEY
+import com.arflix.tv.util.IPTV_VOD_SEARCH_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -204,6 +205,7 @@ data class SettingsUiState(
     val iptvAvailableGroups: List<String> = emptyList(),
     val iptvHiddenGroups: List<String> = emptyList(),
     val iptvGroupOrder: List<String> = emptyList(),
+    val vodSearchEnabled: Boolean = true,
     val epgVodActionsEnabled: Boolean = true,
     // App updates
     val isSelfUpdateSupported: Boolean = true,
@@ -546,6 +548,7 @@ class SettingsViewModel @Inject constructor(
             val volumeBoostDb = prefs[volumeBoostDbKey()]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val smoothScrolling = prefs[smoothScrollingKey()] ?: true
+            val vodSearchEnabled = prefs[IPTV_VOD_SEARCH_ENABLED_KEY] ?: true
             val epgVodActionsEnabled = prefs[IPTV_EPG_VOD_ACTIONS_ENABLED_KEY] ?: true
 
             val subtitleSize = prefs[subtitleSizeKey()] ?: "Medium"
@@ -689,6 +692,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiModel = subtitleAiModel,
                 subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired,
                 smoothScrolling = smoothScrolling,
+                vodSearchEnabled = vodSearchEnabled,
                 epgVodActionsEnabled = epgVodActionsEnabled,
             )
 
@@ -1525,6 +1529,13 @@ class SettingsViewModel @Inject constructor(
             context.settingsDataStore.edit { it[smoothScrollingKey()] = enabled }
             _uiState.value = _uiState.value.copy(smoothScrolling = enabled)
             syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun setVodSearchEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[IPTV_VOD_SEARCH_ENABLED_KEY] = enabled }
+            _uiState.value = _uiState.value.copy(vodSearchEnabled = enabled)
         }
     }
 
