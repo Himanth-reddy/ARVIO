@@ -80,6 +80,7 @@ class TraktSyncService @Inject constructor(
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
     private fun expiresAtKey() = profileManager.profileLongKey("trakt_expires_at")
+    private fun tokenUpdatedAtKey() = profileManager.profileLongKey("trakt_token_updated_at_v3")
     private fun lastSyncTimeKey() = profileManager.profileStringKey("trakt_last_sync_time")
     private fun lastSyncMoviesKey() = profileManager.profileStringKey("trakt_last_sync_movies")
     private fun lastSyncEpisodesKey() = profileManager.profileStringKey("trakt_last_sync_episodes")
@@ -2111,6 +2112,7 @@ class TraktSyncService @Inject constructor(
             prefs[accessTokenKey()] = token.accessToken
             prefs[refreshTokenKey()] = token.refreshToken
             prefs[expiresAtKey()] = token.createdAt + token.expiresIn
+            prefs[tokenUpdatedAtKey()] = System.currentTimeMillis()
         }
     }
 }

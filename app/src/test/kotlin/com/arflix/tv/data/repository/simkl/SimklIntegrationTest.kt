@@ -76,7 +76,7 @@ class SimklIntegrationTest {
         val success = authManager.pollPinAuth("SIMKL-123")
         assertTrue(success)
         coVerify { syncProviderStore.setSimklAccessToken("token_abc123") }
-        coVerify { syncProviderStore.setMdbListApiKey(null) }
+        coVerify(exactly = 0) { syncProviderStore.setMdbListApiKey(any()) }
         coVerify { syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL) }
     }
 

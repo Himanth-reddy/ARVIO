@@ -1790,9 +1790,8 @@ export function AppProvider({
     setTraktConnected(true);
     setDeviceCode(null);
     const previousPreferences = loadTrackingPreferences(targetProfileId);
-    const mode = simklClient.isConnected ? "both" as const : "trakt" as const;
     const upgradeMode = (current: TrackingPreferences["watchlistReadMode"]) =>
-      current === "auto" || (simklClient.isConnected && (current === "trakt" || current === "simkl")) ? mode : current;
+      current === "auto" ? "trakt" as const : current;
     const nextPreferences: TrackingPreferences = {
       watchlistReadMode: upgradeMode(previousPreferences.watchlistReadMode),
       continueWatchingReadMode: upgradeMode(previousPreferences.continueWatchingReadMode),
@@ -1808,7 +1807,8 @@ export function AppProvider({
         traktToken: token,
         mdbListApiKey: mdblistClient.key,
         simklToken: simklClient.token,
-        trackingPreferences: nextPreferences
+        trackingPreferences: nextPreferences,
+        changedDomains: ["routing", "trakt"]
       }).catch(() => undefined);
     }
     if (activeProfileIdRef.current === targetProfileId) {
@@ -1840,7 +1840,8 @@ export function AppProvider({
         traktToken: null,
         mdbListApiKey: mdblistClient.key,
         simklToken: simklClient.token,
-        trackingPreferences: nextPreferences
+        trackingPreferences: nextPreferences,
+        changedDomains: ["routing", "trakt"]
       }).catch(() => undefined);
     }
     if (activeProfileIdRef.current === targetProfileId) {
@@ -1875,7 +1876,8 @@ export function AppProvider({
         traktToken: traktClient.token,
         mdbListApiKey: key,
         simklToken: simklClient.token,
-        trackingPreferences: mdbPreferences
+        trackingPreferences: mdbPreferences,
+        changedDomains: ["routing", "mdblist"]
       }).catch(() => undefined);
     }
     if (activeProfileIdRef.current === targetProfileId) {
@@ -1889,9 +1891,7 @@ export function AppProvider({
     mdblistClient.disconnect();
     setMdblistConnected(false);
     const current = loadTrackingPreferences(targetProfileId);
-    const fallback = traktClient.isConnected && simklClient.isConnected
-      ? "both" as const
-      : traktClient.isConnected
+    const fallback = traktClient.isConnected
         ? "trakt" as const
         : simklClient.isConnected
           ? "simkl" as const
@@ -1912,7 +1912,8 @@ export function AppProvider({
         traktToken: traktClient.token,
         mdbListApiKey: null,
         simklToken: simklClient.token,
-        trackingPreferences: nextPreferences
+        trackingPreferences: nextPreferences,
+        changedDomains: ["routing", "mdblist"]
       }).catch(() => undefined);
     }
     if (activeProfileIdRef.current === targetProfileId) {
@@ -1941,9 +1942,9 @@ export function AppProvider({
     setSimklConnected(true);
     setSimklDeviceCode(null);
     const previousPreferences = loadTrackingPreferences(targetProfileId);
-    const mode = traktClient.isConnected ? "both" as const : "simkl" as const;
+    const mode = traktClient.isConnected ? "trakt" as const : "simkl" as const;
     const upgradeMode = (current: TrackingPreferences["watchlistReadMode"]) =>
-      current === "auto" || (traktClient.isConnected && (current === "trakt" || current === "simkl")) ? mode : current;
+      current === "auto" ? mode : current;
     const nextPreferences: TrackingPreferences = {
       watchlistReadMode: upgradeMode(previousPreferences.watchlistReadMode),
       continueWatchingReadMode: upgradeMode(previousPreferences.continueWatchingReadMode),
@@ -1959,7 +1960,8 @@ export function AppProvider({
         traktToken: traktClient.token,
         mdbListApiKey: mdblistClient.key,
         simklToken: token,
-        trackingPreferences: nextPreferences
+        trackingPreferences: nextPreferences,
+        changedDomains: ["routing", "simkl"]
       }).catch(() => undefined);
     }
     if (activeProfileIdRef.current === targetProfileId) {
@@ -1991,7 +1993,8 @@ export function AppProvider({
         traktToken: traktClient.token,
         mdbListApiKey: mdblistClient.key,
         simklToken: null,
-        trackingPreferences: nextPreferences
+        trackingPreferences: nextPreferences,
+        changedDomains: ["routing", "simkl"]
       }).catch(() => undefined);
     }
     if (activeProfileIdRef.current === targetProfileId) {
@@ -2018,7 +2021,8 @@ export function AppProvider({
       traktToken: traktClient.token,
       mdbListApiKey: mdblistClient.key,
       simklToken: simklClient.token,
-      trackingPreferences: next
+      trackingPreferences: next,
+      changedDomains: ["routing"]
     }).catch(() => undefined);
     await refreshData(profileId);
   }, [refreshData]);

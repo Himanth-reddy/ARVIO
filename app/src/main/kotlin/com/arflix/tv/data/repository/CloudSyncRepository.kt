@@ -705,14 +705,6 @@ class CloudSyncRepository @Inject constructor(
         )
         root.put("profileSettingsById", JSONObject(gson.toJson(profileSettingsById)))
 
-        // Validate active Trakt auth before exporting so revoked tokens do not
-        // get written back to cloud and restored on the next launch.
-        try {
-            traktRepository.hasTrakt()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-        }
-
         // Trakt tokens per profile
         val traktTokens = traktRepository.exportTokensForProfiles(profiles.map { it.id })
         root.put("traktTokens", JSONObject(gson.toJson(traktTokens)))
@@ -957,13 +949,23 @@ class CloudSyncRepository @Inject constructor(
         } else {
             payload
         }
+        val traktMerged = if (existingRemotePayload != null) {
+            mergeRemoteTraktTokens(groupOrderMerged, existingRemotePayload)
+        } else {
+            groupOrderMerged
+        }
+        val trackingMerged = if (existingRemotePayload != null) {
+            mergeRemoteTrackingPreferences(traktMerged, existingRemotePayload)
+        } else {
+            traktMerged
+        }
         // Field-level merge against the already-loaded remote: keep local fields we changed more
         // recently, but never overwrite a cloud field with an older local value. This is what stops
         // a stale device from reverting a peer's setting (even via the pull's pre-push).
         val effectivePayload = if (existingRemotePayload != null) {
-            mergeSettingsByTimestamp(baseStr = groupOrderMerged, otherStr = existingRemotePayload).json
+            mergeSettingsByTimestamp(baseStr = trackingMerged, otherStr = existingRemotePayload).json
         } else {
-            groupOrderMerged
+            trackingMerged
         }
 
         val payloadHash = try {
@@ -1035,6 +1037,119 @@ class CloudSyncRepository @Inject constructor(
             }
             local.toString()
         } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; localPayload }
+    }
+
+    /**
+     * Tracking routing is a profile-scoped domain rather than a normal scalar setting. Keep the
+     * newest per-profile selection while pushing so a device that was already open cannot replace
+     * a newer Trakt/Simkl choice with its stale snapshot.
+     */
+    private fun mergeRemoteTrackingPreferences(localPayload: String, remotePayload: String): String {
+        return try {
+            val localRoot = JSONObject(localPayload)
+            val remoteRoot = JSONObject(remotePayload)
+            val remoteSelections = remoteRoot.optJSONObject("mdbListSyncByProfile")
+                ?: return localPayload
+            val localSelections = localRoot.optJSONObject("mdbListSyncByProfile")
+                ?: JSONObject().also { localRoot.put("mdbListSyncByProfile", it) }
+
+            val profileIds = remoteSelections.keys()
+            while (profileIds.hasNext()) {
+                val profileId = profileIds.next()
+                val remoteSelection = remoteSelections.optJSONObject(profileId) ?: continue
+                val localSelection = localSelections.optJSONObject(profileId)
+                if (localSelection == null) {
+                    localSelections.put(profileId, JSONObject(remoteSelection.toString()))
+                    continue
+                }
+
+                mergeTrackingRouting(localSelection, remoteSelection)
+                mergeTrackingCredential(
+                    local = localSelection,
+                    remote = remoteSelection,
+                    credentialField = "simklAccessToken",
+                    timestampField = "simklCredentialUpdatedAt"
+                )
+                mergeTrackingCredential(
+                    local = localSelection,
+                    remote = remoteSelection,
+                    credentialField = "mdbListApiKey",
+                    timestampField = "mdbListCredentialUpdatedAt"
+                )
+            }
+            localRoot.toString()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            localPayload
+        }
+    }
+
+    private fun mergeRemoteTraktTokens(localPayload: String, remotePayload: String): String {
+        return try {
+            val localRoot = JSONObject(localPayload)
+            val remoteTokens = JSONObject(remotePayload).optJSONObject("traktTokens")
+                ?: return localPayload
+            val localTokens = localRoot.optJSONObject("traktTokens")
+                ?: JSONObject().also { localRoot.put("traktTokens", it) }
+            val profileIds = remoteTokens.keys()
+            while (profileIds.hasNext()) {
+                val profileId = profileIds.next()
+                val remoteToken = remoteTokens.optJSONObject(profileId) ?: continue
+                val localToken = localTokens.optJSONObject(profileId)
+                val remoteUpdatedAt = remoteToken.optLong("updatedAt", 0L)
+                val localUpdatedAt = localToken?.optLong("updatedAt", 0L) ?: 0L
+                if (localToken == null || remoteUpdatedAt >= localUpdatedAt) {
+                    localTokens.put(profileId, JSONObject(remoteToken.toString()))
+                }
+            }
+            localRoot.toString()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            localPayload
+        }
+    }
+
+    private fun mergeTrackingRouting(local: JSONObject, remote: JSONObject) {
+        val remoteUpdatedAt = remote.optLong("updatedAt", 0L)
+        val localUpdatedAt = local.optLong("updatedAt", 0L)
+        if (remoteUpdatedAt < localUpdatedAt) return
+
+        listOf(
+            "provider",
+            "watchlistReadMode",
+            "continueWatchingReadMode",
+            "watchedReadMode",
+            "writeToTrakt",
+            "writeToSimkl",
+            "updatedAt"
+        ).forEach { field -> copyOptionalJsonField(local, remote, field) }
+    }
+
+    private fun mergeTrackingCredential(
+        local: JSONObject,
+        remote: JSONObject,
+        credentialField: String,
+        timestampField: String
+    ) {
+        val remoteUpdatedAt = remote.optLong(timestampField, 0L)
+        val localUpdatedAt = local.optLong(timestampField, 0L)
+        val remoteIsModern = remoteUpdatedAt > 0L
+        val remoteWins = remoteUpdatedAt > localUpdatedAt ||
+            (remoteIsModern && remoteUpdatedAt == localUpdatedAt)
+        val legacyRemoteCanRestore = remoteUpdatedAt == 0L && localUpdatedAt == 0L &&
+            remote.has(credentialField)
+        if (!remoteWins && !legacyRemoteCanRestore) return
+
+        copyOptionalJsonField(local, remote, credentialField)
+        copyOptionalJsonField(local, remote, timestampField)
+    }
+
+    private fun copyOptionalJsonField(target: JSONObject, source: JSONObject, field: String) {
+        if (source.has(field)) {
+            target.put(field, source.get(field))
+        } else {
+            target.remove(field)
+        }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1740,7 +1855,7 @@ class CloudSyncRepository @Inject constructor(
                     .orEmpty()
 
                 traktTokens.forEach { (profileId, token) ->
-                    if (profileId.isNotBlank() && token.accessToken.isNotBlank()) {
+                    if (profileId.isNotBlank() && !token.accessToken.isNullOrBlank()) {
                         traktProfiles.add(profileId)
                     }
                 }

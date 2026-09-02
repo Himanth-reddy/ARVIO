@@ -12,6 +12,7 @@ const {
 } = require("./_backend");
 
 const TRACKING_V2_FIELDS = [
+  "provider",
   "watchlistReadMode",
   "continueWatchingReadMode",
   "watchedReadMode",
@@ -19,28 +20,103 @@ const TRACKING_V2_FIELDS = [
   "writeToSimkl"
 ];
 
+function timestampOf(value, field) {
+  const timestamp = Number(value?.[field] || 0);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+}
+
+function copyOptionalField(target, source, field) {
+  if (Object.prototype.hasOwnProperty.call(source, field)) target[field] = source[field];
+  else delete target[field];
+}
+
+function preserveNewerDomain(next, previous, incoming, timestampField, fields) {
+  const previousUpdatedAt = timestampOf(previous, timestampField);
+  const incomingUpdatedAt = timestampOf(incoming, timestampField);
+  if (previousUpdatedAt > incomingUpdatedAt ||
+      (previousUpdatedAt > 0 && previousUpdatedAt === incomingUpdatedAt)) {
+    for (const field of [...fields, timestampField]) copyOptionalField(next, previous, field);
+    return;
+  }
+  if (previousUpdatedAt === 0 && incomingUpdatedAt === 0) {
+    for (const field of fields) {
+      if (!Object.prototype.hasOwnProperty.call(incoming, field) &&
+          Object.prototype.hasOwnProperty.call(previous, field)) {
+        next[field] = previous[field];
+      }
+    }
+  }
+}
+
 function preserveTrackingRouting(existingSnapshot, incomingPayload) {
   const previous = existingSnapshot?.payload?.mdbListSyncByProfile;
   const incoming = incomingPayload?.mdbListSyncByProfile;
-  if (!previous || typeof previous !== "object" || Array.isArray(previous) ||
-      !incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+  if (!previous || typeof previous !== "object" || Array.isArray(previous)) {
     return incomingPayload;
+  }
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+    return { ...incomingPayload, mdbListSyncByProfile: { ...previous } };
   }
   const merged = { ...incoming };
   for (const [profileId, previousSelection] of Object.entries(previous)) {
     if (!previousSelection || typeof previousSelection !== "object" || Array.isArray(previousSelection)) continue;
     const incomingSelection = merged[profileId];
-    if (!incomingSelection || typeof incomingSelection !== "object" || Array.isArray(incomingSelection)) continue;
-    const next = { ...incomingSelection };
-    for (const field of TRACKING_V2_FIELDS) {
-      if (!Object.prototype.hasOwnProperty.call(next, field) && Object.prototype.hasOwnProperty.call(previousSelection, field)) {
-        next[field] = previousSelection[field];
-      }
+    if (!incomingSelection || typeof incomingSelection !== "object" || Array.isArray(incomingSelection)) {
+      merged[profileId] = { ...previousSelection };
+      continue;
     }
+    const next = { ...incomingSelection };
+    preserveNewerDomain(next, previousSelection, incomingSelection, "updatedAt", TRACKING_V2_FIELDS);
+    preserveNewerDomain(
+      next,
+      previousSelection,
+      incomingSelection,
+      "simklCredentialUpdatedAt",
+      ["simklAccessToken"]
+    );
+    preserveNewerDomain(
+      next,
+      previousSelection,
+      incomingSelection,
+      "mdbListCredentialUpdatedAt",
+      ["mdbListApiKey"]
+    );
     merged[profileId] = next;
   }
   return { ...incomingPayload, mdbListSyncByProfile: merged };
 }
+
+function preserveTraktTokens(existingSnapshot, incomingPayload) {
+  const previous = existingSnapshot?.payload?.traktTokens;
+  const incoming = incomingPayload?.traktTokens;
+  if (!previous || typeof previous !== "object" || Array.isArray(previous)) {
+    return incomingPayload;
+  }
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+    return { ...incomingPayload, traktTokens: { ...previous } };
+  }
+  const merged = { ...incoming };
+  for (const [profileId, previousToken] of Object.entries(previous)) {
+    if (!previousToken || typeof previousToken !== "object" || Array.isArray(previousToken)) continue;
+    const incomingToken = merged[profileId];
+    if (!incomingToken || typeof incomingToken !== "object" || Array.isArray(incomingToken)) {
+      merged[profileId] = { ...previousToken };
+      continue;
+    }
+    const previousUpdatedAt = timestampOf(previousToken, "updatedAt");
+    const incomingUpdatedAt = timestampOf(incomingToken, "updatedAt");
+    const incomingHasToken = Boolean(incomingToken.accessToken || incomingToken.access_token);
+    const previousHasToken = Boolean(previousToken.accessToken || previousToken.access_token);
+    if (previousUpdatedAt > incomingUpdatedAt ||
+        (previousUpdatedAt > 0 && previousUpdatedAt === incomingUpdatedAt) ||
+        (previousUpdatedAt === 0 && incomingUpdatedAt === 0 && !incomingHasToken && previousHasToken)) {
+      merged[profileId] = { ...previousToken };
+    }
+  }
+  return { ...incomingPayload, traktTokens: merged };
+}
+
+exports._test = { preserveTrackingRouting, preserveTraktTokens };
 
 exports.handler = async (event) => {
   const cors = options(event);
@@ -62,7 +138,10 @@ exports.handler = async (event) => {
     // the addon list (recurring client bug); existing addons are merged back.
     const parsedPayload = typeof rawPayload === "string" ? JSON.parse(rawPayload) : rawPayload;
     const { payload: addonGuardedPayload, guarded } = applyAddonWipeGuard(existing, parsedPayload);
-    const guardedPayload = preserveTrackingRouting(existing, addonGuardedPayload);
+    const guardedPayload = preserveTraktTokens(
+      existing,
+      preserveTrackingRouting(existing, addonGuardedPayload)
+    );
     if (guarded) {
       console.warn("account-sync-push: addon wipe guard engaged", {
         user: identity.supabaseUserId,

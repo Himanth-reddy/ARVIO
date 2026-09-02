@@ -12,6 +12,7 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.NextEpisode
 import com.arflix.tv.data.model.SportsAddonCapabilities
+import com.arflix.tv.data.repository.sync.shouldApplyCloudCredential
 import com.arflix.tv.util.ContinueWatchingSelector
 import com.arflix.tv.util.EpisodePointer
 import com.arflix.tv.util.EpisodeProgressSnapshot
@@ -96,6 +97,7 @@ class TraktRepository @Inject constructor(
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
     private fun expiresAtKey() = profileManager.profileLongKey("trakt_expires_at")
+    private fun tokenUpdatedAtKey() = profileManager.profileLongKey("trakt_token_updated_at_v3")
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("trakt_include_specials")
     private fun dismissedContinueWatchingKey() = profileManager.profileStringKey("trakt_dismissed_continue_watching_v1")
     private fun continueWatchingCacheKey() = profileManager.profileStringKey("trakt_continue_watching_cache_v4")
@@ -105,9 +107,10 @@ class TraktRepository @Inject constructor(
     private fun localWatchedEpisodesKey() = profileManager.profileStringKey("local_watched_episodes_v1")
 
     data class CloudTraktToken(
-        val accessToken: String,
-        val refreshToken: String?,
-        val expiresAt: Long?
+        val accessToken: String? = null,
+        val refreshToken: String? = null,
+        val expiresAt: Long? = null,
+        val updatedAt: Long? = null
     )
 
     @Volatile private var activeCacheProfileId: String? = null
@@ -212,25 +215,6 @@ class TraktRepository @Inject constructor(
         return directFallback()
     }
 
-    private fun isPermanentTokenRefreshFailure(e: Throwable): Boolean {
-        val message = e.message?.lowercase().orEmpty()
-        return message.contains("invalid_grant") ||
-            message.contains("authorization grant is invalid") ||
-            message.contains("expired") ||
-            message.contains("revoked") ||
-            message.contains("issued to another client")
-    }
-
-    private suspend fun clearInvalidTraktToken() {
-        context.traktDataStore.edit { prefs ->
-            prefs.remove(accessTokenKey())
-            prefs.remove(refreshTokenKey())
-            prefs.remove(expiresAtKey())
-        }
-        tokenRefreshBackoffUntilMs = 0L
-        clearProfileScopedMemoryCaches(clearPreloaded = false)
-    }
-
     private suspend fun refreshTraktToken(refreshToken: String): TraktToken {
         return requestTraktToken(
             directFallback = {
@@ -284,32 +268,23 @@ class TraktRepository @Inject constructor(
                 newToken.accessToken
             } catch (e: HttpException) {
                 val code = e.code()
-                if (code == 429 || code >= 500) {
-                    val retryAfterMs = e.response()
-                        ?.headers()
-                        ?.get("Retry-After")
-                        ?.toLongOrNull()
-                        ?.times(1000L)
-                        ?.coerceAtLeast(30_000L)
-                        ?: TOKEN_REFRESH_RETRY_BACKOFF_MS
-                    tokenRefreshBackoffUntilMs = System.currentTimeMillis() + retryAfterMs
-                    System.err.println("TraktRepo: token refresh deferred after HTTP $code")
-                    usableExistingToken()
-                } else {
-                    System.err.println("TraktRepo: token refresh failed: HTTP $code")
-                    if (code == 400 || code == 401 || code == 403) {
-                        clearInvalidTraktToken()
-                    }
-                    null
-                }
+                val retryAfterMs = e.response()
+                    ?.headers()
+                    ?.get("Retry-After")
+                    ?.toLongOrNull()
+                    ?.times(1000L)
+                    ?.coerceAtLeast(30_000L)
+                    ?: TOKEN_REFRESH_RETRY_BACKOFF_MS
+                tokenRefreshBackoffUntilMs = System.currentTimeMillis() + retryAfterMs
+                // A refresh response can fail because of a temporary proxy, client,
+                // rate-limit or Trakt-side problem. Never turn that network response
+                // into a local logout; only an explicit user disconnect removes tokens.
+                System.err.println("TraktRepo: token refresh deferred after HTTP $code")
+                usableExistingToken()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
 
                 System.err.println("TraktRepo: token refresh failed: ${e.message}")
-                if (isPermanentTokenRefreshFailure(e)) {
-                    clearInvalidTraktToken()
-                    return@withLock null
-                }
                 tokenRefreshBackoffUntilMs = System.currentTimeMillis() + TOKEN_REFRESH_RETRY_BACKOFF_MS
                 usableExistingToken()
             }
@@ -322,6 +297,7 @@ class TraktRepository @Inject constructor(
             prefs[accessTokenKey()] = token.accessToken
             prefs[refreshTokenKey()] = token.refreshToken
             prefs[expiresAtKey()] = token.createdAt + token.expiresIn
+            prefs[tokenUpdatedAtKey()] = System.currentTimeMillis()
         }
     }
 
@@ -348,6 +324,7 @@ class TraktRepository @Inject constructor(
             prefs.remove(accessTokenKey())
             prefs.remove(refreshTokenKey())
             prefs.remove(expiresAtKey())
+            prefs[tokenUpdatedAtKey()] = System.currentTimeMillis()
         }
         clearProfileScopedMemoryCaches(clearPreloaded = false)
     }
@@ -358,11 +335,34 @@ class TraktRepository @Inject constructor(
     suspend fun exportTokensForProfiles(profileIds: List<String>): Map<String, CloudTraktToken> {
         val prefs = context.traktDataStore.data.first()
         val out = LinkedHashMap<String, CloudTraktToken>()
+        val migratedProfiles = mutableListOf<String>()
+        val migrationUpdatedAt = System.currentTimeMillis()
         profileIds.forEach { profileId ->
-            val access = prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")] ?: return@forEach
+            val access = prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")]
             val refresh = prefs[profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")]
             val expiresAt = prefs[profileManager.profileLongKeyFor(profileId, "trakt_expires_at")]
-            out[profileId] = CloudTraktToken(accessToken = access, refreshToken = refresh, expiresAt = expiresAt)
+            val updatedAtKey = profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")
+            val storedUpdatedAt = prefs[updatedAtKey]?.takeIf { it > 0L }
+            val effectiveUpdatedAt = storedUpdatedAt ?: access?.let {
+                migratedProfiles += profileId
+                migrationUpdatedAt
+            }
+            if (access != null || effectiveUpdatedAt != null) {
+                out[profileId] = CloudTraktToken(
+                    accessToken = access,
+                    refreshToken = refresh,
+                    expiresAt = expiresAt,
+                    updatedAt = effectiveUpdatedAt
+                )
+            }
+        }
+        if (migratedProfiles.isNotEmpty()) {
+            context.traktDataStore.edit { current ->
+                migratedProfiles.forEach { profileId ->
+                    current[profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")] =
+                        migrationUpdatedAt
+                }
+            }
         }
         return out
     }
@@ -372,11 +372,35 @@ class TraktRepository @Inject constructor(
      */
     suspend fun importTokensForProfiles(tokens: Map<String, CloudTraktToken>) {
         if (tokens.isEmpty()) return
+        val local = context.traktDataStore.data.first()
+        val tokensToApply = tokens.filter { (profileId, token) ->
+            shouldApplyCloudCredential(
+                incomingUpdatedAt = token.updatedAt,
+                localUpdatedAt = local[profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")],
+                incomingHasCredential = !token.accessToken.isNullOrBlank(),
+                localHasCredential = !local[
+                    profileManager.profileStringKeyFor(profileId, "trakt_access_token")
+                ].isNullOrBlank()
+            )
+        }
+        if (tokensToApply.isEmpty()) return
         context.traktDataStore.edit { prefs ->
-            tokens.forEach { (profileId, token) ->
-                prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")] = token.accessToken
-                token.refreshToken?.let { prefs[profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")] = it }
-                token.expiresAt?.let { prefs[profileManager.profileLongKeyFor(profileId, "trakt_expires_at")] = it }
+            tokensToApply.forEach { (profileId, token) ->
+                val accessKey = profileManager.profileStringKeyFor(profileId, "trakt_access_token")
+                val refreshKey = profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")
+                val expiresKey = profileManager.profileLongKeyFor(profileId, "trakt_expires_at")
+                val updatedAtKey = profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")
+                val accessToken = token.accessToken?.trim().orEmpty()
+                if (accessToken.isEmpty()) {
+                    prefs.remove(accessKey)
+                    prefs.remove(refreshKey)
+                    prefs.remove(expiresKey)
+                } else {
+                    prefs[accessKey] = accessToken
+                    token.refreshToken?.let { prefs[refreshKey] = it } ?: prefs.remove(refreshKey)
+                    token.expiresAt?.let { prefs[expiresKey] = it } ?: prefs.remove(expiresKey)
+                }
+                token.updatedAt?.takeIf { it > 0L }?.let { prefs[updatedAtKey] = it }
             }
         }
         clearProfileScopedMemoryCaches(clearPreloaded = false)
@@ -2646,7 +2670,7 @@ class TraktRepository @Inject constructor(
      * Check if current profile has Trakt authentication
      */
     suspend fun hasTrakt(): Boolean {
-        return refreshTokenIfNeeded() != null
+        return hasStoredTraktTokenForCurrentProfile()
     }
 
     private fun formatRuntime(runtime: Int): String {

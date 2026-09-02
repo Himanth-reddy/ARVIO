@@ -921,6 +921,7 @@ export async function pullCloudProfiles(auth: AuthClient): Promise<CloudProfiles
 }
 
 export type CloudTrackingProvider = "NONE" | "TRAKT" | "MDBLIST" | "SIMKL";
+export type CloudTrackingDomain = "routing" | "trakt" | "simkl" | "mdblist";
 
 export interface CloudTrackingSelection {
   provider: CloudTrackingProvider;
@@ -928,6 +929,7 @@ export interface CloudTrackingSelection {
   mdbListApiKey: string | null;
   simklToken: SimklToken | null;
   trackingPreferences?: TrackingPreferences;
+  changedDomains?: CloudTrackingDomain[];
 }
 
 export interface CloudTrackingSnapshot extends CloudTrackingSelection {
@@ -972,10 +974,17 @@ function readCloudTraktToken(root: RawPayload, profileId: string): TraktToken | 
 
 function readCloudSimklToken(root: RawPayload, profileId: string): SimklToken | null {
   const directTokens = objectRecord<{ access_token?: string; accessToken?: string }>(root.simklTokens);
-  const selections = objectRecord<{ provider?: string; simklAccessToken?: string }>(root.mdbListSyncByProfile);
+  const selections = objectRecord<{
+    provider?: string;
+    simklAccessToken?: string;
+    simklCredentialUpdatedAt?: number;
+  }>(root.mdbListSyncByProfile);
   const direct = directTokens[profileId];
   const selection = selections[profileId];
-  const accessToken = direct?.access_token ?? direct?.accessToken ?? selection?.simklAccessToken;
+  const hasCanonicalCredentialState = Number(selection?.simklCredentialUpdatedAt ?? 0) > 0;
+  const accessToken = hasCanonicalCredentialState
+    ? selection?.simklAccessToken
+    : direct?.access_token ?? direct?.accessToken ?? selection?.simklAccessToken;
   return accessToken ? { access_token: accessToken } : null;
 }
 
@@ -1024,9 +1033,13 @@ export async function pullCloudTrackingSelection(
         ? "MDBLIST"
         : "NONE";
   const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(mdbListApiKey));
-  const defaultMode: TrackingReadMode = traktToken && simklToken
-      ? "both"
-      : traktToken
+  const defaultMode: TrackingReadMode = provider === "TRAKT"
+      ? "trakt"
+      : provider === "SIMKL"
+        ? "simkl"
+        : provider === "MDBLIST"
+          ? "mdblist"
+          : traktToken
         ? "trakt"
         : simklToken
           ? "simkl"
@@ -1065,18 +1078,38 @@ export async function saveCloudTrackingSelection(
 ) {
   if (!profileId) return;
   await mutateCloudPayload(auth, (root) => {
-    const traktTokens = objectRecord<unknown>(root.traktTokens);
-    const simklTokens = objectRecord<unknown>(root.simklTokens);
+    const traktTokens = objectRecord<Record<string, unknown>>(root.traktTokens);
+    const simklTokens = objectRecord<Record<string, unknown>>(root.simklTokens);
     const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
-    const defaultMode: TrackingReadMode = selection.traktToken && selection.simklToken
-        ? "both"
-        : selection.traktToken
-          ? "trakt"
-          : selection.simklToken
-            ? "simkl"
-            : selection.mdbListApiKey
-              ? "mdblist"
-              : "auto";
+    const changedDomains = new Set<CloudTrackingDomain>(
+      selection.changedDomains ?? ["routing", "trakt", "simkl", "mdblist"]
+    );
+    const updatedAt = Date.now();
+    const previousSelection = selections[profileId] ?? {};
+    const previousTraktToken = traktTokens[profileId] ?? {};
+    const incomingTraktAccessToken = selection.traktToken?.access_token;
+    const previousTraktAccessToken = previousTraktToken.accessToken ?? previousTraktToken.access_token;
+    const writeTraktCredential = changedDomains.has("trakt") || Boolean(
+      incomingTraktAccessToken && incomingTraktAccessToken !== previousTraktAccessToken
+    );
+    const incomingSimklAccessToken = selection.simklToken?.access_token;
+    const previousSimklAccessToken = previousSelection.simklAccessToken;
+    const writeSimklCredential = changedDomains.has("simkl") || Boolean(
+      incomingSimklAccessToken && incomingSimklAccessToken !== previousSimklAccessToken
+    );
+    const defaultMode: TrackingReadMode = selection.provider === "TRAKT"
+        ? "trakt"
+        : selection.provider === "SIMKL"
+          ? "simkl"
+          : selection.provider === "MDBLIST"
+            ? "mdblist"
+            : selection.traktToken
+              ? "trakt"
+              : selection.simklToken
+                ? "simkl"
+                : selection.mdbListApiKey
+                  ? "mdblist"
+                  : "auto";
     const preferences = selection.trackingPreferences ?? {
       watchlistReadMode: defaultMode,
       continueWatchingReadMode: defaultMode,
@@ -1085,7 +1118,7 @@ export async function saveCloudTrackingSelection(
       writeToSimkl: Boolean(selection.simklToken)
     };
 
-    if (selection.traktToken) {
+    if (writeTraktCredential && selection.traktToken) {
       const token = selection.traktToken;
       traktTokens[profileId] = {
         accessToken: token.access_token,
@@ -1093,34 +1126,53 @@ export async function saveCloudTrackingSelection(
         expiresAt: token.expires_at,
         access_token: token.access_token,
         refresh_token: token.refresh_token,
-        expires_at: token.expires_at
+        expires_at: token.expires_at,
+        updatedAt
       };
-    } else {
-      delete traktTokens[profileId];
+    } else if (writeTraktCredential) {
+      traktTokens[profileId] = { updatedAt };
     }
-    if (selection.simklToken?.access_token) {
+    if (writeSimklCredential && selection.simklToken?.access_token) {
       const token = selection.simklToken;
       simklTokens[profileId] = {
         access_token: token.access_token,
-        accessToken: token.access_token
+        accessToken: token.access_token,
+        updatedAt
       };
-    } else {
-      delete simklTokens[profileId];
+    } else if (writeSimklCredential) {
+      simklTokens[profileId] = { updatedAt };
     }
 
-    selections[profileId] = {
-      provider: selection.provider,
-      ...(selection.mdbListApiKey?.trim() ? { mdbListApiKey: selection.mdbListApiKey.trim() } : {}),
-      ...(selection.simklToken?.access_token ? { simklAccessToken: selection.simklToken.access_token } : {}),
-      watchlistReadMode: preferences.watchlistReadMode.toUpperCase(),
-      continueWatchingReadMode: preferences.continueWatchingReadMode.toUpperCase(),
-      watchedReadMode: preferences.watchedReadMode.toUpperCase(),
-      writeToTrakt: preferences.writeToTrakt,
-      writeToSimkl: preferences.writeToSimkl
-    };
+    const nextSelection = { ...previousSelection };
+    if (changedDomains.has("routing")) {
+      Object.assign(nextSelection, {
+        provider: selection.provider,
+        watchlistReadMode: preferences.watchlistReadMode.toUpperCase(),
+        continueWatchingReadMode: preferences.continueWatchingReadMode.toUpperCase(),
+        watchedReadMode: preferences.watchedReadMode.toUpperCase(),
+        writeToTrakt: preferences.writeToTrakt,
+        writeToSimkl: preferences.writeToSimkl,
+        updatedAt
+      });
+    }
+    if (changedDomains.has("mdblist")) {
+      const key = selection.mdbListApiKey?.trim();
+      if (key) nextSelection.mdbListApiKey = key;
+      else delete nextSelection.mdbListApiKey;
+      nextSelection.mdbListCredentialUpdatedAt = updatedAt;
+    }
+    if (writeSimklCredential) {
+      const token = selection.simklToken?.access_token;
+      if (token) nextSelection.simklAccessToken = token;
+      else delete nextSelection.simklAccessToken;
+      nextSelection.simklCredentialUpdatedAt = updatedAt;
+    }
+    selections[profileId] = nextSelection;
 
     root.traktTokens = traktTokens;
-    root.traktLinked = Object.keys(traktTokens).length > 0;
+    root.traktLinked = Object.values(traktTokens).some((token) =>
+      Boolean(token?.accessToken ?? token?.access_token)
+    );
     root.simklTokens = simklTokens;
     root.mdbListSyncByProfile = selections;
   });
