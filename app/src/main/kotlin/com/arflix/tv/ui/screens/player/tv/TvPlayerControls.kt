@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -74,6 +75,12 @@ import com.arflix.tv.ui.skin.LocalAccentColorOverride
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.TextPrimary
 
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewCard
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import kotlin.math.roundToInt
+
 @Composable
 fun TvPlayerControls(
     isVisible: Boolean,
@@ -91,6 +98,7 @@ fun TvPlayerControls(
     seasonNumber: Int?,
     episodeNumber: Int?,
     playerAccent: Color,
+    seekPreviewFrame: SeekPreviewFrame? = null,
     formatTime: (Long) -> String,
     formatClockTime: (Long, String) -> String,
     // Focus Requesters
@@ -408,6 +416,37 @@ fun TvPlayerControls(
                                         RoundedCornerShape(3.dp)
                                     )
                             )
+                        }
+
+                        val previewCardWidth = 200.dp
+                        val previewCardHeight = previewCardWidth * 9f / 16f
+                        val previewDensity = LocalDensity.current
+                        val previewCardWidthPx = with(previewDensity) { previewCardWidth.toPx() }
+                        val previewCardHeightPx = with(previewDensity) { (previewCardHeight + 16.dp).roundToPx() }
+                        val previewX = if (trackbarWidthPx > 0) {
+                            (frac * trackbarWidthPx - previewCardWidthPx / 2f)
+                                .coerceIn(0f, (trackbarWidthPx - previewCardWidthPx).coerceAtLeast(0f))
+                                .roundToInt()
+                        } else 0
+
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = (isScrubbing || trackbarFocused) && durationMs > 0L && seekPreviewFrame != null,
+                            enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(90)),
+                            exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(70)),
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .offset { IntOffset(previewX, -previewCardHeightPx) }
+                                .zIndex(12f)
+                                .width(previewCardWidth)
+                        ) {
+                            seekPreviewFrame?.let { frame ->
+                                SeekPreviewCard(
+                                    frame = frame,
+                                    cornerRadius = 6.dp,
+                                    timestamp = formatTime(if (isScrubbing) scrubPreviewPositionMs else currentPositionMs),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
                     }
 

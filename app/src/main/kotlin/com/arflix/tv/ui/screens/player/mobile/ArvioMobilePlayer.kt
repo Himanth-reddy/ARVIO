@@ -108,6 +108,7 @@ import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.ui.screens.player.AudioTrackInfo
 import com.arflix.tv.ui.screens.player.PlayerUiState
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import com.arflix.tv.ui.theme.ArflixTypography
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -132,6 +133,8 @@ fun ArvioMobilePlayer(
     isCasting: Boolean,
     showCastButton: Boolean,
     showPipButton: Boolean,
+    seekPreviewFrame: SeekPreviewFrame? = null,
+    onScrubPreviewPosition: ((Long?) -> Unit)? = null,
     onTogglePlayPause: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onRewind10: () -> Unit,
@@ -836,6 +839,7 @@ fun ArvioMobilePlayer(
                     currentPlaybackSpeed = currentPlaybackSpeed,
                     isEpisodeListAvailable = uiState.seasonEpisodes.isNotEmpty(),
                     isPromptShowing = isPromptShowing,
+                    seekPreviewFrame = seekPreviewFrame,
                     onOpenSources = {
                         closeAllPanels()
                         showSourcesDrawer = true
@@ -858,20 +862,25 @@ fun ArvioMobilePlayer(
                     },
                     onSeekStart = { pct ->
                         if (durationMs > 0L) {
-                            scrubPreviewMs = (pct * durationMs).toLong()
+                            val pos = (pct * durationMs).toLong()
+                            scrubPreviewMs = pos
                             isScrubbing = true
+                            onScrubPreviewPosition?.invoke(pos)
                         }
                     },
                     onSeekMove = { pct ->
                         if (durationMs > 0L) {
-                            scrubPreviewMs = (pct * durationMs).toLong().coerceIn(0L, durationMs)
+                            val pos = (pct * durationMs).toLong().coerceIn(0L, durationMs)
+                            scrubPreviewMs = pos
                             isScrubbing = true
+                            onScrubPreviewPosition?.invoke(pos)
                         }
                     },
                     onSeekEnd = {
                         if (isScrubbing) {
                             onSeekTo(scrubPreviewMs)
                             isScrubbing = false
+                            onScrubPreviewPosition?.invoke(null)
                         }
                     },
                     horizontalPadding = maxHorizontalPadding,

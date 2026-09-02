@@ -58,6 +58,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.wrapContentHeight
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewCard
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -488,6 +492,7 @@ fun MobilePlayerBottomSection(
     currentPlaybackSpeed: Float,
     isEpisodeListAvailable: Boolean,
     isPromptShowing: Boolean,
+    seekPreviewFrame: SeekPreviewFrame? = null,
     onOpenSources: () -> Unit,
     onOpenEpisodes: () -> Unit,
     onOpenAudio: () -> Unit,
@@ -682,6 +687,39 @@ fun MobilePlayerBottomSection(
                         .background(Color.White)
                         .shadow(4.dp, CircleShape)
                 )
+
+                // Floating seek thumbnail preview card
+                val previewCardWidth = 150.dp
+                val previewCardHeight = previewCardWidth * 9f / 16f
+                val previewDensity = LocalDensity.current
+                val previewCardWidthPx = with(previewDensity) { previewCardWidth.toPx() }
+                val previewCardHeightPx = with(previewDensity) { (previewCardHeight + 16.dp).roundToPx() }
+                val previewX = if (trackWidthPx > 0) {
+                    (progressFraction * trackWidthPx - previewCardWidthPx / 2f)
+                        .coerceIn(0f, (trackWidthPx - previewCardWidthPx).coerceAtLeast(0f))
+                        .roundToInt()
+                } else 0
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isScrubbing && durationMs > 0L && seekPreviewFrame != null,
+                    enter = fadeIn(animationSpec = tween(90)),
+                    exit = fadeOut(animationSpec = tween(70)),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset { IntOffset(previewX, -previewCardHeightPx) }
+                        .zIndex(12f)
+                        .width(previewCardWidth)
+                        .wrapContentHeight(align = Alignment.Top, unbounded = true),
+                ) {
+                    seekPreviewFrame?.let { frame ->
+                        SeekPreviewCard(
+                            frame = frame,
+                            cornerRadius = 8.dp,
+                            timestamp = formatTime(displayPos),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
 
             // Remaining / Total toggle timestamp (right) - natural single-line measurement, never wraps

@@ -31,6 +31,7 @@ import com.arflix.tv.ui.components.NextEpisodeOverlay
 import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.screens.player.AudioTrackInfo
 import com.arflix.tv.ui.screens.player.PlayerUiState
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -51,6 +52,7 @@ fun ArvioTvPlayer(
     seasonNumber: Int?,
     episodeNumber: Int?,
     playerAccent: Color,
+    seekPreviewFrame: SeekPreviewFrame? = null,
     // Indicators & Overlays state
     showVolumeIndicator: Boolean,
     currentVolume: Int,
@@ -391,6 +393,7 @@ fun ArvioTvPlayer(
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber,
             playerAccent = playerAccent,
+            seekPreviewFrame = seekPreviewFrame,
             formatTime = formatTime,
             formatClockTime = formatClockTime,
             playButtonFocusRequester = playButtonFocusRequester,
