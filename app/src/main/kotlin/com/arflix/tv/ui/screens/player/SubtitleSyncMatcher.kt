@@ -2,11 +2,18 @@ package com.arflix.tv.ui.screens.player
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
 import java.util.zip.GZIPInputStream
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * "Find best match": scores candidate subtitle tracks by how well their on-screen cue at a given
@@ -31,15 +38,41 @@ object SubtitleSyncMatcher {
         .build()
 
     /**
+     * Suspending [Call.execute] that honours coroutine cancellation.
+     *
+     * `execute()` blocks with no suspension point, so a surrounding `withTimeoutOrNull` (or a
+     * cancelled job) cannot interrupt it — the caller stays blocked until OkHttp's own connect/read
+     * timeouts expire. Enqueuing and cancelling the [Call] on cancellation makes the wait actually
+     * abortable, which matters both for the manual-pick timeout and for the preload pass, where a
+     * playback teardown should not leave a batch of downloads running.
+     */
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { runCatching { cancel() } }
+        enqueue(object : Callback {
+            override fun onResponse(call: Call, response: Response) {
+                if (cont.isActive) cont.resume(response) else response.closeQuietly()
+            }
+
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isActive) cont.resumeWithException(e)
+            }
+        })
+    }
+
+    private fun Response.closeQuietly() = runCatching { close() }
+
+    /**
      * Downloads a subtitle and returns its decoded (gunzipped) text, or null on failure.
      *
      * [lang] is the subtitle's declared language (from the addon), used to pick the legacy code
      * page when the file is not UTF-8 — see [decodeSubtitleBytes].
+     *
+     * Cancellable: cancelling the calling coroutine aborts the HTTP call rather than waiting it out.
      */
     suspend fun loadRaw(url: String, lang: String? = null): String? = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder().url(url).build()
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) return@use null
                 val body = response.body ?: return@use null
                 val raw = body.bytes()
@@ -55,6 +88,9 @@ object SubtitleSyncMatcher {
                 decoded.text
             }
         }.onFailure { error ->
+            // runCatching also catches CancellationException; now that the call is cancellable that
+            // would report a cancelled download as a plain failure and break structured concurrency.
+            if (error is kotlinx.coroutines.CancellationException) throw error
             Log.w(TAG, "loadRaw failed url=$url err=${error.message}")
         }.getOrNull()
     }
