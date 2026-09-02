@@ -446,6 +446,7 @@ fun PlayerScreen(
     var showSourceMenu by remember { mutableStateOf(false) }
     var trackbarFocused by remember { mutableStateOf(false) }
     var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var controlsSeekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
     var latestRenderedSeekPreview by remember { mutableStateOf<SeekPreviewFrame?>(null) }
     var playerViewForSeekPreview by remember {
         mutableStateOf<FullViewportSubtitlePlayerView?>(null)
@@ -1534,6 +1535,7 @@ fun PlayerScreen(
         isLiveStream,
     ) {
         seekPreviewFrame = null
+        controlsSeekPreviewFrame = null
         latestRenderedSeekPreview = null
         lastRenderedVideoFrameUs.set(C.TIME_UNSET)
         val url = uiState.selectedStreamUrl
@@ -1576,34 +1578,13 @@ fun PlayerScreen(
         !isConstrainedPlaybackDevice &&
             (deviceType.isTouchDevice() || !isLikelyHeavyStream(uiState.selectedStream))
 
-    LaunchedEffect(
-        showSkipOverlay,
-        quickSeekPreviewBucket,
-        uiState.selectedStreamUrl,
-        uiState.streamSelectionNonce,
-        hasPlaybackStarted,
-        isCasting,
-    ) {
-        if (!showSkipOverlay || !hasPlaybackStarted || isCasting || duration <= 0L) {
-            seekPreviewFrame = null
-            return@LaunchedEffect
-        }
-        delay(SEEK_PREVIEW_DEBOUNCE_MS)
-
-        seekPreviewProvider.cachedFrameAt(quickSeekPreviewBucket)?.let { cachedFrame ->
-            seekPreviewFrame = cachedFrame
-            return@LaunchedEffect
-        }
-
-        // Race source extraction against the frame rendered by the active player. Capable devices
-        // can show the target before the delayed seek commits; constrained 4K/DV TVs use their
-        // existing decoder and therefore never need a second hardware codec instance.
-        val frame = supervisorScope {
+    val resolveSeekPreviewFrame: suspend (Long) -> SeekPreviewFrame? = { previewBucket ->
+        seekPreviewProvider.cachedFrameAt(previewBucket) ?: supervisorScope {
             val results = Channel<SeekPreviewFrame?>(capacity = 2)
             val jobs = mutableListOf<Job>()
             jobs += launch {
                 val renderedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                    val targetUs = quickSeekPreviewBucket * 1_000L
+                    val targetUs = previewBucket * 1_000L
                     while (
                         lastRenderedVideoFrameUs.get() == C.TIME_UNSET ||
                         abs(lastRenderedVideoFrameUs.get() - targetUs) > 5_500_000L
@@ -1617,7 +1598,7 @@ fun PlayerScreen(
                     }
                 }?.let { renderedBitmap ->
                     seekPreviewProvider.rememberRenderedFrame(
-                        positionMs = quickSeekPreviewBucket,
+                        positionMs = previewBucket,
                         bitmap = renderedBitmap,
                     )
                 }
@@ -1627,7 +1608,7 @@ fun PlayerScreen(
             if (allowSecondarySeekPreviewDecoder) {
                 jobs += launch {
                     val extractedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                        seekPreviewProvider.frameAt(quickSeekPreviewBucket)
+                        seekPreviewProvider.frameAt(previewBucket)
                     }
                     results.send(extractedFrame)
                 }
@@ -1645,7 +1626,57 @@ fun PlayerScreen(
             results.close()
             winner
         }
+    }
+
+    LaunchedEffect(
+        showSkipOverlay,
+        quickSeekPreviewBucket,
+        uiState.selectedStreamUrl,
+        uiState.streamSelectionNonce,
+        hasPlaybackStarted,
+        isCasting,
+    ) {
+        if (!showSkipOverlay || !hasPlaybackStarted || isCasting || duration <= 0L) {
+            seekPreviewFrame = null
+            return@LaunchedEffect
+        }
+        delay(SEEK_PREVIEW_DEBOUNCE_MS)
+        // Capable devices race source extraction against the frame rendered by the active player.
+        // Constrained 4K/DV televisions keep using only the active decoder.
+        val frame = resolveSeekPreviewFrame(quickSeekPreviewBucket)
         if (frame != null) seekPreviewFrame = frame
+    }
+
+    val controlsPreviewPosition = if (isControlScrubbing) scrubPreviewPosition else currentPosition
+    val controlsPreviewBucket = quantizeSeekPreviewPosition(controlsPreviewPosition, duration)
+    LaunchedEffect(
+        trackbarFocused,
+        isControlScrubbing,
+        controlsPreviewBucket,
+        showControls,
+        uiState.selectedStreamUrl,
+        uiState.streamSelectionNonce,
+        hasPlaybackStarted,
+        isCasting,
+    ) {
+        if (
+            (!trackbarFocused && !isControlScrubbing) ||
+            !showControls ||
+            !hasPlaybackStarted ||
+            isCasting ||
+            isLiveStream ||
+            duration <= 0L
+        ) {
+            controlsSeekPreviewFrame = null
+            return@LaunchedEffect
+        }
+        if (controlsSeekPreviewFrame == null) {
+            controlsSeekPreviewFrame = latestRenderedSeekPreview
+        }
+        delay(SEEK_PREVIEW_DEBOUNCE_MS)
+        resolveSeekPreviewFrame(controlsPreviewBucket)?.let { frame ->
+            controlsSeekPreviewFrame = frame
+        }
     }
 
     // Cache one already-rendered frame per ten-second bucket. This costs no extra video decoder and
@@ -3861,6 +3892,50 @@ fun PlayerScreen(
                         .padding(horizontal = if (isTouchDevice) 24.dp else 48.dp)
                         .padding(top = if (isTouchDevice) 16.dp else 24.dp, bottom = if (isTouchDevice) 32.dp else 24.dp)
                 ) {
+                    AnimatedVisibility(
+                        visible =
+                            (trackbarFocused || isControlScrubbing) &&
+                                duration > 0L &&
+                                !isCasting &&
+                                !isLiveStream,
+                        enter = fadeIn(animTween(70)),
+                        exit = fadeOut(animTween(90)),
+                    ) {
+                        val previewWidth = if (isTouchDevice) 168.dp else 224.dp
+                        val previewHeight = previewWidth * 9f / 16f
+                        val leadingTimeWidth = if (isTouchDevice) 48.dp else 55.dp
+                        val trailingTimeWidth = if (isTouchDevice) 56.dp else 63.dp
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(previewHeight + 12.dp)
+                                .padding(start = leadingTimeWidth, end = trailingTimeWidth),
+                        ) {
+                            val previewPosition = controlsPreviewPosition.coerceIn(0L, duration)
+                            val previewProgress =
+                                (previewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                            val previewOffset = (maxWidth * previewProgress - previewWidth / 2f)
+                                .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
+
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = previewOffset)
+                                    .width(previewWidth)
+                                    .height(previewHeight),
+                            ) {
+                                val frame = controlsSeekPreviewFrame
+                                if (frame != null) {
+                                    SeekPreviewCard(
+                                        frame = frame,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                } else {
+                                    SeekPreviewPlaceholder(modifier = Modifier.fillMaxSize())
+                                }
+                            }
+                        }
+                    }
+
                     // Icon buttons row. On tablet we center the row and use slightly
                     // larger buttons than TV to match the shorter viewing distance and
                     // the Material minimum touch-target of 48dp. Phone keeps the compact
@@ -4115,6 +4190,7 @@ fun PlayerScreen(
                                     trackbarFocused = state.isFocused
                                     if (state.isFocused && !isControlScrubbing) {
                                         scrubPreviewPosition = currentPosition
+                                        controlsSeekPreviewFrame = latestRenderedSeekPreview
                                     }
                                     if (!state.isFocused && isControlScrubbing) commitControlsSeekNow()
                                 }
@@ -4502,20 +4578,7 @@ fun PlayerScreen(
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             } else {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .shadow(14.dp, RoundedCornerShape(5.dp), clip = false)
-                                        .background(Color(0xFF101010), RoundedCornerShape(5.dp))
-                                        .border(
-                                            1.dp,
-                                            Color.White.copy(alpha = 0.35f),
-                                            RoundedCornerShape(5.dp),
-                                        ),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    LoadingIndicator(size = 24.dp, color = Color.White, strokeWidth = 2.dp)
-                                }
+                                SeekPreviewPlaceholder(modifier = Modifier.fillMaxSize())
                             }
                         }
                     }
@@ -6556,6 +6619,21 @@ private fun SeekPreviewCard(
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize(),
         )
+    }
+}
+
+@Composable
+private fun SeekPreviewPlaceholder(modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(5.dp)
+    Box(
+        modifier = modifier
+            .shadow(14.dp, shape, clip = false)
+            .background(Color(0xFF101010), shape)
+            .border(1.dp, Color.White.copy(alpha = 0.35f), shape)
+            .clip(shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        LoadingIndicator(size = 24.dp, color = Color.White, strokeWidth = 2.dp)
     }
 }
 
