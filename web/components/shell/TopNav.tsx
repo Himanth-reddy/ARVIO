@@ -1,10 +1,12 @@
 "use client";
 
-import { Bookmark, Home, Search, Settings, Tv } from "lucide-react";
+import { BadgeCheck, Bookmark, Home, Search, Settings, Tv } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useApp } from "@/lib/store";
+import { authClient, useApp } from "@/lib/store";
 import { ProfileAvatarVisual } from "@/components/profile/ProfileAvatar";
 import type { NavSection } from "@/lib/types";
+import { cachedEntitlement, kofiSubscribeUrl } from "@/lib/entitlement";
+import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 
 const nav = [
   { id: "home", label: "Home", icon: Home },
@@ -16,6 +18,8 @@ const nav = [
 export function TopNav() {
   const { view, section, setSection, switchProfile, activeProfile, avatarImages, settings, closeDetails, selected } = useApp();
   const [scrolled, setScrolled] = useState(false);
+  const entitlement = cachedEntitlement(authClient);
+  const trialActive = entitlement?.entitled === true && entitlement.reason === "trial";
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -55,6 +59,19 @@ export function TopNav() {
           })}
         </nav>
         <div className="top-right">
+          {trialActive && (
+            <a
+              className="trial-membership-link"
+              href={kofiSubscribeUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Keep ARVIO Premium after your trial"
+              onClick={() => { void trackPremiumEvent(authClient, "checkout_opened", { source: "trial_nav" }); }}
+            >
+              <BadgeCheck size={18} />
+              <span>Keep Premium</span>
+            </a>
+          )}
           <button
             type="button"
             className={`settings-gear ${!selected && section === "settings" ? "is-active" : ""}`}
@@ -75,20 +92,35 @@ export function TopNav() {
           <img src="/arvio-logo.svg" alt="" className="mobile-brand-logo" />
           <img src="/arvio-wordmark.svg" alt="ARVIO" className="mobile-wordmark" />
         </div>
-        <button
-          type="button"
-          className={`mobile-profile-btn ${!selected && view === "profiles" ? "is-active" : ""}`}
-          onClick={switchProfile}
-          aria-label="Switch profile"
-        >
-          <div className="mobile-avatar-container">
-            {activeProfile ? (
-              <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} />
-            ) : (
-              <img src="/arvio-logo.svg" alt="" />
-            )}
-          </div>
-        </button>
+        <div className="mobile-header-actions">
+          {trialActive && (
+            <a
+              className="mobile-premium-link"
+              href={kofiSubscribeUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Keep ARVIO Premium after your trial"
+              title="Keep ARVIO Premium after your trial"
+              onClick={() => { void trackPremiumEvent(authClient, "checkout_opened", { source: "trial_mobile_nav" }); }}
+            >
+              <BadgeCheck size={20} />
+            </a>
+          )}
+          <button
+            type="button"
+            className={`mobile-profile-btn ${!selected && view === "profiles" ? "is-active" : ""}`}
+            onClick={switchProfile}
+            aria-label="Switch profile"
+          >
+            <div className="mobile-avatar-container">
+              {activeProfile ? (
+                <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} />
+              ) : (
+                <img src="/arvio-logo.svg" alt="" />
+              )}
+            </div>
+          </button>
+        </div>
       </header>
 
       {/* Mobile Bottom Navigation (screen <= 680px) */}

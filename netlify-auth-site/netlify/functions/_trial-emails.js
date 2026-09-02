@@ -79,8 +79,8 @@ function trialEmailContent(type, expiresAt) {
   if (type === "welcome") {
     return {
       subject: "Your 3-day ARVIO Web trial is active",
-      text: `Your ARVIO Web trial is ready until ${end}. Open ARVIO Web on Windows, Mac, iPhone, iPad or another browser: ${webUrl}\n\nYour profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.`,
-      html: `<p>Your <strong>3-day ARVIO Web trial</strong> is ready until ${end}.</p><p><a href="${webUrl}">Open ARVIO Web on Windows, Mac or mobile</a></p><p>Your profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.</p>`
+      text: `Your ARVIO Web trial is ready until ${end}. Open ARVIO Web on Windows, Mac, iPhone, iPad or another browser: ${webUrl}\n\nYour profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.\n\nWant to keep browser access after the trial? Membership is $2.99/month: ${membershipUrl}`,
+      html: `<p>Your <strong>3-day ARVIO Web trial</strong> is ready until ${end}.</p><p><a href="${webUrl}">Open ARVIO Web on Windows, Mac or mobile</a></p><p>Your profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.</p><p><a href="${membershipUrl}">Keep Premium after your trial for $2.99/month</a>.</p>`
     };
   }
   if (type === "reminder") {

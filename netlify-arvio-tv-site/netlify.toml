@@ -69,3 +69,39 @@
   to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=footer&intent=trial"
   status = 302
   force = true
+
+[[redirects]]
+  from = "/go/membership/nav"
+  to = "https://ko-fi.com/arvio/tiers?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=navigation"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/membership/spotlight"
+  to = "https://ko-fi.com/arvio/tiers?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=spotlight"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/membership/details"
+  to = "https://ko-fi.com/arvio/tiers?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=details"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/membership/footer"
+  to = "https://ko-fi.com/arvio/tiers?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=footer"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/support/opensource"
+  to = "https://ko-fi.com/arvio?utm_source=arvio.tv&utm_medium=website&utm_campaign=support&utm_content=opensource"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/support/footer"
+  to = "https://ko-fi.com/arvio?utm_source=arvio.tv&utm_medium=website&utm_campaign=support&utm_content=footer"
+  status = 302
+  force = true

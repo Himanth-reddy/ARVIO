@@ -1191,6 +1191,20 @@
     font-size: 11px;
   }
   .premium-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .premium-membership-cta {
+    border-color: color-mix(in oklch, var(--accent) 58%, var(--line));
+    background: color-mix(in oklch, var(--accent) 9%, transparent);
+  }
+  .premium-source-link {
+    display: inline-block;
+    margin-top: 16px;
+    color: var(--ink-3);
+    font-size: 13px;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--ink-3) 45%, transparent);
+    text-underline-offset: 4px;
+  }
+  .premium-source-link:hover { color: var(--ink); }
   .premium-price { color: var(--ink-2); font-size: 14px; }
   .premium-price strong { color: var(--ink); font-size: 18px; }
   .premium-proof {
@@ -2462,7 +2476,7 @@
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
-      <a href="#web">Premium</a>
+      <a href="/go/membership/nav">Premium</a>
       <a href="#guide">Guide</a>
       <a href="#faq">FAQ</a>
     </div>
@@ -2472,7 +2486,7 @@
         <svg id="theme-icon-dark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       </button>
       <a class="nav-web nav-dashboard" href="https://arvio-ui.web.app/" target="_blank" rel="noopener">Dashboard</a>
-      <a class="nav-web nav-premium" href="/go/premium/nav">Web App</a>
+      <a class="nav-web nav-premium" href="/go/premium/nav">Try Premium</a>
       <a class="nav-cta" href="https://play.google.com/store/apps/details?id=com.arvio.tv" target="_blank" rel="noopener">Google Play
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"></path></svg>
       </a>
@@ -2500,7 +2514,7 @@
           </a>
           <a class="btn btn-ghost" href="/go/premium/hero">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M8 22h8M12 18v4"></path></svg>
-            Open Premium Web
+            Try Premium free
           </a>
         </div>
         <div class="hero-sideload reveal in" data-delay="4">
@@ -2587,9 +2601,10 @@
       </div>
       <div class="premium-actions">
         <a class="btn btn-play" href="/go/premium/spotlight"><strong>Try Premium free for 3 days</strong></a>
-        <a class="btn btn-ghost" href="https://github.com/ProdigyV21/ARVIO/tree/main/web" target="_blank" rel="noopener">View web source</a>
+        <a class="btn btn-ghost premium-membership-cta" href="/go/membership/spotlight"><strong>Get Premium on Ko-fi</strong></a>
         <span class="premium-price"><strong>$2.99</strong> / month after · no payment details for trial</span>
       </div>
+      <a class="premium-source-link" href="https://github.com/ProdigyV21/ARVIO/tree/main/web" target="_blank" rel="noopener">View the open-source web app</a>
       <div class="premium-proof">
         <span>10,000+ users</span><span>10+ contributors</span><span>Open source</span>
       </div>
@@ -3054,7 +3069,7 @@
 
     <div class="reveal" data-delay="3" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:24px">
       <a class="btn btn-play" href="/go/premium/details"><strong>Try Premium free for 3 days</strong></a>
-      <a class="btn btn-ghost" href="https://ko-fi.com/arvio/tiers" target="_blank" rel="noopener">Ko‑fi membership</a>
+      <a class="btn btn-ghost" href="/go/membership/details">Ko‑fi membership</a>
       <a class="btn btn-ghost" href="https://github.com/ProdigyV21/ARVIO/tree/main/web">Web app source</a>
     </div>
   </div>
@@ -3238,7 +3253,7 @@
       <p>ARVIO is open source. Source code, releases, APKs, issues, and contributions all live on GitHub.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:24px">
         <a class="btn btn-ghost" href="https://github.com/ProdigyV21/ARVIO">GitHub repo</a>
-        <a class="btn btn-ghost" href="https://ko-fi.com/arvio">Ko‑fi</a>
+        <a class="btn btn-ghost" href="/go/support/opensource">Ko‑fi</a>
       </div>
     </div>
   </div>
@@ -3357,7 +3372,7 @@
         <a href="#player">Player</a>
         <a href="#devices">Devices</a>
         <a href="#screens">Screens</a>
-        <a href="/go/premium/footer">Premium</a>
+        <a href="/go/membership/footer">Premium</a>
         <a href="#guide">Guide</a>
         <a href="/guides/">Media guides</a>
       </div>
@@ -3365,7 +3380,7 @@
         <h4>Community</h4>
         <a href="https://github.com/ProdigyV21/ARVIO">GitHub</a>
         <a href="https://discord.gg/bGBBGKFZVh">Discord</a>
-        <a href="https://ko-fi.com/arvio">Ko‑fi</a>
+        <a href="/go/support/footer">Ko‑fi</a>
       </div>
       <div class="foot-col">
         <h4>Legal</h4>

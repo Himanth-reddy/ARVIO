@@ -980,6 +980,47 @@ input:focus {
   line-height: 1.55;
   margin: 0 0 16px;
 }
+
+.trial-membership-link {
+  min-height: clamp(38px, 2.7vw, 50px);
+  padding: 0 clamp(12px, 0.9vw, 18px);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(8, 10, 12, 0.62);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: clamp(12px, 0.85vw, 16px);
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.trial-membership-link:hover,
+.trial-membership-link:focus-visible {
+  outline: none;
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.15);
+  transform: scale(1.035);
+}
+
+.mobile-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-premium-link {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  display: grid;
+  place-items: center;
+}
 .paywall-benefits {
   display: grid;
   gap: 8px;

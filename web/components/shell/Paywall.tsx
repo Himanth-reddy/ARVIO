@@ -45,7 +45,10 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
   }, [accountId]);
 
   useEffect(() => {
-    if (!config.paywallEnabled || !accountId || state?.entitled) return;
+    // A paid subscription is stable until the next mount. An active trial is
+    // different: returning from Ko-fi may have upgraded it, so refresh on
+    // focus and replace the trial state as soon as the webhook lands.
+    if (!config.paywallEnabled || !accountId || (state?.entitled && state.reason !== "trial")) return;
     let active = true;
     let refreshing = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,7 +82,7 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [accountId, state?.entitled]);
+  }, [accountId, state?.entitled, state?.reason]);
 
   // Paywall off, or entitled → app. On a backend error with no cached "not
   // entitled", fail open so we never lock out a paying user over a hiccup.
