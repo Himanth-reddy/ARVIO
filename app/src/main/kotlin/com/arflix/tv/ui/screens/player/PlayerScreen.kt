@@ -18,9 +18,18 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import com.arflix.tv.util.findActivity
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import android.view.SurfaceView
+import android.view.TextureView
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import com.arflix.tv.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -214,6 +223,8 @@ import com.arflix.tv.R
 import com.arflix.tv.cast.CastManager
 import com.arflix.tv.cast.CastManagerEntryPoint
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.PictureInPicture
@@ -473,6 +484,10 @@ fun PlayerScreen(
     var isMobileScrubbing by remember { mutableStateOf(false) }
     var mobileScrubPosition by remember { mutableLongStateOf(0L) }
     var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var latestRenderedSeekPreview by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var playerViewForSeekPreview by remember {
+        mutableStateOf<FullViewportSubtitlePlayerView?>(null)
+    }
     var seekPreviewDirection by remember { mutableIntStateOf(0) }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
     // a 10-second countdown lets the user stop watching or immediately Continue. On timeout we
@@ -710,6 +725,9 @@ fun PlayerScreen(
     // Guard against accessing a released ExoPlayer from long-running coroutines (can crash on some devices).
     // AtomicBoolean gives cross-thread visibility; Compose state drives recomposition.
     val playerReleasedAtomic = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val lastRenderedVideoFrameUs = remember {
+        java.util.concurrent.atomic.AtomicLong(androidx.media3.common.C.TIME_UNSET)
+    }
     var playerReleased by remember { mutableStateOf(false) }
 
     // Picture-in-Picture state
@@ -1171,6 +1189,9 @@ fun PlayerScreen(
             .build().apply {
                 // Ensure volume is at maximum
                 volume = 1.0f
+                setVideoFrameMetadataListener { presentationTimeUs, _, _, _ ->
+                    lastRenderedVideoFrameUs.set(presentationTimeUs)
+                }
 
                 // Add error listener to try next stream on codec errors
                 addListener(object : Player.Listener {
@@ -1810,30 +1831,72 @@ fun PlayerScreen(
             if (!isAnyScrubbing) seekPreviewFrame = null
             return@LaunchedEffect
         }
-        delay(60L)
+        delay(40L)
 
         // Instant path: Memory or disk cache
-        withTimeoutOrNull(350L) {
-            seekPreviewProvider.frameAt(seekPreviewBucket, cacheOnly = true)
-        }?.let { cachedFrame ->
+        seekPreviewProvider.cachedFrameAt(seekPreviewBucket)?.let { cachedFrame ->
             seekPreviewFrame = cachedFrame
             return@LaunchedEffect
         }
 
-        val bufferAheadMs = if (!playerReleased) {
-            (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
-        } else {
-            0L
+        // Check if latest rendered frame matches this bucket
+        if (latestRenderedSeekPreview?.positionMs == seekPreviewBucket) {
+            seekPreviewFrame = latestRenderedSeekPreview
+            return@LaunchedEffect
         }
-        val avoidNewNetworkWork = isPlaying && (isBuffering || bufferAheadMs < 6_000L)
-        val frame = withTimeoutOrNull(4_000L) {
+
+        val frame = withTimeoutOrNull(3_500L) {
             seekPreviewProvider.frameAt(
                 positionMs = seekPreviewBucket,
-                cacheOnly = avoidNewNetworkWork,
+                cacheOnly = false,
             )
         }
         if (frame != null) {
             seekPreviewFrame = frame
+        }
+    }
+
+    // Cache already-rendered frames continuously in background.
+    // Makes scrubbing through already-watched or current segments instantaneous.
+    LaunchedEffect(
+        hasPlaybackStarted,
+        uiState.selectedStreamUrl,
+        uiState.streamSelectionNonce,
+        duration,
+        isCasting,
+    ) {
+        if (!hasPlaybackStarted || duration <= 0L || isLiveStream || isCasting) return@LaunchedEffect
+        var lastCapturedBucket = Long.MIN_VALUE
+        while (!playerReleased) {
+            if (isBuffering || isAnyScrubbing) {
+                delay(120L)
+                continue
+            }
+            val renderedUs = lastRenderedVideoFrameUs.get()
+            if (renderedUs == C.TIME_UNSET) {
+                delay(40L)
+                continue
+            }
+            val renderedPositionMs = (renderedUs / 1_000L).coerceIn(0L, duration)
+            val bucket = quantizeSeekPreviewPosition(renderedPositionMs, duration)
+            if (bucket == lastCapturedBucket) {
+                delay(250L)
+                continue
+            }
+            lastCapturedBucket = bucket
+            val cachedFrame = seekPreviewProvider.cachedFrameAt(bucket)
+            if (cachedFrame != null) {
+                latestRenderedSeekPreview = cachedFrame
+                delay(250L)
+                continue
+            }
+            playerViewForSeekPreview?.let { playerView ->
+                captureRenderedSeekPreview(playerView)?.let { bitmap ->
+                    latestRenderedSeekPreview =
+                        seekPreviewProvider.rememberRenderedFrame(bucket, bitmap)
+                }
+            }
+            delay(250L)
         }
     }
 
@@ -3456,9 +3519,10 @@ fun PlayerScreen(
                                 inPictureInPicture = isInPipMode,
                             )
                         }
-                    }
+                    }.also { playerViewForSeekPreview = it }
                 },
                 update = { playerView ->
+                    playerViewForSeekPreview = playerView
                     playerView.keepScreenOn = true
                     playerView.player = exoPlayer
                     playerView.resizeMode = playerResizeMode
@@ -6226,6 +6290,55 @@ private fun guessCastMimeType(url: String): String = when {
     url.contains(".m3u8", ignoreCase = true) -> "application/x-mpegURL"
     url.contains(".mpd", ignoreCase = true)  -> "application/dash+xml"
     else                                     -> "video/mp4"
+}
+
+private suspend fun captureRenderedSeekPreview(
+    playerView: FullViewportSubtitlePlayerView,
+): Bitmap? = withContext(Dispatchers.Main.immediate) {
+    val surface = playerView.videoSurfaceView ?: return@withContext null
+    if (surface.width <= 0 || surface.height <= 0) return@withContext null
+
+    val output = Bitmap.createBitmap(416, 234, Bitmap.Config.ARGB_8888)
+    when (surface) {
+        is TextureView -> {
+            runCatching { surface.getBitmap(output) }
+                .getOrNull()
+                ?.let { output }
+                ?: run {
+                    output.recycle()
+                    null
+                }
+        }
+        is SurfaceView -> {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !surface.holder.surface.isValid) {
+                output.recycle()
+                return@withContext null
+            }
+            suspendCancellableCoroutine { continuation ->
+                val sourceRect = Rect(0, 0, surface.width, surface.height)
+                PixelCopy.request(
+                    surface,
+                    sourceRect,
+                    output,
+                    { result ->
+                        if (!continuation.isActive) {
+                            output.recycle()
+                        } else if (result == PixelCopy.SUCCESS) {
+                            continuation.resume(output)
+                        } else {
+                            output.recycle()
+                            continuation.resume(null)
+                        }
+                    },
+                    Handler(Looper.getMainLooper()),
+                )
+            }
+        }
+        else -> {
+            output.recycle()
+            null
+        }
+    }
 }
 
 private fun buildSeekPreviewCacheIdentity(

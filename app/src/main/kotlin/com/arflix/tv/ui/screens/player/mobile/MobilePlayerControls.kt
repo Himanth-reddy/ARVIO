@@ -61,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.wrapContentHeight
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewCard
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewPlaceholder
 import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -701,7 +702,7 @@ fun MobilePlayerBottomSection(
                 } else 0
 
                 androidx.compose.animation.AnimatedVisibility(
-                    visible = isScrubbing && durationMs > 0L && seekPreviewFrame != null,
+                    visible = isScrubbing && durationMs > 0L,
                     enter = fadeIn(animationSpec = tween(90)),
                     exit = fadeOut(animationSpec = tween(70)),
                     modifier = Modifier
@@ -711,9 +712,16 @@ fun MobilePlayerBottomSection(
                         .width(previewCardWidth)
                         .wrapContentHeight(align = Alignment.Top, unbounded = true),
                 ) {
-                    seekPreviewFrame?.let { frame ->
+                    val frame = seekPreviewFrame
+                    if (frame != null) {
                         SeekPreviewCard(
                             frame = frame,
+                            cornerRadius = 8.dp,
+                            timestamp = formatTime(displayPos),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        SeekPreviewPlaceholder(
                             cornerRadius = 8.dp,
                             timestamp = formatTime(displayPos),
                             modifier = Modifier.fillMaxWidth()
