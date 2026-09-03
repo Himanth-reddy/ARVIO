@@ -941,6 +941,23 @@
     <string name="plugin_screen_no_scrapers">Keine Scraper installiert.</string>
     <string name="plugin_screen_add_repo_dialog_title">Plugin-Repository hinzufügen</string>
     <string name="plugin_screen_repo_url">Repository-URL</string>
+    <string name="plugin_screen_reset_title">Plugins &amp; Erweiterungen zurücksetzen</string>
+    <string name="plugin_screen_reset_desc">Löscht alle Repositorys, Scraper und lokalen Daten</string>
+    <string name="plugin_screen_reset_warning_title">Warnung</string>
+    <string name="plugin_screen_reset_warning_message">Möchtest du wirklich alle Plugins, Scraper und lokalen Code-Daten löschen? Das lässt sich nicht rückgängig machen.</string>
+    <string name="plugin_screen_remove_repo_message">Möchtest du \'%1$s\' wirklich entfernen?</string>
+    <string name="plugin_all_cleared">Alle Plugins und Erweiterungen wurden entfernt</string>
+
+    <!-- Crash report screen (de) -->
+    <string name="crash_title">⚠️ In ARVIO ist ein Fehler aufgetreten</string>
+    <string name="crash_desc_tv">Scanne den QR-Code unten mit der Handy-Kamera, um den Absturzbericht automatisch zu kopieren und unseren Discord-Fehlerkanal zu öffnen.</string>
+    <string name="crash_desc_mobile">Entschuldige die Unterbrechung. Du kannst diesen Absturz direkt in unserem Discord-Kanal melden und uns so bei der Fehlersuche helfen.</string>
+    <string name="crash_qr_hint">Scannen, um arvio.tv zu öffnen — ein Tipp kopiert den Bericht und öffnet Discord.</string>
+    <string name="crash_details_title">Angaben zum Absturz</string>
+    <string name="crash_copied_toast">Absturzdetails kopiert. Discord wird geöffnet …</string>
+    <string name="crash_report_discord">Auf Discord melden</string>
+    <string name="crash_restart_app">ARVIO neu starten</string>
+
     <string name="profile_edit_title">Profil bearbeiten</string>
     <string name="profile_name_hint">Profilname</string>
     <string name="profile_lock">Profilsperre</string>
@@ -1043,6 +1060,14 @@
     <string name="watchlist_error_load_trakt">Trakt-Merkliste konnte nicht geladen werden</string>
     <string name="watchlist_error_refresh">Aktualisieren fehlgeschlagen</string>
     <string name="watchlist_toast_removed">Aus Merkliste entfernt</string>
+    <string name="watchlist_my_watchlist">Meine Merkliste</string>
+    <string name="watchlist_provider_home_server">Server</string>
+    <string name="watchlist_tracker_default_list">Merkliste</string>
+    <string name="watchlist_simkl_watching">Wird gesehen</string>
+    <string name="watchlist_simkl_plan_to_watch">Geplant</string>
+    <string name="watchlist_simkl_completed">Abgeschlossen</string>
+    <string name="watchlist_simkl_on_hold">Pausiert</string>
+    <string name="watchlist_simkl_dropped">Abgebrochen</string>
     <string name="continue_season_episode">Weiterschauen S%1$dE%2$d</string>
     <string name="continue_season_episode_at">Weiterschauen S%1$dE%2$d bei %3$s</string>
     <string name="continue_at">Weiterschauen bei %1$s</string>

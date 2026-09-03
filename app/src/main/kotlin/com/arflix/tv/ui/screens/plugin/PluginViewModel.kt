@@ -107,7 +107,7 @@ class PluginViewModel @Inject constructor(
 
     private fun addRepository(url: String) {
         if (url.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "Error") }
+            _uiState.update { it.copy(errorMessage = context.getString(R.string.plugin_error_invalid_url)) }
             return
         }
 
@@ -147,7 +147,7 @@ class PluginViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     isLoading = false,
-                    successMessage = "Error"
+                    successMessage = context.getString(R.string.plugin_repo_removed)
                 )
             }
         }
@@ -164,7 +164,7 @@ class PluginViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            successMessage = "Error"
+                            successMessage = context.getString(R.string.plugin_repo_refreshed)
                         )
                     }
                 },
@@ -232,7 +232,7 @@ class PluginViewModel @Inject constructor(
                             testResults = results,
                             testDiagnostics = diagnostics,
                             successMessage = if (results.isEmpty()) {
-                                "Error"
+                                context.getString(R.string.plugin_test_no_results)
                             } else {
                                 context.getString(R.string.plugin_test_found_streams, results.size)
                             }
@@ -263,7 +263,7 @@ class PluginViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     isLoading = false,
-                    successMessage = "All plugins and extensions cleared successfully"
+                    successMessage = context.getString(R.string.plugin_all_cleared)
                 )
             }
         }

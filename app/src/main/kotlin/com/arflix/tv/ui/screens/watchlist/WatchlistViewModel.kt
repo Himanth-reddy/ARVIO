@@ -317,7 +317,7 @@ class WatchlistViewModel @Inject constructor(
                         WatchlistSourceItem.TrackerList(
                             provider = TrackerLibraryProvider.TRAKT,
                             listKey = TRAKT_WATCHLIST_KEY,
-                            title = "Watchlist"
+                            title = context.getString(R.string.watchlist_tracker_default_list)
                         )
                     )
                 } else {
@@ -333,12 +333,12 @@ class WatchlistViewModel @Inject constructor(
                 }
             }
             if (simklConnected) {
-                SIMKL_LIBRARY_LISTS.forEach { (status, title) ->
+                SIMKL_LIBRARY_LISTS.forEach { (status, titleRes) ->
                     add(
                         WatchlistSourceItem.TrackerList(
                             provider = TrackerLibraryProvider.SIMKL,
                             listKey = status,
-                            title = title
+                            title = context.getString(titleRes)
                         )
                     )
                 }
@@ -1271,12 +1271,14 @@ class WatchlistViewModel @Inject constructor(
         private const val LIBRARY_CACHE_ENTRY_LIMIT = 12
         private const val TRACKER_LIST_ITEM_LIMIT = 240
         private const val TRAKT_WATCHLIST_KEY = "__watchlist__"
+        // The status keys stay English so the Simkl API calls keep working;
+        // only the rendered list title is localized.
         private val SIMKL_LIBRARY_LISTS = listOf(
-            "watching" to "Watching",
-            "plantowatch" to "Plan to watch",
-            "completed" to "Completed",
-            "hold" to "On hold",
-            "dropped" to "Dropped"
+            "watching" to R.string.watchlist_simkl_watching,
+            "plantowatch" to R.string.watchlist_simkl_plan_to_watch,
+            "completed" to R.string.watchlist_simkl_completed,
+            "hold" to R.string.watchlist_simkl_on_hold,
+            "dropped" to R.string.watchlist_simkl_dropped
         )
         private val BROWSABLE_LIBRARY_TYPES = setOf(
             "",

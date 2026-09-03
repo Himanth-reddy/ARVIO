@@ -216,15 +216,17 @@ fun WatchlistScreen(
             .mapNotNull { source -> source.trackerProviderLabel()?.let { label -> label to source } }
             .groupBy(keySelector = { it.first }, valueTransform = { it.second })
     }
-    val providers = remember(libraryState.providers, trackerGroups) {
+    val myWatchlistLabel = stringResource(R.string.watchlist_my_watchlist)
+    val unknownServerLabel = stringResource(R.string.watchlist_provider_home_server)
+    val providers = remember(libraryState.providers, trackerGroups, myWatchlistLabel, unknownServerLabel) {
         buildList {
-            add(LibraryProviderOption(id = WATCHLIST_PROVIDER_ID, label = "My Watchlist"))
+            add(LibraryProviderOption(id = WATCHLIST_PROVIDER_ID, label = myWatchlistLabel))
             libraryState.providers.forEach { kind ->
                 val label = when (kind) {
                     HomeServerKind.PLEX -> "Plex"
                     HomeServerKind.JELLYFIN -> "Jellyfin"
                     HomeServerKind.EMBY -> "Emby"
-                    HomeServerKind.UNKNOWN -> "Server"
+                    HomeServerKind.UNKNOWN -> unknownServerLabel
                 }
                 add(LibraryProviderOption(id = "provider:home:${kind.name}", label = label, homeServerKind = kind))
             }

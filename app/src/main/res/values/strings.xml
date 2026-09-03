@@ -819,6 +819,22 @@
     <string name="plugin_screen_no_scrapers">No scrapers installed.</string>
     <string name="plugin_screen_add_repo_dialog_title">Add Plugin Repository</string>
     <string name="plugin_screen_repo_url">Repository URL</string>
+    <string name="plugin_screen_reset_title">Reset Plugins &amp; Extensions</string>
+    <string name="plugin_screen_reset_desc">Deletes all repositories, scrapers, and local data</string>
+    <string name="plugin_screen_reset_warning_title">Warning</string>
+    <string name="plugin_screen_reset_warning_message">Are you sure you want to delete all plugins, scrapers, and local code data? This action cannot be undone.</string>
+    <string name="plugin_screen_remove_repo_message">Are you sure you want to remove \'%1$s\'?</string>
+    <string name="plugin_all_cleared">All plugins and extensions cleared successfully</string>
+
+    <!-- Extracted from code: Crash report screen -->
+    <string name="crash_title">⚠️ ARVIO Encountered an Error</string>
+    <string name="crash_desc_tv">Scan the QR code below with your phone camera to automatically copy the crash report &amp; open our Discord bug channel.</string>
+    <string name="crash_desc_mobile">We apologize for the interruption. You can report this crash directly to our Discord channel to help us fix it.</string>
+    <string name="crash_qr_hint">Scan to open arvio.tv — 1 tap to copy report &amp; jump into Discord.</string>
+    <string name="crash_details_title">Crash Reference Details</string>
+    <string name="crash_copied_toast">Crash details copied! Opening Discord...</string>
+    <string name="crash_report_discord">Report on Discord</string>
+    <string name="crash_restart_app">Restart ARVIO</string>
 
     <!-- Extracted from code: Profile, Login and Collections -->
     <string name="profile_edit_title">Edit Profile</string>
@@ -1034,6 +1050,14 @@
     <string name="watchlist_error_load_trakt">Failed to load Trakt watchlist</string>
     <string name="watchlist_error_refresh">Failed to refresh</string>
     <string name="watchlist_toast_removed">Removed from watchlist</string>
+    <string name="watchlist_my_watchlist">My Watchlist</string>
+    <string name="watchlist_provider_home_server">Server</string>
+    <string name="watchlist_tracker_default_list">Watchlist</string>
+    <string name="watchlist_simkl_watching">Watching</string>
+    <string name="watchlist_simkl_plan_to_watch">Plan to watch</string>
+    <string name="watchlist_simkl_completed">Completed</string>
+    <string name="watchlist_simkl_on_hold">On hold</string>
+    <string name="watchlist_simkl_dropped">Dropped</string>
 
 
     <!-- Extracted from code (data layer): shared labels and errors -->
