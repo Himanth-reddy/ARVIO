@@ -3319,12 +3319,16 @@ class MediaRepository @Inject constructor(
         return try {
             val videos = tmdbApi.getVideos(type, mediaId, apiKey, language = contentLanguage)
             var results = videos.results
-            // If language-specific request returned no YouTube videos, fall back to English
+            // If language-specific request returned no YouTube videos, fall back to English.
+            // Explicitly "en-US", not null: TMDB's /videos `language` filters the video records
+            // themselves (most titles only ever have English-tagged trailers), and a null here is
+            // dropped by Retrofit and then refilled with the user's language by the TMDB
+            // interceptor — which made this retry an exact repeat of the call that just failed.
             if (
                 results.none { it.site == "YouTube" } &&
                 !contentLanguage.equals("en-US", ignoreCase = true)
             ) {
-                results = tmdbApi.getVideos(type, mediaId, apiKey, language = null).results
+                results = tmdbApi.getVideos(type, mediaId, apiKey, language = "en-US").results
             }
             val trailer = results.find { it.type == "Trailer" && it.site == "YouTube" && it.official }
                 ?: results.find { it.type == "Trailer" && it.site == "YouTube" }

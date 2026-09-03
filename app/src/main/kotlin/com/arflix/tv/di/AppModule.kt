@@ -45,8 +45,15 @@ object AppModule {
                 val lang = langPrefs.getString("locale_tag", "en-US") ?: "en-US"
 
                 // Only inject if it's not the default English. Map "iw" to "he".
+                //
+                // An explicit `language` from the call site wins. setQueryParameter used to
+                // overwrite it, which silently broke every deliberate request for a specific
+                // language: the English fallback in getTrailerKey re-sent the user's language and
+                // returned the same empty result (TMDB's /videos `language` filters the video
+                // records, so a Hebrew user saw no trailers at all), and fetchTitles' explicit
+                // language="en" came back localized.
                 val urlBuilder = originalHttpUrl.newBuilder()
-                if (lang != "en-US") {
+                if (lang != "en-US" && originalHttpUrl.queryParameter("language") == null) {
                     val tmdbLang = lang.replace("iw", "he").replace('_', '-')
                     urlBuilder.setQueryParameter("language", tmdbLang)
                 }
