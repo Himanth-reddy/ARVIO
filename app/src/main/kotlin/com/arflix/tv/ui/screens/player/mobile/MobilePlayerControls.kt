@@ -685,10 +685,9 @@ fun MobilePlayerBottomSection(
                 Box(
                     modifier = Modifier
                         .offset { IntOffset(thumbOffsetPx.roundToInt(), 0) }
+                        .shadow(2.dp, CircleShape)
                         .size(thumbSizeDp)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .shadow(4.dp, CircleShape)
+                        .background(Color.White, CircleShape)
                 )
 
                 // Floating seek thumbnail preview card
