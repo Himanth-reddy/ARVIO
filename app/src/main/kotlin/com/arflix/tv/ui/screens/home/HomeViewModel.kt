@@ -2393,6 +2393,12 @@ class HomeViewModel @Inject constructor(
                 category.items.any { !it.isPlaceholder }
         }
 
+    private fun markHomeDataLoadSuccessful(requestId: Long) {
+        if (requestId == loadHomeRequestId) {
+            lastHomeDataLoadAtMs = SystemClock.elapsedRealtime()
+        }
+    }
+
     private fun loadHomeData() {
         loadHomeJob?.cancel()
         homeDataLoadAttempted = true
@@ -2530,10 +2536,12 @@ class HomeViewModel @Inject constructor(
                     runCatching { buildFavoriteTvCategory() }.getOrNull()
                 }
 
+                var loadedFreshCatalogRows = false
                 var categories = withContext(networkDispatcher) {
                     val baseCategories = runCatching {
                         mediaRepository.getHomeCategories()
                     }.getOrElse { emptyList() }
+                    loadedFreshCatalogRows = baseCategories.any { hasRealItems(it) }
 
                     val baseById = LinkedHashMap<String, Category>().apply {
                         currentBaseCategories.forEach { put(it.id, it) }
@@ -2631,6 +2639,7 @@ class HomeViewModel @Inject constructor(
                         }
                     }
                     val mdblistCategories = mdblistInitial.awaitAll().filterNotNull()
+                    loadedFreshCatalogRows = loadedFreshCatalogRows || mdblistCategories.any { hasRealItems(it) }
                     // Create placeholder categories for deferred ones (will load on scroll)
                     val deferredCategories = deferredBatch.map { cfg -> Category(id = cfg.id, title = cfg.title, items = emptyList()) }
                     // Merge both lists maintaining the saved catalog order
@@ -2657,13 +2666,14 @@ class HomeViewModel @Inject constructor(
  null }
                                     }
                                 }.awaitAll().filterNotNull()
-                                if (results.isNotEmpty()) {
+                                if (results.isNotEmpty() && requestId == loadHomeRequestId) {
                                     val current = _uiState.value.categories.toMutableList()
                                     for (cat in results) {
                                         val idx = current.indexOfFirst { it.id == cat.id }
                                         if (idx >= 0) current[idx] = cat else current.add(cat)
                                     }
                                     _uiState.value = _uiState.value.copy(categories = current)
+                                    markHomeDataLoadSuccessful(requestId)
                                 }
                             }
                         }
@@ -2707,6 +2717,7 @@ class HomeViewModel @Inject constructor(
                             }
                         }
                     }.awaitAll().filterNotNull()
+                    loadedFreshCatalogRows = loadedFreshCatalogRows || freshCustomCategories.any { hasRealItems(it) }
 
                     // Fall back to previously cached data for any custom catalog
                     // that failed to load in this round
@@ -3001,9 +3012,11 @@ class HomeViewModel @Inject constructor(
                     categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
                     error = null
                 )
-                // Only a load that actually published rows counts as fresh — see
-                // [refreshHomeDataIfStale].
-                lastHomeDataLoadAtMs = SystemClock.elapsedRealtime()
+                // Cached fallback rows keep Home usable, but only freshly fetched rows
+                // suppress the next resume retry.
+                if (loadedFreshCatalogRows) {
+                    markHomeDataLoadSuccessful(requestId)
+                }
                 heroItem?.let { item ->
                     if (isStartupSettling()) {
                         scheduleStartupHeroHydration(item)
@@ -3300,6 +3313,7 @@ class HomeViewModel @Inject constructor(
                     withContext(Dispatchers.Main.immediate) {
                         if (requestId == loadHomeRequestId) {
                             updateMobileCategoryRow(cfg.id, category.withTop10CapIfNeeded(), hasMore = page.hasMore)
+                            markHomeDataLoadSuccessful(requestId)
                             persistCategoriesCache(_uiState.value.categories)
                         }
                     }
@@ -3324,6 +3338,7 @@ class HomeViewModel @Inject constructor(
                             withContext(Dispatchers.Main.immediate) {
                                 if (requestId == loadHomeRequestId) {
                                     updateMobileCategoryRow(cfg.id, category, hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id))
+                                    markHomeDataLoadSuccessful(requestId)
                                     persistCategoriesCache(_uiState.value.categories)
                                 }
                             }
