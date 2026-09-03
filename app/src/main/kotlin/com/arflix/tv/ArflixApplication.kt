@@ -74,14 +74,24 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
     @Inject
     lateinit var appUsageAnalyticsRepository: AppUsageAnalyticsRepository
 
+    /**
+     * [OkHttpProvider.init] must run before *anything* first touches [OkHttpProvider.client]:
+     * the client is built once, lazily, and keeps whatever cache it had at that moment — with no
+     * app context there is no disk cache, for the whole process lifetime.
+     *
+     * `onCreate()` is too late. Hilt performs this Application's field injection inside
+     * `super.onCreate()`, and those injected repositories construct Retrofit — and therefore the
+     * OkHttpClient — before the first line of our own `onCreate()` body runs. `attachBaseContext`
+     * is the first callback where a context exists, so the cache is configured from here.
+     */
+    override fun attachBaseContext(base: android.content.Context) {
+        super.attachBaseContext(base)
+        OkHttpProvider.init(this)
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
-
-        // OkHttpProvider.init(context) just stashes the app context; it does
-        // not build the OkHttpClient. Safe to keep on the main thread — it's
-        // a single volatile assignment.
-        OkHttpProvider.init(this)
 
         // Initialize global DNS provider and user agent from DataStore before network calls.
         appScope.launch(Dispatchers.IO) {

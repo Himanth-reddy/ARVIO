@@ -1198,6 +1198,23 @@ class HomeViewModel @Inject constructor(
     private val dismissedContinueWatchingAt = Collections.synchronizedMap(mutableMapOf<String, Long>())
     private val CONTINUE_WATCHING_REFRESH_MS = 45_000L
     private val WATCHED_BADGES_REFRESH_MS = 90_000L
+
+    /**
+     * How old the catalog rows may get before returning to Home re-fetches them.
+     *
+     * Home is no longer rebuilt on every return (its back-stack entry — and so this ViewModel —
+     * now survives navigation to Watchlist/TV/Search), which is what made returning instant. The
+     * rebuild used to double as the refresh, so without a check here the rows would keep whatever
+     * they loaded for as long as the process lives. Continue Watching has its own, much shorter
+     * refresh above; this covers the slow-moving catalog rows.
+     *
+     * Most of a refresh is served from the HTTP disk cache, and TMDB's own `max-age` decides what
+     * genuinely goes to the network (trending ~8 min, show metadata several hours).
+     */
+    private val HOME_DATA_STALE_AFTER_MS = 6 * 60 * 60 * 1000L
+
+    /** Elapsed-realtime mark of the last [loadHomeData] start; 0 until the first load. */
+    private var lastHomeDataLoadAtMs = 0L
     private var lastWatchedBadgesRefreshMs: Long = 0L
     private val HOME_PLACEHOLDER_ITEM_COUNT = 8
 
@@ -2334,6 +2351,7 @@ class HomeViewModel @Inject constructor(
 
     private fun loadHomeData() {
         loadHomeJob?.cancel()
+        lastHomeDataLoadAtMs = SystemClock.elapsedRealtime()
         val requestId = ++loadHomeRequestId
         loadHomeJob = viewModelScope.launch loadHome@{
             // Skip delay - preloading now happens on profile focus for instant display
@@ -3740,6 +3758,23 @@ class HomeViewModel @Inject constructor(
             if (lastFocusChangeTime != requestedAt) return@launch
             preloadBackdropImages(urls)
         }
+    }
+
+    /**
+     * Called when Home resumes. Re-loads the catalog rows only once they are older than
+     * [HOME_DATA_STALE_AFTER_MS], so ordinary navigation back from Watchlist/TV/Search stays
+     * instant while a long-lived session still picks up new content.
+     *
+     * A zero mark means the first load has not run yet — startup owns that, so this stays out of
+     * its way rather than racing it.
+     */
+    fun refreshHomeDataIfStale() {
+        val lastLoadAtMs = lastHomeDataLoadAtMs
+        if (lastLoadAtMs == 0L) return
+        val ageMs = SystemClock.elapsedRealtime() - lastLoadAtMs
+        if (ageMs < HOME_DATA_STALE_AFTER_MS) return
+        android.util.Log.i("HomeViewModel", "home data ${ageMs / 60_000}min old — refreshing on resume")
+        loadHomeData()
     }
 
     fun refresh() {

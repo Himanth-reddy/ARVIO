@@ -74,7 +74,11 @@ object OkHttpProvider {
      * Provides the application context needed for the disk cache directory.
      */
     fun init(context: Context) {
-        appContext = context.applicationContext
+        // `applicationContext` is null when called from Application.attachBaseContext — the
+        // Application is not registered with the framework yet. That is precisely where this has
+        // to run (Hilt builds Retrofit, and therefore this client, inside Application.onCreate's
+        // super call), so fall back to the context we were handed: it is the Application itself.
+        appContext = context.applicationContext ?: context
     }
 
     @Volatile
@@ -318,7 +322,14 @@ object OkHttpProvider {
 
         appContext?.let { ctx ->
             builder.cache(getOrCreateHttpCache(ctx))
-        }
+            // Never persist a failure. A transient 5xx or a rate-limit 429 carrying a cacheable
+            // header would otherwise be replayed from disk for its whole stated lifetime, long
+            // after the server recovered.
+            builder.addNetworkInterceptor(noCacheErrorsInterceptor)
+        } ?: Log.w(
+            TAG,
+            "API client built without app context — HTTP disk cache disabled for this process"
+        )
 
         return builder.build()
     }
@@ -361,6 +372,16 @@ object OkHttpProvider {
 
     private fun isSafeHeaderValue(value: String): Boolean {
         return value.all { ch -> ch == '\t' || ch.code in 32..126 }
+    }
+
+    /** Marks unsuccessful responses `no-store` so the disk cache never keeps a failure. */
+    private val noCacheErrorsInterceptor = Interceptor { chain ->
+        val response = chain.proceed(chain.request())
+        if (response.isSuccessful) {
+            response
+        } else {
+            response.newBuilder().header("Cache-Control", "no-store").build()
+        }
     }
 
     private fun getOrCreateHttpCache(context: Context): Cache {
