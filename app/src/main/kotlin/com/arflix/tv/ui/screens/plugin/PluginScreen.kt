@@ -59,6 +59,10 @@ import com.arflix.tv.util.LocalDeviceType
 
 import com.arflix.tv.domain.model.PluginRepository
 
+@Composable
+private fun PluginMessage.localizedText(): String =
+    stringResource(resourceId, *formatArgs.toTypedArray())
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun PluginScreen(
@@ -142,7 +146,7 @@ fun PluginScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             uiState.errorMessage?.let { msg ->
-                Text(msg, color = Color.Red, style = ArflixTypography.body)
+                Text(msg.localizedText(), color = Color.Red, style = ArflixTypography.body)
             }
 
             MobileSettingsCategory(title = stringResource(R.string.plugin_screen_add_repo)) {
@@ -233,7 +237,7 @@ fun PluginScreen(
                 }
         ) {
             uiState.errorMessage?.let { msg ->
-                Text(msg, color = Color.Red, style = ArflixTypography.body)
+                Text(msg.localizedText(), color = Color.Red, style = ArflixTypography.body)
                 Spacer(modifier = Modifier.height(16.dp))
             }
 

@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.watchlist
 
 import android.content.Context
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.R
@@ -101,7 +102,8 @@ sealed interface WatchlistSourceItem {
     data class TrackerList(
         val provider: TrackerLibraryProvider,
         val listKey: String,
-        override val title: String
+        override val title: String,
+        @param:StringRes val titleRes: Int? = null
     ) : WatchlistSourceItem {
         override val id: String = "tracker_${provider.name.lowercase()}_$listKey"
         override val subtitle: String = provider.displayName
@@ -317,7 +319,8 @@ class WatchlistViewModel @Inject constructor(
                         WatchlistSourceItem.TrackerList(
                             provider = TrackerLibraryProvider.TRAKT,
                             listKey = TRAKT_WATCHLIST_KEY,
-                            title = context.getString(R.string.watchlist_tracker_default_list)
+                            title = "Watchlist",
+                            titleRes = R.string.watchlist_tracker_default_list
                         )
                     )
                 } else {
@@ -333,12 +336,13 @@ class WatchlistViewModel @Inject constructor(
                 }
             }
             if (simklConnected) {
-                SIMKL_LIBRARY_LISTS.forEach { (status, titleRes) ->
+                SIMKL_LIBRARY_LISTS.forEach { (status, title, titleRes) ->
                     add(
                         WatchlistSourceItem.TrackerList(
                             provider = TrackerLibraryProvider.SIMKL,
                             listKey = status,
-                            title = context.getString(titleRes)
+                            title = title,
+                            titleRes = titleRes
                         )
                     )
                 }
@@ -1274,11 +1278,11 @@ class WatchlistViewModel @Inject constructor(
         // The status keys stay English so the Simkl API calls keep working;
         // only the rendered list title is localized.
         private val SIMKL_LIBRARY_LISTS = listOf(
-            "watching" to R.string.watchlist_simkl_watching,
-            "plantowatch" to R.string.watchlist_simkl_plan_to_watch,
-            "completed" to R.string.watchlist_simkl_completed,
-            "hold" to R.string.watchlist_simkl_on_hold,
-            "dropped" to R.string.watchlist_simkl_dropped
+            Triple("watching", "Watching", R.string.watchlist_simkl_watching),
+            Triple("plantowatch", "Plan to watch", R.string.watchlist_simkl_plan_to_watch),
+            Triple("completed", "Completed", R.string.watchlist_simkl_completed),
+            Triple("hold", "On hold", R.string.watchlist_simkl_on_hold),
+            Triple("dropped", "Dropped", R.string.watchlist_simkl_dropped)
         )
         private val BROWSABLE_LIBRARY_TYPES = setOf(
             "",

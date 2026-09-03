@@ -65,6 +65,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -150,12 +151,15 @@ private fun WatchlistSourceItem.trackerProviderLabel(): String? {
     }
 }
 
-private fun WatchlistSourceItem.asSidebarLibrary(providerLabel: String): HomeServerCatalogCandidate {
+private fun WatchlistSourceItem.asSidebarLibrary(
+    providerLabel: String,
+    localizedTitle: String = title
+): HomeServerCatalogCandidate {
     return HomeServerCatalogCandidate(
-        title = title,
+        title = localizedTitle,
         sourceRef = id,
         serverName = providerLabel,
-        collectionName = title,
+        collectionName = localizedTitle,
         collectionType = "mixed",
         serverKind = HomeServerKind.UNKNOWN,
         connectionId = "tracker:${providerLabel.lowercase()}"
@@ -247,17 +251,23 @@ fun WatchlistScreen(
     val selectedProviderIndex = providers.indexOfFirst { it.id == activeProvider.id }.coerceAtLeast(0)
     val isHomeServerMode = activeProvider.isHomeServer
     val isTrackerMode = activeProvider.isTracker
+    val localizedContext = LocalContext.current
     val providerLibraries = remember(
         libraryState.libraries,
         activeProvider.id,
-        activeProvider.trackerSources
+        activeProvider.trackerSources,
+        localizedContext
     ) {
         when {
             activeProvider.isHomeServer -> libraryState.libraries.filter {
                 it.serverKind == activeProvider.homeServerKind
             }
-            activeProvider.isTracker -> activeProvider.trackerSources.map {
-                it.asSidebarLibrary(activeProvider.label)
+            activeProvider.isTracker -> activeProvider.trackerSources.map { source ->
+                val localizedTitle = (source as? WatchlistSourceItem.TrackerList)
+                    ?.titleRes
+                    ?.let(localizedContext::getString)
+                    ?: source.title
+                source.asSidebarLibrary(activeProvider.label, localizedTitle)
             }
             else -> emptyList()
         }
