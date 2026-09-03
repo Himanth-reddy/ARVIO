@@ -648,7 +648,9 @@ fun PlayerScreen(
     // Post-selection status for the loading overlay ("Loading subtitles…" during the preload
     // gate, "Loading video stream…" while preparing). Overrides uiState.streamLoadPhase, which
     // only covers source discovery and goes blank once a source is picked.
-    var startupPhase by remember { mutableStateOf<String?>(null) }
+    // Holds a string resource id, not rendered text: the phase is compared below to decide
+    // whether to append the pending addon names, and a localized literal would break that check.
+    var startupPhase by remember { mutableStateOf<Int?>(null) }
     // Failover notice, displayed ON TOP of startupPhase for a fixed minimum time: a fast source
     // switch (resolve can take <100ms) would otherwise overwrite it as an unreadable blink.
     // Overlaying instead of delaying keeps the actual failover at full speed.
@@ -833,7 +835,7 @@ fun PlayerScreen(
     fun tryAdvanceToNextStream(
         skipAddonId: String? = null,
         recordCurrentFailure: Boolean = true,
-        reason: String = "Source didn't start"
+        reason: String = context.getString(R.string.player_fail_source_didnt_start)
     ): Boolean {
         val streams = uiState.streams
         return if (streams.size <= 1) {
@@ -867,12 +869,11 @@ fun PlayerScreen(
                 currentStreamIndex = nextIndex
                 triedStreamIndexes = triedStreamIndexes + nextIndex
                 val next = streams[nextIndex]
-                switchNotice = buildString {
-                    append(reason)
-                    append(" — switching")
-                    val desc = listOf(next.quality, next.size).filter { it.isNotBlank() }.joinToString(" · ")
-                    if (desc.isNotBlank()) append(" to $desc")
-                    append("…")
+                val desc = listOf(next.quality, next.size).filter { it.isNotBlank() }.joinToString(" · ")
+                switchNotice = if (desc.isNotBlank()) {
+                    context.getString(R.string.player_switch_notice_to, reason, desc)
+                } else {
+                    context.getString(R.string.player_switch_notice, reason)
                 }
                 switchNoticeUntilMs = System.currentTimeMillis() + 3_500L
                 userSelectedSourceManually = false
@@ -916,7 +917,8 @@ fun PlayerScreen(
             playbackIssueReported = true
             pendingStartupFailover = false
             viewModel.reportPlaybackError(
-                pendingStartupFailoverMessage ?: "Source failed during startup. Try another source."
+                pendingStartupFailoverMessage
+                    ?: context.getString(R.string.player_fail_startup_generic)
             )
         }
     }
@@ -1375,7 +1377,7 @@ fun PlayerScreen(
                             if (!hasPlaybackStarted &&
                                 allowStartupSourceFallback &&
                                 !userSelectedSourceManually &&
-                                tryAdvanceToNextStream(deadAddonId, reason = classifyPlaybackFailure(error))
+                                tryAdvanceToNextStream(deadAddonId, reason = classifyPlaybackFailure(context, error))
                             ) {
                                 return
                             }
@@ -1388,7 +1390,7 @@ fun PlayerScreen(
                                 sourceSearchStillActive
                             ) {
                                 pendingStartupFailover = true
-                                pendingStartupFailoverMessage = playbackErrorMessageFor(error, hasPlaybackStarted)
+                                pendingStartupFailoverMessage = playbackErrorMessageFor(context, error, hasPlaybackStarted)
                                 if (!pendingStartupFailureRecorded) {
                                     pendingStartupFailureRecorded = true
                                     viewModel.onSelectedStreamPlaybackFailure()
@@ -1402,7 +1404,7 @@ fun PlayerScreen(
                             if (!playbackIssueReported) {
                                 playbackIssueReported = true
                                 viewModel.onSelectedStreamPlaybackFailure()
-                                viewModel.reportPlaybackError(playbackErrorMessageFor(error, hasPlaybackStarted))
+                                viewModel.reportPlaybackError(playbackErrorMessageFor(context, error, hasPlaybackStarted))
                             }
                         }
                     }
@@ -2077,7 +2079,7 @@ fun PlayerScreen(
             val prepareStartMs = streamSelectedTime ?: System.currentTimeMillis()
             bufferingStartTime = null
             hasPlaybackStarted = false  // Reset for new stream
-            startupPhase = "Loading video stream…"
+            startupPhase = R.string.player_phase_loading_stream
             firstVideoFrameRendered = false
             readyPlayingSinceMs = null
             playbackIssueReported = false
@@ -2159,7 +2161,7 @@ fun PlayerScreen(
             var preloadedSubtitleConfigs = emptyList<MediaItem.SubtitleConfiguration>()
             if (latestUiState.subtitlePreloadEnabled) {
                 if (!latestUiState.subtitlePreloadComplete) {
-                    startupPhase = "Loading subtitles…"
+                    startupPhase = R.string.player_phase_loading_subtitles
                 }
                 val gateStartMs = System.currentTimeMillis()
                 val gateReady = withTimeoutOrNull(SUBTITLE_PRELOAD_GATE_TIMEOUT_MS) {
@@ -2237,7 +2239,7 @@ fun PlayerScreen(
             // No manual startup gate - trust the CDN/debrid while keeping enough safety margin.
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
-            startupPhase = "Starting playback…"
+            startupPhase = R.string.player_phase_starting_playback
             playbackStartupDiag(
                 "prepare issued setupMs=${System.currentTimeMillis() - prepareStartMs} source=${uiState.selectedStream?.addonId}/${uiState.selectedStream?.quality}/${uiState.selectedStream?.size} host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}"
             )
@@ -2638,7 +2640,9 @@ fun PlayerScreen(
                         if (allowMidPlaybackSourceFallback &&
                             !userSelectedSourceManually &&
                             longRebufferCount >= 1 &&
-                            tryAdvanceToNextStream(reason = "Buffering too slow")
+                            tryAdvanceToNextStream(
+                                reason = context.getString(R.string.player_fail_buffering_slow)
+                            )
                         ) {
                             continue
                         }
@@ -2684,9 +2688,9 @@ fun PlayerScreen(
                     // to load (uncached/slow host); READY without a frame = the device couldn't
                     // decode the video (codec/resolution). The user sees which it is.
                     val startupReason = if (exoPlayer.playbackState == Player.STATE_READY) {
-                        "Video can't play on this device"
+                        context.getString(R.string.player_fail_device_cannot_play)
                     } else {
-                        "Source too slow to load"
+                        context.getString(R.string.player_fail_source_too_slow)
                     }
                     if (allowStartupSourceFallback &&
                         !userSelectedSourceManually &&
@@ -2705,9 +2709,9 @@ fun PlayerScreen(
                     viewModel.onSelectedStreamPlaybackFailure()
                     viewModel.reportPlaybackError(
                         if (autoAdvanceAttempts > 0 || startupSameSourceRetryCount > 0) {
-                            "Source did not start after retries. Try another source."
+                            context.getString(R.string.player_fail_no_start_after_retries)
                         } else {
-                            "Source did not start in time. Try another source."
+                            context.getString(R.string.player_fail_no_start_in_time)
                         }
                     )
                 }
@@ -2789,7 +2793,9 @@ fun PlayerScreen(
                         }
                         if (allowStartupSourceFallback &&
                             !userSelectedSourceManually &&
-                            tryAdvanceToNextStream(reason = "No video — device can't decode this format")
+                            tryAdvanceToNextStream(
+                                reason = context.getString(R.string.player_fail_no_video_decode)
+                            )
                         ) {
                             continue
                         }
@@ -2797,7 +2803,7 @@ fun PlayerScreen(
                         playbackIssueReported = true
                         viewModel.onSelectedStreamPlaybackFailure()
                         viewModel.reportPlaybackError(
-                            "Video could not render on this device. Try another source."
+                            context.getString(R.string.player_fail_render_failed)
                         )
                     }
                 }
@@ -3045,9 +3051,9 @@ fun PlayerScreen(
     val subtitleFontPref = uiState.subtitleFont
     val subtitleStylizedPref = uiState.subtitleStylized
     val aspectModeLabel = when (playerResizeMode) {
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
-        AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
-        else -> "Fit"
+        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> stringResource(R.string.player_aspect_zoom)
+        AspectRatioFrameLayout.RESIZE_MODE_FILL -> stringResource(R.string.player_aspect_fill)
+        else -> stringResource(R.string.player_aspect_fit)
     }
     val cycleAspectRatio: () -> Unit = {
         playerResizeMode = when (playerResizeMode) {
@@ -3595,15 +3601,18 @@ fun PlayerScreen(
                     // showLoadingStats — status feedback should always be visible.
                     phaseLabel = switchNotice
                         ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
-                            ?.let { phase ->
+                            ?.let { phaseRes ->
                                 // Name the addons still being queried so a chronically slow one
                                 // identifies itself to the user ("Loading subtitles… (bla)").
                                 val pending = uiState.pendingSubtitleAddons
-                                if (phase.startsWith("Loading subtitles") && pending.isNotEmpty()) {
+                                if (phaseRes == R.string.player_phase_loading_subtitles && pending.isNotEmpty()) {
                                     val shown = pending.take(2).joinToString(", ")
                                     val more = pending.size - 2
-                                    "Loading subtitles… ($shown${if (more > 0) " +$more" else ""})"
-                                } else phase
+                                    stringResource(
+                                        R.string.player_phase_loading_subtitles_detail,
+                                        "$shown${if (more > 0) " +$more" else ""}"
+                                    )
+                                } else stringResource(phaseRes)
                             }
                         ?: uiState.streamLoadPhase
                 )
@@ -3706,7 +3715,9 @@ fun PlayerScreen(
                     color = androidx.compose.ui.graphics.Color(0xFF7EC8F0)
                 )
                 Text(
-                    text = uiState.matchStatusText.ifBlank { "Searching for a match…" },
+                    text = uiState.matchStatusText.ifBlank {
+                        stringResource(R.string.player_subtitle_searching_match)
+                    },
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                 )
@@ -4449,7 +4460,7 @@ fun PlayerScreen(
             // episode's metadata would require an extra TMDB round-trip during playback.
             // Fall back to a generic "Episode N" label — the show title, S/E number, and
             // backdrop image still give users enough context to decide Continue/Cancel.
-            episodeTitle = "Episode ${pendingNextIdentity?.displayEpisode ?: 0}",
+            episodeTitle = stringResource(R.string.episode, pendingNextIdentity?.displayEpisode ?: 0),
             seasonNumber = pendingNextIdentity?.displaySeason ?: 0,
             episodeNumber = pendingNextIdentity?.displayEpisode ?: 0,
             episodeImage = uiState.backdropUrl,
@@ -5329,7 +5340,7 @@ private fun SubtitleMenu(
                             ) {
                                 item {
                                     LangPanelItem(
-                                        name = "Off",
+                                        name = stringResource(R.string.off),
                                         count = 0,
                                         isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == 0,
                                         isActivePanel = subtitleLangIndex == 0,
@@ -5396,9 +5407,13 @@ private fun SubtitleMenu(
                                         // First: "Find Best Match" — timing scan, works without AI.
                                         item {
                                             TrackMenuItem(
-                                                label = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
-                                                subtitle = "Auto",
-                                                subtitleDetail = "Auto-pick the best-synced subtitle",
+                                                label = if (isFindingBestMatch) {
+                                                    stringResource(R.string.player_subtitle_scanning)
+                                                } else {
+                                                    stringResource(R.string.player_subtitle_find_best_match)
+                                                },
+                                                subtitle = stringResource(R.string.auto),
+                                                subtitleDetail = stringResource(R.string.player_subtitle_best_match_hint),
                                                 isSelected = isFindingBestMatch,
                                                 isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 0,
                                                 onClick = { /* D-pad only */ }
@@ -5433,12 +5448,15 @@ private fun SubtitleMenu(
                                             val trackLabel = subtitle.label.takeIf { it.isNotBlank() &&
                                                 !it.equals(langFullName, ignoreCase = true) }
                                             badge = listOfNotNull(
-                                                "Built-in", trackLabel, if (subtitle.isForced) "Forced" else null
+                                                stringResource(R.string.settings_source_builtin),
+                                                trackLabel,
+                                                if (subtitle.isForced) stringResource(R.string.settings_value_forced) else null
                                             ).joinToString(" · ")
                                             detail = null
                                         } else {
                                             badge = listOfNotNull(
-                                                subtitle.provider.ifBlank { null }, if (subtitle.isForced) "Forced" else null
+                                                subtitle.provider.ifBlank { null },
+                                                if (subtitle.isForced) stringResource(R.string.settings_value_forced) else null
                                             ).joinToString(" · ").ifBlank { null }
                                             detail = subtitle.id
                                                 .replace(PlayerScreenRegexes.BRACKET_REGEX, "").trim()
@@ -5553,7 +5571,11 @@ private fun SubtitleMenu(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = if (mobileTab == 0) "Subtitles" else "Audio",
+                        text = if (mobileTab == 0) {
+                            stringResource(R.string.subtitles)
+                        } else {
+                            stringResource(R.string.audio)
+                        },
                         style = ArflixTypography.body.copy(
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold
@@ -5585,7 +5607,10 @@ private fun SubtitleMenu(
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("Subtitles" to 0, "Audio" to 1).forEach { (label, tabIndex) ->
+                    listOf(
+                        stringResource(R.string.subtitles) to 0,
+                        stringResource(R.string.audio) to 1
+                    ).forEach { (label, tabIndex) ->
                         val selected = mobileTab == tabIndex
                         Box(
                             modifier = Modifier
@@ -5639,7 +5664,7 @@ private fun SubtitleMenu(
                         // "Off" option
                         item {
                             MobileTrackItem(
-                                name = "Off",
+                                name = stringResource(R.string.off),
                                 description = null,
                                 isSelected = selectedSubtitle == null && !isLiveAudioTranslating,
                                 onClick = { onSelectSubtitle(0) }
@@ -5676,7 +5701,7 @@ private fun SubtitleMenu(
                             if (isLiveAudioGroup) {
                                 item(key = "mobile_live_audio_item") {
                                     MobileTrackItem(
-                                        name = "Translate Audio",
+                                        name = stringResource(R.string.player_audio_translate),
                                         description = "AI",
                                         isSelected = isLiveAudioTranslating,
                                         onClick = { onToggleLiveAudio(); onClose() }
@@ -5693,8 +5718,12 @@ private fun SubtitleMenu(
                             if (isMatchGroup) {
                                 item(key = "mobile_find_best_match_item") {
                                     MobileTrackItem(
-                                        name = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
-                                        description = "Auto",
+                                        name = if (isFindingBestMatch) {
+                                            stringResource(R.string.player_subtitle_scanning)
+                                        } else {
+                                            stringResource(R.string.player_subtitle_find_best_match)
+                                        },
+                                        description = stringResource(R.string.auto),
                                         isSelected = isFindingBestMatch,
                                         onClick = { onFindBestMatch(); onClose() }
                                     )
@@ -5737,11 +5766,14 @@ private fun SubtitleMenu(
                                             val trackLabel = sub.label.takeIf { it.isNotBlank() &&
                                                 !it.equals(langFullName, ignoreCase = true) }
                                             listOfNotNull(
-                                                "Built-in", trackLabel, if (sub.isForced) "Forced" else null
+                                                stringResource(R.string.settings_source_builtin),
+                                                trackLabel,
+                                                if (sub.isForced) stringResource(R.string.settings_value_forced) else null
                                             ).joinToString(" · ")
                                         }
                                         else -> listOfNotNull(
-                                            sub.provider.ifBlank { null }, if (sub.isForced) "Forced" else null
+                                            sub.provider.ifBlank { null },
+                                            if (sub.isForced) stringResource(R.string.settings_value_forced) else null
                                         ).joinToString(" · ").ifBlank { null }
                                     }
                                     MobileTrackItem(
@@ -6293,35 +6325,38 @@ private fun estimateInitialStartupTimeoutMs(
 }
 
 private fun playbackErrorMessageFor(
+    context: android.content.Context,
     error: androidx.media3.common.PlaybackException,
     hasPlaybackStarted: Boolean
 ): String {
-    val reason = when (error.errorCode) {
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
-            "Codec not supported by this device"
+    val reason = context.getString(
+        when (error.errorCode) {
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+                R.string.player_err_codec_unsupported
 
-        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
-        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ->
-            "Network timeout while loading source"
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ->
+                R.string.player_err_network_timeout
 
-        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
-            "Source server rejected playback request"
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                R.string.player_err_http_rejected
 
-        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
-            "Source format is invalid or unsupported"
+            androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
+                R.string.player_err_container_invalid
 
-        else -> "Source failed to play"
-    }
+            else -> R.string.player_err_failed_to_play
+        }
+    )
 
     return if (hasPlaybackStarted) {
-        "$reason. Try another source."
+        context.getString(R.string.player_err_try_another, reason)
     } else {
-        "$reason during startup. Trying another source may work."
+        context.getString(R.string.player_err_startup_try_another, reason)
     }
 }
 
@@ -6332,7 +6367,10 @@ private fun playbackErrorMessageFor(
  * decode/unsupported vs invalid-content vs timeout/offline, so the user gets a real clue instead of
  * a generic "failed".
  */
-private fun classifyPlaybackFailure(error: androidx.media3.common.PlaybackException): String {
+private fun classifyPlaybackFailure(
+    context: android.content.Context,
+    error: androidx.media3.common.PlaybackException
+): String {
     // Walk the cause chain looking for an HTTP status — the most actionable signal.
     var cause: Throwable? = error
     var httpStatus = -1
@@ -6344,12 +6382,12 @@ private fun classifyPlaybackFailure(error: androidx.media3.common.PlaybackExcept
     }
     if (httpStatus > 0) {
         return when (httpStatus) {
-            403 -> "Source blocked"
-            404 -> "Source removed"
-            410 -> "Source expired"
-            429 -> "Source rate-limited"
-            in 500..599 -> "Source unavailable"
-            else -> "Source error ($httpStatus)"
+            403 -> context.getString(R.string.player_err_source_blocked)
+            404 -> context.getString(R.string.player_err_source_removed)
+            410 -> context.getString(R.string.player_err_source_expired)
+            429 -> context.getString(R.string.player_err_source_rate_limited)
+            in 500..599 -> context.getString(R.string.player_err_source_unavailable)
+            else -> context.getString(R.string.player_err_source_status, httpStatus)
         }
     }
 
@@ -6361,25 +6399,27 @@ private fun classifyPlaybackFailure(error: androidx.media3.common.PlaybackExcept
     val isDns = "unknownhost" in msg || "unable to resolve host" in msg ||
         "no address associated with hostname" in msg
 
-    return when {
-        isDns -> "Source offline"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
-            "Video format not supported by this device"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
-            "Unplayable content"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
-            "timeout" in msg || "timed out" in msg || "sockettimeout" in msg ->
-            "Source too slow to load"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
-            "Source rejected request"
-        else -> "Playback error"
-    }
+    return context.getString(
+        when {
+            isDns -> R.string.player_err_source_offline
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+                R.string.player_err_format_unsupported
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
+                R.string.player_err_unplayable_content
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                "timeout" in msg || "timed out" in msg || "sockettimeout" in msg ->
+                R.string.player_fail_source_too_slow
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                R.string.player_err_source_rejected
+            else -> R.string.player_err_playback
+        }
+    )
 }
 
 private fun parseSizeToBytes(sizeStr: String): Long {
@@ -6820,6 +6860,7 @@ private fun PlayerMetaSeparator() {
     )
 }
 
+@Composable
 private fun buildPlaybackBaseMetaLine(
     uiState: PlayerUiState,
     mediaType: MediaType,
@@ -6828,8 +6869,8 @@ private fun buildPlaybackBaseMetaLine(
 ): String {
     val parts = mutableListOf<String>()
     if (mediaType == MediaType.TV) {
-        seasonNumber?.let { parts.add("Season $it") }
-        episodeNumber?.let { parts.add("Episode $it") }
+        seasonNumber?.let { parts.add(stringResource(R.string.season, it)) }
+        episodeNumber?.let { parts.add(stringResource(R.string.episode, it)) }
     } else {
         uiState.releaseYear?.trim()?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
     }
