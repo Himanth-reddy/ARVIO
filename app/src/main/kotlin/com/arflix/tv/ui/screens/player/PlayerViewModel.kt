@@ -2483,6 +2483,7 @@ class PlayerViewModel @Inject constructor(
             // embedded tracks arriving later would be ignored because the selection "already
             // matches" (no nonce bump → the override is never applied to the new media item).
             cancelFindBestMatch()
+            cancelSubtitleLocalization()
             hasManualSubtitleSelection = false
             userPickedSubtitle = false
             autoMatchAttempted = false
