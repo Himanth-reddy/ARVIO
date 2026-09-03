@@ -2,11 +2,18 @@ package com.arflix.tv.ui.screens.player
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
 import java.util.zip.GZIPInputStream
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * "Find best match": scores candidate subtitle tracks by how well their on-screen cue at a given
@@ -30,26 +37,160 @@ object SubtitleSyncMatcher {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    /** Downloads a subtitle and returns its decoded (UTF-8, gunzipped) text, or null on failure. */
-    suspend fun loadRaw(url: String): String? = withContext(Dispatchers.IO) {
+    /**
+     * Suspending [Call.execute] that honours coroutine cancellation.
+     *
+     * `execute()` blocks with no suspension point, so a surrounding `withTimeoutOrNull` (or a
+     * cancelled job) cannot interrupt it — the caller stays blocked until OkHttp's own connect/read
+     * timeouts expire. Enqueuing and cancelling the [Call] on cancellation makes the wait actually
+     * abortable, which matters both for the manual-pick timeout and for the preload pass, where a
+     * playback teardown should not leave a batch of downloads running.
+     */
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { runCatching { cancel() } }
+        enqueue(object : Callback {
+            override fun onResponse(call: Call, response: Response) {
+                if (cont.isActive) cont.resume(response) else response.closeQuietly()
+            }
+
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isActive) cont.resumeWithException(e)
+            }
+        })
+    }
+
+    private fun Response.closeQuietly() = runCatching { close() }
+
+    /**
+     * Downloads a subtitle and returns its decoded (gunzipped) text, or null on failure.
+     *
+     * [lang] is the subtitle's declared language (from the addon), used to pick the legacy code
+     * page when the file is not UTF-8 — see [decodeSubtitleBytes].
+     *
+     * Cancellable: cancelling the calling coroutine aborts the HTTP call rather than waiting it out.
+     */
+    suspend fun loadRaw(url: String, lang: String? = null): String? = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder().url(url).build()
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) return@use null
                 val body = response.body ?: return@use null
                 val raw = body.bytes()
-                if (looksGzipped(url, raw)) {
-                    GZIPInputStream(raw.inputStream()).bufferedReader(Charsets.UTF_8).readText()
+                val bytes = if (looksGzipped(url, raw)) {
+                    GZIPInputStream(raw.inputStream()).use { it.readBytes() }
                 } else {
-                    String(raw, Charsets.UTF_8)
+                    raw
                 }
+                val decoded = decodeSubtitleBytes(bytes, lang)
+                if (decoded.charsetName != Charsets.UTF_8.name()) {
+                    Log.i(TAG, "subtitle not UTF-8 — decoded as ${decoded.charsetName} (lang=$lang)")
+                }
+                decoded.text
             }
         }.onFailure { error ->
+            // runCatching also catches CancellationException; now that the call is cancellable that
+            // would report a cancelled download as a plain failure and break structured concurrency.
+            if (error is kotlinx.coroutines.CancellationException) throw error
             Log.w(TAG, "loadRaw failed url=$url err=${error.message}")
         }.getOrNull()
     }
 
-    suspend fun loadCues(url: String): List<TimedCue> = loadRaw(url)?.let { parseCues(it) } ?: emptyList()
+    suspend fun loadCues(url: String, lang: String? = null): List<TimedCue> =
+        loadRaw(url, lang)?.let { parseCues(it) } ?: emptyList()
+
+    // ── Character encoding ──────────────────────────────────────────────────────
+
+    /**
+     * Legacy code page per language, for subtitles that predate UTF-8 — still the norm from some
+     * providers (Israeli sites routinely serve windows-1255). Keyed by ISO-639-1/2 prefix.
+     */
+    private val LEGACY_CHARSETS: Map<String, List<String>> = mapOf(
+        // Hebrew: ISO-8859-8 shares the letter range with 1255, so it is a safe second choice.
+        "he" to listOf("windows-1255", "ISO-8859-8"),
+        "iw" to listOf("windows-1255", "ISO-8859-8"),
+        "heb" to listOf("windows-1255", "ISO-8859-8"),
+        "ar" to listOf("windows-1256", "ISO-8859-6"),
+        "ara" to listOf("windows-1256", "ISO-8859-6"),
+        "fa" to listOf("windows-1256"),
+        "ur" to listOf("windows-1256"),
+        "ru" to listOf("windows-1251", "KOI8-R"),
+        "rus" to listOf("windows-1251", "KOI8-R"),
+        "uk" to listOf("windows-1251"),
+        "bg" to listOf("windows-1251"),
+        "sr" to listOf("windows-1251"),
+        "mk" to listOf("windows-1251"),
+        "be" to listOf("windows-1251"),
+        "el" to listOf("windows-1253", "ISO-8859-7"),
+        "gre" to listOf("windows-1253", "ISO-8859-7"),
+        "ell" to listOf("windows-1253", "ISO-8859-7"),
+        "tr" to listOf("windows-1254", "ISO-8859-9"),
+        "tur" to listOf("windows-1254", "ISO-8859-9"),
+        "th" to listOf("windows-874", "TIS-620"),
+        "vi" to listOf("windows-1258"),
+        "pl" to listOf("windows-1250", "ISO-8859-2"),
+        "cs" to listOf("windows-1250", "ISO-8859-2"),
+        "sk" to listOf("windows-1250", "ISO-8859-2"),
+        "hu" to listOf("windows-1250", "ISO-8859-2"),
+        "ro" to listOf("windows-1250", "ISO-8859-2"),
+        "hr" to listOf("windows-1250", "ISO-8859-2"),
+        "sl" to listOf("windows-1250", "ISO-8859-2")
+    )
+
+    /** windows-1252 decodes every byte, so this always yields text rather than failing. */
+    private val DEFAULT_LEGACY_CHARSETS = listOf("windows-1252", "ISO-8859-1")
+
+    /**
+     * Decodes subtitle bytes with the encoding they were actually written in.
+     *
+     * Assuming UTF-8 unconditionally is what turned Hebrew files into rows of `U+FFFD`: a
+     * windows-1255 file's Hebrew bytes (0xE0–0xFA) are invalid UTF-8 start bytes, and the damage
+     * was then persisted into the local cache copy.
+     *
+     * 1. **BOM** — unambiguous, believe it.
+     * 2. **Strict UTF-8** — UTF-8 is self-validating: a multi-byte start byte *must* be followed by
+     *    continuation bytes in 0x80–0xBF. Legacy Hebrew text puts another letter or a space there,
+     *    so it fails almost immediately. Verified across the Wizdom catalogue for one episode:
+     *    6 UTF-8 files passed, 4 windows-1255 files failed, none misclassified.
+     * 3. **Legacy code page by [lang]** — the addon always declares the subtitle's language.
+     *    Unknown language falls back to windows-1252, which never fails (it maps every byte).
+     */
+    /** Decoded subtitle text plus the charset it was actually read with (for logging/tests). */
+    internal data class Decoded(val text: String, val charsetName: String)
+
+    internal fun decodeSubtitleBytes(bytes: ByteArray, lang: String?): Decoded {
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            return Decoded(String(bytes, 3, bytes.size - 3, Charsets.UTF_8), Charsets.UTF_8.name())
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+            return Decoded(String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE), Charsets.UTF_16LE.name())
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+            return Decoded(String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE), Charsets.UTF_16BE.name())
+        }
+
+        decodeStrictly(bytes, Charsets.UTF_8)?.let { return Decoded(it, Charsets.UTF_8.name()) }
+
+        val key = lang.orEmpty().lowercase().substringBefore('-').substringBefore('_')
+        val names = LEGACY_CHARSETS[key] ?: DEFAULT_LEGACY_CHARSETS
+        for (name in names + DEFAULT_LEGACY_CHARSETS) {
+            val charset = runCatching { java.nio.charset.Charset.forName(name) }.getOrNull() ?: continue
+            val decoded = decodeStrictly(bytes, charset) ?: continue
+            return Decoded(decoded, charset.name())
+        }
+        // Nothing decoded cleanly (unlikely — windows-1252/ISO-8859-1 accept any byte). Take the
+        // lossy UTF-8 read rather than dropping the subtitle entirely.
+        return Decoded(String(bytes, Charsets.UTF_8), "lossy-${Charsets.UTF_8.name()}")
+    }
+
+    /** Decodes with [charset], or null when the bytes are not valid in it. */
+    private fun decodeStrictly(bytes: ByteArray, charset: java.nio.charset.Charset): String? =
+        runCatching {
+            charset.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(bytes))
+                .toString()
+        }.getOrNull()
 
     /**
      * Score a candidate's cues against the collected spoken samples. For each sample we look at
