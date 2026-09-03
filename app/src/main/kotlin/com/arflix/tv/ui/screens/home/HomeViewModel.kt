@@ -1829,18 +1829,34 @@ class HomeViewModel @Inject constructor(
             try {
                 applyContentLanguageFromPrefs()
                 val cachedCategories = loadCategoriesCache()
-                if (cachedCategories.isNotEmpty() && _uiState.value.categories.isEmpty()) {
+                // Gate on "no real BASE rows yet", not "no categories at all": Continue Watching
+                // is restored from its own cache by a coroutine launched alongside this one, and
+                // whichever finishes first used to decide the outcome. When CW won, it put a row
+                // into `categories`, the isEmpty() guard failed, and every cached base row was
+                // dropped — leaving the screen empty until the network load finished ~5s later.
+                // That race is what made the slow home load intermittent.
+                if (cachedCategories.isNotEmpty() && !hasRealBaseCategories()) {
                     val heroItem = chooseInitialHero(cachedCategories)
                     val heroKey = heroItem?.let { "${it.mediaType}_${it.id}" }
                     val heroLogo = heroKey?.let { getCachedLogo(it) }
                     withContext(Dispatchers.Main) {
-                        if (_uiState.value.categories.isEmpty()) {
+                        if (!hasRealBaseCategories()) {
+                            // A Continue Watching row already on screen is fresher than the one in
+                            // this cache — keep it, and take only the base rows from disk.
+                            val liveCw = _uiState.value.categories
+                                .firstOrNull { it.id == "continue_watching" }
+                            val merged = if (liveCw != null) {
+                                listOf(liveCw) + cachedCategories.filterNot { it.id == "continue_watching" }
+                            } else {
+                                cachedCategories
+                            }
                             _uiState.value = _uiState.value.copy(
                                 isLoading = false,
                                 isInitialLoad = false,
-                                categories = cachedCategories,
-                                heroItem = heroItem,
-                                heroLogoUrl = heroLogo,
+                                categories = merged,
+                                // Don't stomp a hero the Continue Watching path already set.
+                                heroItem = _uiState.value.heroItem ?: heroItem,
+                                heroLogoUrl = _uiState.value.heroLogoUrl ?: heroLogo,
                                 error = null
                             )
                         }
@@ -2348,6 +2364,17 @@ class HomeViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(categories = current)
         }
     }
+
+    /**
+     * True when a base (non-Continue-Watching, non-collection) row already holds real content.
+     * Mirrors the test [loadHomeData] uses to decide whether the skeleton is still needed.
+     */
+    private fun hasRealBaseCategories(): Boolean =
+        _uiState.value.categories.any { category ->
+            category.id != "continue_watching" &&
+                !category.id.startsWith("collection_row_") &&
+                category.items.any { !it.isPlaceholder }
+        }
 
     private fun loadHomeData() {
         loadHomeJob?.cancel()
