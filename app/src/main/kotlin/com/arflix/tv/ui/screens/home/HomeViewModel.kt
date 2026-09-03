@@ -1213,8 +1213,15 @@ class HomeViewModel @Inject constructor(
      */
     private val HOME_DATA_STALE_AFTER_MS = 6 * 60 * 60 * 1000L
 
-    /** Elapsed-realtime mark of the last [loadHomeData] start; 0 until the first load. */
+    /**
+     * Elapsed-realtime mark of the last SUCCESSFUL [loadHomeData]; 0 until one completes.
+     * A load that failed must not mark Home fresh, or one transient network error would
+     * suppress the resume refresh for the whole TTL.
+     */
     private var lastHomeDataLoadAtMs = 0L
+
+    /** True once [loadHomeData] has been started at least once, successfully or not. */
+    private var homeDataLoadAttempted = false
     private var lastWatchedBadgesRefreshMs: Long = 0L
     private val HOME_PLACEHOLDER_ITEM_COUNT = 8
 
@@ -1836,9 +1843,9 @@ class HomeViewModel @Inject constructor(
                 // dropped — leaving the screen empty until the network load finished ~5s later.
                 // That race is what made the slow home load intermittent.
                 if (cachedCategories.isNotEmpty() && !hasRealBaseCategories()) {
-                    val heroItem = chooseInitialHero(cachedCategories)
-                    val heroKey = heroItem?.let { "${it.mediaType}_${it.id}" }
-                    val heroLogo = heroKey?.let { getCachedLogo(it) }
+                    val cachedHero = chooseInitialHero(cachedCategories)
+                    val cachedHeroKey = cachedHero?.let { "${it.mediaType}_${it.id}" }
+                    val cachedHeroLogo = cachedHeroKey?.let { getCachedLogo(it) }
                     withContext(Dispatchers.Main) {
                         if (!hasRealBaseCategories()) {
                             // A Continue Watching row already on screen is fresher than the one in
@@ -1850,13 +1857,23 @@ class HomeViewModel @Inject constructor(
                             } else {
                                 cachedCategories
                             }
+                            // Don't stomp a hero the Continue Watching path already set — and take
+                            // the logo from whichever hero wins, so a live hero can never be shown
+                            // with the cached hero's logo.
+                            val liveHero = _uiState.value.heroItem
+                            val finalHero = liveHero ?: cachedHero
+                            val finalLogo = if (liveHero != null) {
+                                _uiState.value.heroLogoUrl
+                                    ?: getCachedLogo("${liveHero.mediaType}_${liveHero.id}")
+                            } else {
+                                cachedHeroLogo
+                            }
                             _uiState.value = _uiState.value.copy(
                                 isLoading = false,
                                 isInitialLoad = false,
                                 categories = merged,
-                                // Don't stomp a hero the Continue Watching path already set.
-                                heroItem = _uiState.value.heroItem ?: heroItem,
-                                heroLogoUrl = _uiState.value.heroLogoUrl ?: heroLogo,
+                                heroItem = finalHero,
+                                heroLogoUrl = finalLogo,
                                 error = null
                             )
                         }
@@ -2378,7 +2395,7 @@ class HomeViewModel @Inject constructor(
 
     private fun loadHomeData() {
         loadHomeJob?.cancel()
-        lastHomeDataLoadAtMs = SystemClock.elapsedRealtime()
+        homeDataLoadAttempted = true
         val requestId = ++loadHomeRequestId
         loadHomeJob = viewModelScope.launch loadHome@{
             // Skip delay - preloading now happens on profile focus for instant display
@@ -2984,6 +3001,9 @@ class HomeViewModel @Inject constructor(
                     categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
                     error = null
                 )
+                // Only a load that actually published rows counts as fresh — see
+                // [refreshHomeDataIfStale].
+                lastHomeDataLoadAtMs = SystemClock.elapsedRealtime()
                 heroItem?.let { item ->
                     if (isStartupSettling()) {
                         scheduleStartupHeroHydration(item)
@@ -3792,12 +3812,20 @@ class HomeViewModel @Inject constructor(
      * [HOME_DATA_STALE_AFTER_MS], so ordinary navigation back from Watchlist/TV/Search stays
      * instant while a long-lived session still picks up new content.
      *
-     * A zero mark means the first load has not run yet — startup owns that, so this stays out of
-     * its way rather than racing it.
+     * Startup owns the first load, so this stays out of its way until one has been started. It
+     * also retries when no load has ever succeeded: [lastHomeDataLoadAtMs] is set only once rows
+     * are published, so a failed load heals on the next resume instead of pinning Home to the
+     * cached rows for the whole TTL.
      */
     fun refreshHomeDataIfStale() {
+        if (!homeDataLoadAttempted) return
+        if (loadHomeJob?.isActive == true) return
         val lastLoadAtMs = lastHomeDataLoadAtMs
-        if (lastLoadAtMs == 0L) return
+        if (lastLoadAtMs == 0L) {
+            android.util.Log.i("HomeViewModel", "no home load has succeeded yet — retrying on resume")
+            loadHomeData()
+            return
+        }
         val ageMs = SystemClock.elapsedRealtime() - lastLoadAtMs
         if (ageMs < HOME_DATA_STALE_AFTER_MS) return
         android.util.Log.i("HomeViewModel", "home data ${ageMs / 60_000}min old — refreshing on resume")
