@@ -594,6 +594,8 @@
     <string name="settings_section_categories">KATEGORIEN</string>
     <string name="settings_iptv_channel_order">Kanalreihenfolge</string>
     <string name="settings_iptv_channel_order_description">Wähle, wie Kanäle innerhalb jeder Gruppe angeordnet werden</string>
+    <string name="settings_iptv_vod_search">IPTV-VOD-Streams</string>
+    <string name="settings_iptv_vod_search_desc">IPTV-Filme und -Serien beim Abrufen von Streams einbeziehen</string>
     <string name="settings_iptv_order_provider">Anbieter-Reihenfolge</string>
     <string name="settings_iptv_order_number">Kanalnummer</string>
     <string name="settings_iptv_order_name">Alphabetisch (A–Z)</string>
