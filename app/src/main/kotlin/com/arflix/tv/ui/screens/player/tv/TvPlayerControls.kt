@@ -79,6 +79,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewCard
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 import kotlin.math.roundToInt
 
 @Composable
@@ -429,8 +430,12 @@ fun TvPlayerControls(
                                 .roundToInt()
                         } else 0
 
+                        val currentPos = if (isScrubbing) scrubPreviewPositionMs else currentPositionMs
+                        val targetBucket = quantizeSeekPreviewPosition(currentPos, durationMs)
+                        val isCurrentFrame = seekPreviewFrame != null && seekPreviewFrame.positionMs == targetBucket
+
                         androidx.compose.animation.AnimatedVisibility(
-                            visible = (isScrubbing || trackbarFocused) && durationMs > 0L && seekPreviewFrame != null,
+                            visible = (isScrubbing || trackbarFocused) && durationMs > 0L && isCurrentFrame,
                             enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(90)),
                             exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(70)),
                             modifier = Modifier
@@ -439,11 +444,11 @@ fun TvPlayerControls(
                                 .zIndex(12f)
                                 .width(previewCardWidth)
                         ) {
-                            seekPreviewFrame?.let { frame ->
+                            if (isCurrentFrame && seekPreviewFrame != null) {
                                 SeekPreviewCard(
-                                    frame = frame,
+                                    frame = seekPreviewFrame,
                                     cornerRadius = 6.dp,
-                                    timestamp = formatTime(if (isScrubbing) scrubPreviewPositionMs else currentPositionMs),
+                                    timestamp = formatTime(currentPos),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }

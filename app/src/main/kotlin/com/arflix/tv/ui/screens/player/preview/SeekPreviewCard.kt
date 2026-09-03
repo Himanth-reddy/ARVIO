@@ -88,11 +88,6 @@ fun SeekPreviewPlaceholder(
             .clip(shape),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.material3.CircularProgressIndicator(
-            modifier = androidx.compose.ui.Modifier.size(22.dp),
-            color = Color.White.copy(alpha = 0.7f),
-            strokeWidth = 2.dp
-        )
         if (!timestamp.isNullOrBlank()) {
             Box(
                 modifier = Modifier

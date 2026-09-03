@@ -252,6 +252,7 @@ import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
 import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
 import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewAspectRatio
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
+import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPositionWithHysteresis
 import com.arflix.tv.ui.screens.player.preview.seekPreviewDisplayAspectRatio
 
 enum class AspectRatioMode(val label: String, val resizeMode: Int) {
@@ -484,6 +485,8 @@ fun PlayerScreen(
     var isMobileScrubbing by remember { mutableStateOf(false) }
     var mobileScrubPosition by remember { mutableLongStateOf(0L) }
     var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var isSeekPreviewLoading by remember { mutableStateOf(false) }
+    var activeSeekBucket by remember { mutableLongStateOf(-1L) }
     var latestRenderedSeekPreview by remember { mutableStateOf<SeekPreviewFrame?>(null) }
     var playerViewForSeekPreview by remember {
         mutableStateOf<FullViewportSubtitlePlayerView?>(null)
@@ -1765,6 +1768,21 @@ fun PlayerScreen(
         }
     }
 
+    val isAdaptiveStream = remember(uiState.selectedStreamUrl, uiState.selectedStream) {
+        val url = uiState.selectedStreamUrl
+        val selected = uiState.selectedStream
+        val lowerUrl = url?.lowercase().orEmpty()
+        url != null && (
+            isLikelyHlsPlaybackUrl(url, selected) ||
+                lowerUrl.contains(".mpd") ||
+                lowerUrl.contains("/dash") ||
+                lowerUrl.contains("format=dash")
+        )
+    }
+    val isSeekPreviewSupported = remember(isLiveStream, duration, isAdaptiveStream, isCasting) {
+        !isLiveStream && duration > 0L && !isAdaptiveStream && !isCasting
+    }
+
     // Seek Preview Provider stream configuration
     LaunchedEffect(
         uiState.selectedStreamUrl,
@@ -1773,6 +1791,8 @@ fun PlayerScreen(
         isLiveStream,
     ) {
         seekPreviewFrame = null
+        isSeekPreviewLoading = false
+        activeSeekBucket = -1L
         seekPreviewDirection = 0
         val url = uiState.selectedStreamUrl
         val selected = uiState.selectedStream
@@ -1782,13 +1802,6 @@ fun PlayerScreen(
             ?.request
             .orEmpty()
             .safePlaybackHeaders()
-        val lowerUrl = url?.lowercase().orEmpty()
-        val adaptive = url != null && (
-            isLikelyHlsPlaybackUrl(url, selected) ||
-                lowerUrl.contains(".mpd") ||
-                lowerUrl.contains("/dash") ||
-                lowerUrl.contains("format=dash")
-            )
         seekPreviewProvider.configure(
             url?.let {
                 SeekPreviewSource(
@@ -1803,7 +1816,7 @@ fun PlayerScreen(
                     ),
                     durationMs = duration,
                     isLive = isLiveStream,
-                    isAdaptive = adaptive,
+                    isAdaptive = isAdaptiveStream,
                 )
             }
         )
@@ -1817,7 +1830,11 @@ fun PlayerScreen(
         currentPosition
     }
     val isAnyScrubbing = isMobileScrubbing || isControlScrubbing
-    val seekPreviewBucket = quantizeSeekPreviewPosition(seekPreviewTargetPosition, duration)
+    val seekPreviewBucket = if (isMobileScrubbing) {
+        quantizeSeekPreviewPositionWithHysteresis(activeSeekBucket, seekPreviewTargetPosition, duration)
+    } else {
+        quantizeSeekPreviewPosition(seekPreviewTargetPosition, duration)
+    }
 
     LaunchedEffect(
         isAnyScrubbing,
@@ -1826,24 +1843,52 @@ fun PlayerScreen(
         uiState.streamSelectionNonce,
         hasPlaybackStarted,
         isCasting,
+        isSeekPreviewSupported,
     ) {
         if (!isAnyScrubbing || !hasPlaybackStarted || isCasting || duration <= 0L) {
-            if (!isAnyScrubbing) seekPreviewFrame = null
+            if (!isAnyScrubbing) {
+                seekPreviewFrame = null
+                isSeekPreviewLoading = false
+                activeSeekBucket = -1L
+            }
             return@LaunchedEffect
         }
-        delay(40L)
+        activeSeekBucket = seekPreviewBucket
 
-        // Instant path: Memory or disk cache
+        // Instant path 1: In-memory or on-disk cache (0ms delay)
         seekPreviewProvider.cachedFrameAt(seekPreviewBucket)?.let { cachedFrame ->
             seekPreviewFrame = cachedFrame
+            isSeekPreviewLoading = false
             return@LaunchedEffect
         }
 
-        // Check if latest rendered frame matches this bucket
+        // Instant path 2: Check if latest rendered frame matches this bucket
         if (latestRenderedSeekPreview?.positionMs == seekPreviewBucket) {
             seekPreviewFrame = latestRenderedSeekPreview
+            isSeekPreviewLoading = false
             return@LaunchedEffect
         }
+
+        // Uncached: Clear any previous out-of-sync frame so the UI never displays
+        // a stale frame from another timestamp.
+        if (seekPreviewFrame?.positionMs != seekPreviewBucket) {
+            seekPreviewFrame = null
+        }
+
+        // If the stream is not supported for remote frame extraction (e.g. HLS, live),
+        // do not attempt extraction or show an infinite loading spinner.
+        if (!isSeekPreviewSupported) {
+            isSeekPreviewLoading = false
+            return@LaunchedEffect
+        }
+
+        isSeekPreviewLoading = true
+
+        // Settle delay: On mobile touch dragging, wait 160ms for the thumb to settle
+        // before firing a heavy remote extraction across the network.
+        // On TV (discrete D-pad clicks), wait 40ms.
+        val settleDelayMs = if (isMobileScrubbing) 160L else 40L
+        delay(settleDelayMs)
 
         val frame = withTimeoutOrNull(3_500L) {
             seekPreviewProvider.frameAt(
@@ -1851,9 +1896,10 @@ fun PlayerScreen(
                 cacheOnly = false,
             )
         }
-        if (frame != null) {
+        if (frame != null && frame.positionMs == seekPreviewBucket) {
             seekPreviewFrame = frame
         }
+        isSeekPreviewLoading = false
     }
 
     // Cache already-rendered frames continuously in background.
@@ -3781,12 +3827,15 @@ fun PlayerScreen(
                 showCastButton = castAvailable && !streamNeedsHeaders,
                 showPipButton = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O,
                 seekPreviewFrame = seekPreviewFrame,
+                isSeekPreviewSupported = isSeekPreviewSupported,
+                isSeekPreviewLoading = isSeekPreviewLoading,
                 onScrubPreviewPosition = { pos ->
                     if (pos != null) {
                         isMobileScrubbing = true
                         mobileScrubPosition = pos
                     } else {
                         isMobileScrubbing = false
+                        activeSeekBucket = -1L
                     }
                 },
                 onTogglePlayPause = {
@@ -6298,7 +6347,13 @@ private suspend fun captureRenderedSeekPreview(
     val surface = playerView.videoSurfaceView ?: return@withContext null
     if (surface.width <= 0 || surface.height <= 0) return@withContext null
 
-    val output = Bitmap.createBitmap(416, 234, Bitmap.Config.ARGB_8888)
+    val (previewWidth, previewHeight) = fitSeekPreviewDimensions(
+        sourceWidth = surface.width,
+        sourceHeight = surface.height,
+        maxWidth = 416,
+        maxHeight = 234,
+    )
+    val output = Bitmap.createBitmap(previewWidth, previewHeight, Bitmap.Config.ARGB_8888)
     when (surface) {
         is TextureView -> {
             runCatching { surface.getBitmap(output) }

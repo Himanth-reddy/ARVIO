@@ -67,6 +67,23 @@ internal fun quantizeSeekPreviewPosition(positionMs: Long, durationMs: Long): Lo
     return rounded.coerceAtMost(durationMs)
 }
 
+internal fun quantizeSeekPreviewPositionWithHysteresis(
+    currentBucket: Long,
+    positionMs: Long,
+    durationMs: Long,
+    hysteresisMs: Long = 2_500L,
+): Long {
+    if (durationMs <= 0L) return 0L
+    if (currentBucket < 0L) return quantizeSeekPreviewPosition(positionMs, durationMs)
+    val clamped = positionMs.coerceIn(0L, durationMs)
+    val threshold = (PREVIEW_INTERVAL_MS / 2L) + hysteresisMs
+    if (kotlin.math.abs(clamped - currentBucket) <= threshold) {
+        return currentBucket.coerceAtMost(durationMs)
+    }
+    return quantizeSeekPreviewPosition(clamped, durationMs)
+}
+
+
 internal fun acceleratedSeekPreviewStepMs(repeatCount: Int): Long = when {
     repeatCount >= 18 -> 60_000L
     repeatCount >= 8 -> 30_000L

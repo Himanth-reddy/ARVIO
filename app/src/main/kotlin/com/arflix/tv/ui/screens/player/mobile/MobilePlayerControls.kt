@@ -12,8 +12,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +62,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewCard
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewPlaceholder
+import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -494,6 +495,8 @@ fun MobilePlayerBottomSection(
     isEpisodeListAvailable: Boolean,
     isPromptShowing: Boolean,
     seekPreviewFrame: SeekPreviewFrame? = null,
+    isSeekPreviewSupported: Boolean = true,
+    isSeekPreviewLoading: Boolean = false,
     onOpenSources: () -> Unit,
     onOpenEpisodes: () -> Unit,
     onOpenAudio: () -> Unit,
@@ -610,34 +613,33 @@ fun MobilePlayerBottomSection(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(28.dp)
+                    .height(36.dp)
                     .onSizeChanged { trackWidthPx = it.width }
                     .pointerInput(durationMs) {
-                        detectTapGestures { offset ->
-                            if (trackWidthPx > 0 && durationMs > 0) {
-                                val pct = (offset.x / trackWidthPx).coerceIn(0f, 1f)
-                                onSeekStart(pct)
-                                onSeekEnd()
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            if (trackWidthPx > 0 && durationMs > 0L) {
+                                val initialPct = (down.position.x / trackWidthPx).coerceIn(0f, 1f)
+                                onSeekStart(initialPct)
+                                down.consume()
+                            }
+
+                            val pointerId = down.id
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                if (!change.pressed) {
+                                    change.consume()
+                                    onSeekEnd()
+                                    break
+                                }
+                                if (trackWidthPx > 0 && durationMs > 0L) {
+                                    val currentPct = (change.position.x / trackWidthPx).coerceIn(0f, 1f)
+                                    onSeekMove(currentPct)
+                                    change.consume()
+                                }
                             }
                         }
-                    }
-                    .pointerInput(durationMs) {
-                        detectHorizontalDragGestures(
-                            onDragStart = { offset ->
-                                if (trackWidthPx > 0) {
-                                    val pct = (offset.x / trackWidthPx).coerceIn(0f, 1f)
-                                    onSeekStart(pct)
-                                }
-                            },
-                            onHorizontalDrag = { change, _ ->
-                                if (trackWidthPx > 0) {
-                                    val pct = (change.position.x / trackWidthPx).coerceIn(0f, 1f)
-                                    onSeekMove(pct)
-                                }
-                            },
-                            onDragEnd = { onSeekEnd() },
-                            onDragCancel = { onSeekEnd() }
-                        )
                     },
                 contentAlignment = Alignment.CenterStart
             ) {
@@ -701,8 +703,12 @@ fun MobilePlayerBottomSection(
                         .roundToInt()
                 } else 0
 
+                val showPreview = isScrubbing && durationMs > 0L && (
+                    isSeekPreviewSupported || seekPreviewFrame != null
+                )
+
                 androidx.compose.animation.AnimatedVisibility(
-                    visible = isScrubbing && durationMs > 0L,
+                    visible = showPreview,
                     enter = fadeIn(animationSpec = tween(90)),
                     exit = fadeOut(animationSpec = tween(70)),
                     modifier = Modifier
@@ -712,15 +718,14 @@ fun MobilePlayerBottomSection(
                         .width(previewCardWidth)
                         .wrapContentHeight(align = Alignment.Top, unbounded = true),
                 ) {
-                    val frame = seekPreviewFrame
-                    if (frame != null) {
+                    if (seekPreviewFrame != null) {
                         SeekPreviewCard(
-                            frame = frame,
+                            frame = seekPreviewFrame,
                             cornerRadius = 8.dp,
                             timestamp = formatTime(displayPos),
                             modifier = Modifier.fillMaxWidth()
                         )
-                    } else {
+                    } else if (isSeekPreviewSupported && isSeekPreviewLoading) {
                         SeekPreviewPlaceholder(
                             cornerRadius = 8.dp,
                             timestamp = formatTime(displayPos),
