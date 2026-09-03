@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -24,12 +25,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arflix.tv.MainActivity
+import com.arflix.tv.R
 import com.arflix.tv.ui.components.QrCodeImage
 import com.arflix.tv.ui.theme.ArflixTvTheme
 import com.arflix.tv.util.DeviceType
@@ -39,6 +42,20 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 class CrashReportActivity : ComponentActivity() {
+
+    override fun attachBaseContext(newBase: Context) {
+        val tag = newBase.getSharedPreferences("app_locale", Context.MODE_PRIVATE)
+            .getString("locale_tag", null)
+        if (!tag.isNullOrEmpty()) {
+            val locale = Locale.forLanguageTag(tag)
+            Locale.setDefault(locale)
+            val config = Configuration(newBase.resources.configuration)
+            config.setLocale(locale)
+            super.attachBaseContext(newBase.createConfigurationContext(config))
+        } else {
+            super.attachBaseContext(newBase)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -141,7 +158,7 @@ fun CrashReportScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                text = "⚠️ ARVIO Encountered an Error",
+                text = stringResource(R.string.crash_title),
                 color = Color.White,
                 fontSize = if (isTv) 26.sp else 22.sp,
                 fontWeight = FontWeight.Bold,
@@ -150,9 +167,9 @@ fun CrashReportScreen(
 
             Text(
                 text = if (isTv) {
-                    "Scan the QR code below with your phone camera to automatically copy the crash report & open our Discord bug channel."
+                    stringResource(R.string.crash_desc_tv)
                 } else {
-                    "We apologize for the interruption. You can report this crash directly to our Discord channel to help us fix it."
+                    stringResource(R.string.crash_desc_mobile)
                 },
                 color = Color(0xFFA0A6B2),
                 fontSize = 14.sp,
@@ -176,7 +193,7 @@ fun CrashReportScreen(
                 }
 
                 Text(
-                    text = "Scan to open arvio.tv — 1 tap to copy report & jump into Discord.",
+                    text = stringResource(R.string.crash_qr_hint),
                     color = Color(0xFF00F0D0),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -195,7 +212,7 @@ fun CrashReportScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Crash Reference Details",
+                        text = stringResource(R.string.crash_details_title),
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -222,7 +239,7 @@ fun CrashReportScreen(
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("ARVIO Crash Report", formattedReport)
                             clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Crash details copied! Opening Discord...", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, R.string.crash_copied_toast, Toast.LENGTH_LONG).show()
 
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(CrashReportActivity.DISCORD_BUG_CHANNEL_URL)).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -233,7 +250,7 @@ fun CrashReportScreen(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Report on Discord", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.crash_report_discord), color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
@@ -255,7 +272,7 @@ fun CrashReportScreen(
                             }
                         )
                 ) {
-                    Text("Restart ARVIO", color = Color.Black, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.crash_restart_app), color = Color.Black, fontWeight = FontWeight.Bold)
                 }
             }
         }
