@@ -35,6 +35,7 @@ import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.ContentRating
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -2927,7 +2928,10 @@ class MediaRepository @Inject constructor(
             val details = detailsDeferred.await()
             val imdbId = externalIdsDeferred.await()?.imdbId?.also { cacheImdbId(MediaType.MOVIE, movieId, it) }
             val imdbRating = imdbId?.let { getImdbRating(MediaType.MOVIE, movieId, it) }
-            details.toMediaItem().copy(imdbRating = imdbRating.orEmpty())
+            details.toMediaItem().copy(
+                imdbRating = imdbRating.orEmpty(),
+                contentRating = ContentRating.forMovie(details.releaseDates, contentLanguage)
+            )
         }
         cacheFullDetailsItem(item)
         return item
@@ -2957,7 +2961,10 @@ class MediaRepository @Inject constructor(
             val details = detailsDeferred.await()
             val imdbId = externalIdsDeferred.await()?.imdbId?.also { cacheImdbId(MediaType.TV, tvId, it) }
             val imdbRating = imdbId?.let { getImdbRating(MediaType.TV, tvId, it) }
-            details.toMediaItem().copy(imdbRating = imdbRating.orEmpty())
+            details.toMediaItem().copy(
+                imdbRating = imdbRating.orEmpty(),
+                contentRating = ContentRating.forTv(details.contentRatings, contentLanguage)
+            )
         }
         cacheFullDetailsItem(item)
         return item

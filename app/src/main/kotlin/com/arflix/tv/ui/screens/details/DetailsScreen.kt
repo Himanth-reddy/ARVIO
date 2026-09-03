@@ -1577,6 +1577,22 @@ private fun DetailsContent(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
+                                item.contentRating?.let { contentRating ->
+                                    if (ratingValue > 0f || displayDate.isNotEmpty() || hasDuration) {
+                                        MobileMetadataSeparator()
+                                    }
+                                    Text(
+                                        text = contentRating,
+                                        style = ArflixTypography.caption.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            shadow = textShadow
+                                        ),
+                                        color = Color.White.copy(alpha = 0.78f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
 
                             if (externalRatings.isNotEmpty()) {
@@ -2210,6 +2226,20 @@ private fun DetailsContent(
                             Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
                             Text(
                                 text = item.duration,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                        }
+
+                        item.contentRating?.let { contentRating ->
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                            Text(
+                                text = contentRating,
                                 style = ArflixTypography.caption.copy(
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,

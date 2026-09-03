@@ -16,6 +16,9 @@ data class MediaItem(
     val year: String = "",
     val releaseDate: String? = null,
     val rating: String = "",
+    // Age certification, already labelled for display ("FSK 16", "R", "US · R").
+    // Null when TMDB has none for the content country or the US fallback.
+    val contentRating: String? = null,
     val duration: String = "",
     val imdbRating: String = "",
     val tmdbRating: String = "",
