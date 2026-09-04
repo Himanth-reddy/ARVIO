@@ -2634,7 +2634,7 @@ fun PlayerScreen(
                 0f
             }
             isPlaying = exoPlayer.isPlaying
-            isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
+            isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING && exoPlayer.playWhenReady
 
             // Update Discord RPC
             val titleVal = latestUiState.title
@@ -3843,6 +3843,8 @@ fun PlayerScreen(
                         if (castManager.isRemotePlaying()) castManager.pause() else castManager.play()
                     } else {
                         playerEngine.togglePlayPause()
+                        isPlaying = exoPlayer.isPlaying
+                        isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING && exoPlayer.playWhenReady
                     }
                 },
                 onSeekTo = { targetMs ->
@@ -4016,7 +4018,7 @@ fun PlayerScreen(
                     if (isCasting) {
                         if (castManager.isRemotePlaying()) castManager.pause() else castManager.play()
                     } else {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        if (exoPlayer.playWhenReady) exoPlayer.pause() else exoPlayer.play()
                     }
                 },
                 onSeekTo = { targetMs: Long ->

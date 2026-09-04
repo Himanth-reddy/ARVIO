@@ -110,9 +110,10 @@ fun MobilePlayerTopBar(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             MobileIconButton(
-                iconRes = R.drawable.ic_huge_cancel,
-                contentDescription = "Close",
-                onClick = onClose
+                iconRes = R.drawable.ic_huge_arrow_left,
+                contentDescription = "Back",
+                onClick = onClose,
+                size = 24.dp
             )
             MobileIconButton(
                 iconRes = R.drawable.ic_huge_lock,
@@ -191,26 +192,19 @@ fun MobilePlayerCenterControls(
 
         Spacer(modifier = Modifier.width(48.dp))
 
-        // Play/Pause or Buffer Spinner
+        // Play/Pause button (center spinner is hoisted to persistent unified overlay)
         Box(
             modifier = Modifier
                 .size(56.dp)
                 .clip(CircleShape)
                 .clickable(
-                    enabled = !isBuffering,
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = onTogglePlayPause
                 ),
             contentAlignment = Alignment.Center
         ) {
-            if (isBuffering) {
-                CircularProgressIndicator(
-                    color = MobilePlayerTokens.InkPrimary,
-                    strokeWidth = 3.dp,
-                    modifier = Modifier.size(38.dp)
-                )
-            } else {
+            if (!isBuffering) {
                 Icon(
                     painter = painterResource(if (isPlaying) R.drawable.ic_huge_pause else R.drawable.ic_huge_play),
                     contentDescription = if (isPlaying) "Pause" else "Play",
@@ -599,10 +593,15 @@ fun MobilePlayerBottomSection(
                 animationSpec = tween(150),
                 label = "trackHeight"
             )
-            val thumbScale by animateFloatAsState(
-                targetValue = if (isScrubbing) 1.25f else 1f,
+            val needleWidth by animateDpAsState(
+                targetValue = if (isScrubbing) 4.dp else 2.5.dp,
                 animationSpec = tween(150),
-                label = "thumbScale"
+                label = "needleWidth"
+            )
+            val needleHeight by animateDpAsState(
+                targetValue = if (isScrubbing) 18.dp else 12.dp,
+                animationSpec = tween(150),
+                label = "needleHeight"
             )
 
             Box(
@@ -669,30 +668,21 @@ fun MobilePlayerBottomSection(
                     )
                 }
 
-                // Thumb: Style A - Stroke-Rounded Ring Thumb matching Hugeicons
+                // Playhead Needle: Modern precision scrubber (zero circular blob)
                 val density = LocalDensity.current
-                val thumbSizeDp = 14.dp * thumbScale
-                val thumbSizePx = with(density) { thumbSizeDp.toPx() }
-                val thumbOffsetPx = if (trackWidthPx > thumbSizePx) {
-                    (progressFraction * (trackWidthPx - thumbSizePx)).coerceIn(0f, trackWidthPx - thumbSizePx)
+                val needleWidthPx = with(density) { needleWidth.toPx() }
+                val needleOffsetPx = if (trackWidthPx > needleWidthPx) {
+                    (progressFraction * (trackWidthPx - needleWidthPx)).coerceIn(0f, trackWidthPx - needleWidthPx)
                 } else 0f
 
                 Box(
                     modifier = Modifier
-                        .offset { IntOffset(thumbOffsetPx.roundToInt(), 0) }
-                        .shadow(if (isScrubbing) 6.dp else 2.dp, CircleShape)
-                        .size(thumbSizeDp)
-                        .border(width = 2.dp, color = Color.White, shape = CircleShape)
-                        .background(Color(0xEE121316), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Center optical pip
-                    Box(
-                        modifier = Modifier
-                            .size(if (isScrubbing) 4.5.dp else 3.5.dp)
-                            .background(Color.White, CircleShape)
-                    )
-                }
+                        .offset { IntOffset(needleOffsetPx.roundToInt(), 0) }
+                        .shadow(if (isScrubbing) 6.dp else 2.dp, RoundedCornerShape(2.dp))
+                        .size(width = needleWidth, height = needleHeight)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.White)
+                )
 
                 // Floating seek thumbnail preview card
                 val previewCardWidth = 150.dp

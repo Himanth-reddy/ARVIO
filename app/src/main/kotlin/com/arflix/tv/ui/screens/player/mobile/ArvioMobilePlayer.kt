@@ -956,17 +956,27 @@ fun ArvioMobilePlayer(
             modifier = Modifier.align(Alignment.Center)
         )
 
-        // ── Buffering Overlay (when controls are hidden) ──
+        // ── Unified Independent Buffering Overlay (Persistent across showControls toggles) ──
         AnimatedVisibility(
-            visible = hasPlaybackStarted && isBuffering && !showControls && !isLocked && uiState.error == null,
+            visible = hasPlaybackStarted && isBuffering && !isLocked && uiState.error == null,
             enter = fadeIn(tween(160)),
             exit = fadeOut(tween(200)),
             modifier = Modifier
-                .fillMaxSize()
+                .align(Alignment.Center)
                 .zIndex(15f)
         ) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {
+                            onTogglePlayPause()
+                            showControls = true
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator(

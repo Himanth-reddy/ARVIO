@@ -58,7 +58,7 @@ class ExoPlayerEngine(
                             durationMs = exoPlayer.duration.coerceAtLeast(0L),
                             bufferedPositionMs = exoPlayer.bufferedPosition.coerceAtLeast(0L),
                             isPlaying = exoPlayer.isPlaying,
-                            isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING,
+                            isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING && exoPlayer.playWhenReady,
                             hasPlaybackStarted = current.hasPlaybackStarted || (exoPlayer.currentPosition > 0L)
                         )
                     }
@@ -75,7 +75,7 @@ class ExoPlayerEngine(
                 durationMs = exoPlayer.duration.coerceAtLeast(0L),
                 bufferedPositionMs = exoPlayer.bufferedPosition.coerceAtLeast(0L),
                 isPlaying = exoPlayer.isPlaying,
-                isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING,
+                isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING && exoPlayer.playWhenReady,
                 playbackSpeed = exoPlayer.playbackParameters.speed,
                 volume = exoPlayer.volume
             )
@@ -91,7 +91,7 @@ class ExoPlayerEngine(
     }
 
     override fun togglePlayPause() {
-        if (exoPlayer.isPlaying) {
+        if (exoPlayer.playWhenReady) {
             exoPlayer.pause()
         } else {
             exoPlayer.play()
@@ -178,7 +178,7 @@ class ExoPlayerEngine(
     }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
-        val isBuffering = playbackState == Player.STATE_BUFFERING
+        val isBuffering = playbackState == Player.STATE_BUFFERING && exoPlayer.playWhenReady
         _state.update {
             it.copy(
                 isBuffering = isBuffering,
@@ -186,6 +186,11 @@ class ExoPlayerEngine(
                 bufferedPositionMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
             )
         }
+    }
+
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        val isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING && playWhenReady
+        _state.update { it.copy(isBuffering = isBuffering) }
     }
 
     override fun onTracksChanged(tracks: Tracks) {
