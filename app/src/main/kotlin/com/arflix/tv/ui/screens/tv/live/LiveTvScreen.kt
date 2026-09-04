@@ -1091,6 +1091,9 @@ fun LiveTvScreen(
         availableChannelIds = LiveTvStartup.channelIds(state.snapshot.channels),
     )
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
+    // The focused row's channel object, reported by the row itself on focus. Not saveable —
+    // it is rebuilt on the next focus event, and only the id needs to survive process death.
+    var focusedChannelObject by remember { mutableStateOf<EnrichedChannel?>(null) }
     var epgPrefetchAnchorId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
     var startupChannelApplied by rememberSaveable(selectedProviderId) { mutableStateOf(false) }
     var playingCatchupProgram by remember { mutableStateOf<IptvProgram?>(null) }
@@ -1099,6 +1102,12 @@ fun LiveTvScreen(
     val pendingFocusCommit = remember { arrayOf<Pair<String, String>?>(null) }
     val focusCommitJob = remember { arrayOf<Job?>(null) }
     fun commitFocusedChannel(channel: EnrichedChannel) {
+        // Recorded immediately, ahead of the debounce below: the long-press gesture needs
+        // the focused row's actual channel object. Resolving it from
+        // visibleEnrichedState.index.byId instead returns null for any favourite outside
+        // the paged window, so the menu silently did nothing on those rows while the mouse
+        // path — which gets the object straight from the row — still worked.
+        focusedChannelObject = channel
         pendingFocusCommit[0] = channel.id to selectedCategoryId
         focusCommitJob[0]?.cancel()
         focusCommitJob[0] = focusCommitScope.launch {
@@ -2902,8 +2911,13 @@ fun LiveTvScreen(
                             channelMenu == null &&
                             focusZone == LiveTvFocusZone.CHANNEL_LIST
                         ) {
-                            val focusedChannel = focusedChannelId
-                                ?.let { id -> visibleEnrichedState.value.index.byId[id] }
+                            // Prefer the object the focused row reported; fall back to the
+                            // index only when there is none. The index covers just the paged
+                            // window, so it cannot resolve an out-of-window favourite.
+                            val focusedChannel =
+                                focusedChannelObject?.takeIf { it.id == focusedChannelId }
+                                    ?: focusedChannelId
+                                        ?.let { id -> visibleEnrichedState.value.index.byId[id] }
                             when {
                                 event.type == KeyEventType.KeyDown &&
                                     event.nativeKeyEvent.repeatCount == 0 -> {
