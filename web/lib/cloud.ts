@@ -1280,6 +1280,10 @@ const liveAddonIdMarkers = [
   "sports"
 ];
 
+// Internal stream providers whose IDs contain "iptv" but serve on-demand
+// movies and episodes. Keep this exact so regular IPTV add-ons remain live.
+const explicitVodStreamAddonIds = new Set(["iptv_xtream_vod"]);
+
 const vodTypes = new Set(["movie", "film", "series", "show", "anime"]);
 const liveTypes = new Set(["tv", "channel", "channels", "live", "sport", "sports", "tvchannel", "live_tv", "livestream"]);
 
@@ -1293,6 +1297,7 @@ function addonTypes(addon: InstalledAddon): string[] {
 
 function isLiveAddonId(value?: string | null): boolean {
   const id = (value ?? "").trim().toLowerCase();
+  if (explicitVodStreamAddonIds.has(id)) return false;
   if (!id || id.includes("cinemeta") || id.includes("tmdb") || id.includes("torrentio")) return false;
   return liveAddonIdMarkers.some((marker) => id.includes(marker));
 }
