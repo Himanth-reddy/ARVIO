@@ -3824,7 +3824,7 @@ fun PlayerScreen(
                 currentPlaybackSpeed = playerEngine.state.value.playbackSpeed,
                 aspectModeLabel = aspectModeLabel,
                 isCasting = isCasting,
-                showCastButton = castAvailable && !streamNeedsHeaders,
+                showCastButton = true,
                 showPipButton = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O,
                 seekPreviewFrame = seekPreviewFrame,
                 isSeekPreviewSupported = isSeekPreviewSupported,

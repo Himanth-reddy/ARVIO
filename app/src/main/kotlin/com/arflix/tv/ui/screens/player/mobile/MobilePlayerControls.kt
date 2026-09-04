@@ -552,14 +552,14 @@ fun MobilePlayerBottomSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 MobileIconButton(
-                    iconRes = R.drawable.ic_huge_layers,
+                    iconRes = R.drawable.ic_huge_film,
                     contentDescription = "Sources",
                     size = 20.dp,
                     onClick = onOpenSources
                 )
                 if (isEpisodeListAvailable) {
                     MobileIconButton(
-                        iconRes = R.drawable.ic_huge_playlist,
+                        iconRes = R.drawable.ic_huge_list_video,
                         contentDescription = "Episodes",
                         size = 20.dp,
                         onClick = onOpenEpisodes
@@ -759,7 +759,7 @@ fun MobilePlayerBottomSection(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_huge_headphones),
+                    painter = painterResource(R.drawable.ic_huge_speaker),
                     contentDescription = null,
                     tint = MobilePlayerTokens.InkSecondary,
                     modifier = Modifier.size(15.dp)

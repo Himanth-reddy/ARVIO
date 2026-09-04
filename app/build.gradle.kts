@@ -204,6 +204,7 @@ android {
             // Vendored media3 1.9.0 Matroska extractor with Dolby Vision P7 sample hooks
             // (see dvmkv/package-info.java for the re-vendoring procedure on media3 bumps).
             java.srcDir("src/main/dvmkv-java")
+            res.srcDir("src/main/res-player")
         }
     }
 
