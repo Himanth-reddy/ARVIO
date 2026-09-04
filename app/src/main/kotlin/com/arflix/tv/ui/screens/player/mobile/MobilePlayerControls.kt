@@ -801,6 +801,7 @@ fun MobilePlayerBottomSection(
             )
 
             // Subtitles chip
+            val isSubtitleOff = currentSubtitleTrack.isBlank() || currentSubtitleTrack.equals("Off", ignoreCase = true)
             Row(
                 modifier = Modifier
                     .clickable(
@@ -813,14 +814,14 @@ fun MobilePlayerBottomSection(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_huge_subtitles),
+                    painter = painterResource(if (isSubtitleOff) R.drawable.ic_huge_captions_off else R.drawable.ic_huge_captions),
                     contentDescription = null,
-                    tint = MobilePlayerTokens.InkSecondary,
+                    tint = if (isSubtitleOff) MobilePlayerTokens.InkSecondary else MobilePlayerTokens.InkPrimary,
                     modifier = Modifier.size(15.dp)
                 )
                 Text(
-                    text = if (currentSubtitleTrack.isBlank() || currentSubtitleTrack.equals("Off", ignoreCase = true)) "Subtitles Off" else "Subtitles: $currentSubtitleTrack",
-                    color = MobilePlayerTokens.InkSecondary,
+                    text = if (isSubtitleOff) "Subtitles Off" else "Subtitles: $currentSubtitleTrack",
+                    color = if (isSubtitleOff) MobilePlayerTokens.InkSecondary else MobilePlayerTokens.InkPrimary,
                     fontSize = 12.5.sp,
                     style = androidx.compose.ui.text.TextStyle(
                         shadow = MobilePlayerTokens.TextShadow

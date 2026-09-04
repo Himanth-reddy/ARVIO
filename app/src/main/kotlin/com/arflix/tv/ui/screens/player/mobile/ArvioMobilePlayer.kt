@@ -643,7 +643,10 @@ fun ArvioMobilePlayer(
                         minValue = 0.0f,
                         maxValue = 1.0f,
                         getInitialValue = { brightnessLevel },
-                        onActivate = { brightnessIndicatorTrigger++ },
+                        onActivate = {
+                            showControls = false
+                            brightnessIndicatorTrigger++
+                        },
                         onValueChange = { newLevel ->
                             brightnessLevel = newLevel
                             brightnessIndicatorTrigger++
@@ -667,7 +670,10 @@ fun ArvioMobilePlayer(
                         minValue = 0.0f,
                         maxValue = 1.0f,
                         getInitialValue = { volumeLevel },
-                        onActivate = { volumeIndicatorTrigger++ },
+                        onActivate = {
+                            showControls = false
+                            volumeIndicatorTrigger++
+                        },
                         onValueChange = { newLevel ->
                             volumeLevel = newLevel
                             volumeIndicatorTrigger++
