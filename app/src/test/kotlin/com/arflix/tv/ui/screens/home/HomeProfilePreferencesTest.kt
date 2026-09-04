@@ -30,6 +30,23 @@ class HomeProfilePreferencesTest {
     }
 
     @Test
+    fun `IPTV favorites Home preference updates without recreating Home`() = runTest {
+        val profileId = MutableStateFlow("primary")
+        val preferences = MutableStateFlow<Preferences>(mutablePreferencesOf())
+
+        observeHomeProfilePreferences(profileId, preferences).test {
+            assertThat(awaitItem().iptvFavoritesOnHome).isTrue()
+
+            preferences.value = mutablePreferencesOf(
+                booleanPreferencesKey("profile_primary_iptv_favorites_on_home") to false
+            )
+
+            assertThat(awaitItem().iptvFavoritesOnHome).isFalse()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `profile switch reads only the selected profile settings`() = runTest {
         val profileId = MutableStateFlow("primary")
         val preferences = MutableStateFlow<Preferences>(
@@ -64,6 +81,7 @@ class HomeProfilePreferencesTest {
         assertThat(settings.trailerDelaySeconds).isEqualTo(2)
         assertThat(settings.trailerInCards).isTrue()
         assertThat(settings.showBudget).isTrue()
+        assertThat(settings.iptvFavoritesOnHome).isTrue()
         assertThat(settings.clockFormat).isEqualTo("24h")
         assertThat(settings.smoothScrolling).isFalse()
         assertThat(settings.contentLanguage).isEqualTo("en-US")

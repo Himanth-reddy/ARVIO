@@ -52,10 +52,18 @@ object LiveTvStartup {
         favoriteChannelIds: List<String>,
         isFullyLoaded: Boolean,
     ): String? {
+        // Prefer the in-window match so the guide can also scroll to it.
         explicitChannelId
             ?.takeIf { it in availableChannelIds }
             ?.let { return it }
-        if (explicitChannelId != null && !isFullyLoaded) return null
+        // Still honour it when it is NOT in availableChannelIds. A caller-supplied channel
+        // (Home's Favorite TV row, launcher deep links) is an instruction, not a hint, and
+        // on a large playlist it is routinely outside the currently paged category window.
+        // Falling through from here returned firstAvailableChannelId — a completely
+        // unrelated channel — which is what made picking a favourite on Home tune channel
+        // #1. LiveTvScreen hydrates an out-of-window channel by id from the store, so
+        // returning it here is safe.
+        if (explicitChannelId != null) return explicitChannelId
 
         if (hasOpenedBefore) {
             sessionLastChannelId

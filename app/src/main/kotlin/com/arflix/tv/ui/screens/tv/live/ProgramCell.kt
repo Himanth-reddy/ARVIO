@@ -40,14 +40,17 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import com.arflix.tv.util.LocalDeviceType
 
 /**
@@ -77,6 +80,7 @@ fun ProgramCell(
 ) {
     val deviceType = LocalDeviceType.current
     val isTouchDevice = deviceType.isTouchDevice()
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var focused by remember { mutableStateOf(false) }
     val baseBg = when {
         isNow -> LiveColors.FocusBg
@@ -161,7 +165,7 @@ fun ProgramCell(
                 if (focusable) {
                     Modifier.onKeyEvent { ev ->
                         if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
-                        when (ev.key) {
+                        when (ev.key.mirrorHorizontalForRtl(isRtl)) {
                             Key.DirectionLeft -> onMoveLeft()
                             Key.DirectionRight -> onMoveRight()
                             Key.DirectionUp -> onMoveUp()

@@ -1990,6 +1990,38 @@ class IptvRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "toggle favorite channel")
     }
 
+    /**
+     * Reorders a channel within the favourites list.
+     *
+     * The stored order is the display order everywhere favourites are surfaced — the Live TV
+     * favourites category and the home "Favorite TV" row both iterate this list — so moving an
+     * entry here is what "move up" means to the user. [delta] is negative to move earlier.
+     * No-ops when the channel is not a favourite or is already at the end it is moving toward.
+     */
+    suspend fun moveFavoriteChannel(channelId: String, delta: Int) {
+        val trimmed = channelId.trim()
+        if (trimmed.isEmpty() || delta == 0) return
+        var changed = false
+        context.settingsDataStore.edit { prefs ->
+            val existing = decodeFavoriteChannels(prefs).toMutableList()
+            val from = existing.indexOf(trimmed)
+            if (from < 0) return@edit
+            val to = (from + delta).coerceIn(0, existing.lastIndex)
+            if (to == from) return@edit
+            existing.removeAt(from)
+            existing.add(to, trimmed)
+            prefs[favoriteChannelsKey()] = gson.toJson(existing)
+            changed = true
+        }
+        if (changed) {
+            invalidationBus.markDirty(
+                CloudSyncScope.IPTV,
+                profileManager.getProfileIdSync(),
+                "move favorite channel"
+            )
+        }
+    }
+
     suspend fun loadSnapshot(
         forcePlaylistReload: Boolean = false,
         forceEpgReload: Boolean = false,

@@ -39,17 +39,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvNowNext
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 
 /**
  * Channel column row — spec §3.4, mockup layout:
@@ -69,20 +71,28 @@ fun ChannelRow(
     isFavorite: Boolean,
     stripe: Boolean = false,
     onClick: () -> Unit,
-    onFavoriteToggle: () -> Unit,
+    /**
+     * Long-press / MENU: opens the channel menu (favourite, reorder, variants).
+     * [fromKeyHold] is true when this came from a held OK on the D-pad, which keeps
+     * auto-repeating afterwards and so needs the rest of the press suppressed.
+     */
+    onLongPress: (fromKeyHold: Boolean) -> Unit = {},
     onMoveLeft: () -> Unit = {},
     onMoveRight: () -> Boolean = { false },
     onMoveUp: () -> Boolean = { false },
     onMoveDown: () -> Boolean = { false },
     onFocused: () -> Unit = {},
     variantCount: Int = 1,
-    onOpenVariants: () -> Unit = {},
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
     val visuallyFocused = focused || forceFocused
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    // Latches for the duration of one long press so the trailing repeats and the KeyUp
+    // can be swallowed before combinedClickable turns them into a click.
+    var longPressConsumed by remember { mutableStateOf(false) }
     val bg = when {
         visuallyFocused -> LiveColors.PanelRaised
         isActive -> LiveColors.FocusBg
@@ -118,9 +128,47 @@ fun ChannelRow(
             )
             .background(if (visuallyFocused) LiveColors.PanelRaised else bg)
             .focusable()
+            // Long-press / MENU opens the channel menu. This has to live in the PREVIEW
+            // phase, ahead of combinedClickable: combinedClickable arms a click on the
+            // initial KeyDown and completes it on KeyUp, so handling the long press in a
+            // bubble-phase onKeyEvent (as this used to) left the KeyUp untouched and the
+            // channel opened *as well as* the long-press action firing. Swallowing the
+            // whole press — repeats and release — is what keeps the two apart.
             .onPreviewKeyEvent { ev ->
+                // OK/Enter is owned entirely here rather than shared with
+                // combinedClickable. combinedClickable arms on KeyDown and fires on KeyUp
+                // with its own long-press timer, so splitting the gesture across the two
+                // raced: the hold opened the menu *and* the release still counted as a
+                // click, tuning the channel. Every select key is consumed below, and the
+                // short-press click is dispatched explicitly on release. combinedClickable
+                // keeps handling pointer input (mouse / touch long-press), which is a
+                // separate path and unaffected.
+                val isSelectKey = ev.key == Key.DirectionCenter || ev.key == Key.Enter
+                if (isSelectKey) {
+                    if (ev.type == KeyEventType.KeyDown) {
+                        if (ev.nativeKeyEvent.repeatCount == 0) {
+                            // Start of a fresh press. Clear the latch here rather than on
+                            // release: once the long press opens the menu, the menu's own
+                            // handler swallows the release, so a latch cleared only on
+                            // KeyUp would stay set and silently eat the next short press.
+                            longPressConsumed = false
+                        } else if (!longPressConsumed) {
+                            // repeatCount >= 1 is the platform auto-repeat a held OK
+                            // produces on a real remote — that is the "long press".
+                            longPressConsumed = true
+                            onLongPress(true)
+                        }
+                    } else if (ev.type == KeyEventType.KeyUp && !longPressConsumed) {
+                        onClick()
+                    }
+                    return@onPreviewKeyEvent true
+                }
+                if (ev.key == Key.Menu) {
+                    if (ev.type == KeyEventType.KeyDown) onLongPress(true)
+                    return@onPreviewKeyEvent true
+                }
                 if (ev.type == KeyEventType.KeyDown) {
-                    when (ev.key) {
+                    when (ev.key.mirrorHorizontalForRtl(isRtl)) {
                         Key.DirectionLeft -> { onMoveLeft(); return@onPreviewKeyEvent true }
                         Key.DirectionRight -> if (onMoveRight()) return@onPreviewKeyEvent true
                         Key.DirectionUp -> if (onMoveUp()) return@onPreviewKeyEvent true
@@ -131,26 +179,9 @@ fun ChannelRow(
             }
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = {
-                    if (variantCount > 1) onOpenVariants() else onFavoriteToggle()
-                },
-            )
-            // Compose's combinedClickable doesn't catch DPAD long-press on
-            // every TV — the key repeats before the long-click threshold
-            // fires. Catch it here explicitly: the first repeat (native
-            // repeatCount == 1) on CENTER / ENTER / MENU triggers favorite
-            // toggle, giving the user the "hold OK" gesture everywhere.
-            .onKeyEvent { ev ->
-                val isLongHoldCenter = ev.type == KeyEventType.KeyDown &&
-                    (ev.key == Key.DirectionCenter || ev.key == Key.Enter) &&
-                    ev.nativeKeyEvent.repeatCount == 1
-                val isMenu = ev.type == KeyEventType.KeyDown && ev.key == Key.Menu
-                if (isMenu && variantCount > 1) {
-                    onOpenVariants(); true
-                } else if (isLongHoldCenter || isMenu) {
-                    onFavoriteToggle(); true
-                } else false
-            },
+                // Touch devices never reach the key handler above.
+                onLongClick = { onLongPress(false) },
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // ─ active left indicator ─────────────────────────────
