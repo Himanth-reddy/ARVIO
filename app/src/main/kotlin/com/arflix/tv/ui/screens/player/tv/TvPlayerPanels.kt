@@ -195,6 +195,7 @@ private fun TvSubtitleSettingRow(
 @Composable
 fun TvSubtitleMenu(
     isVisible: Boolean,
+    selectedSubtitle: Subtitle? = null,
     audioTracks: List<AudioTrackInfo>,
     selectedAudioIndex: Int,
     activeTab: Int,
@@ -290,17 +291,21 @@ fun TvSubtitleMenu(
                                 TvTrackMenuItem(
                                     label = stringResource(R.string.off),
                                     subtitle = null,
-                                    isSelected = subtitleLangIndex == 0,
+                                    isSelected = selectedSubtitle == null,
                                     isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == 0,
                                     onClick = { onSelectSubtitle(-1) }
                                 )
                             }
-                            itemsIndexed(subtitleGroups) { idx, (lang, _) ->
+                            itemsIndexed(subtitleGroups) { idx, (lang, tracks) ->
                                 val listIdx = idx + 1
+                                val isGroupSelected = selectedSubtitle != null && tracks.any { (_, sub) ->
+                                    (sub.id != null && sub.id == selectedSubtitle.id) ||
+                                        (selectedSubtitle.id.isNullOrBlank() && sub.url == selectedSubtitle.url)
+                                }
                                 TvTrackMenuItem(
                                     label = lang,
                                     subtitle = null,
-                                    isSelected = subtitleLangIndex == listIdx,
+                                    isSelected = isGroupSelected,
                                     isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == listIdx,
                                     onClick = {}
                                 )
@@ -313,16 +318,19 @@ fun TvSubtitleMenu(
                             LazyColumn(
                                 state = trackListState,
                                 modifier = Modifier
-                                    .weight(1.2f)
-                                    .fillMaxHeight(),
+                                .weight(1.2f)
+                                .fillMaxHeight(),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 itemsIndexed(selectedGroup.second) { idx, (globalIdx, sub) ->
                                     val label = sub.label?.takeIf { it.isNotBlank() } ?: "Track ${idx + 1}"
+                                    val isTrackSelected = selectedSubtitle != null &&
+                                        ((sub.id != null && sub.id == selectedSubtitle.id) ||
+                                            (selectedSubtitle.id.isNullOrBlank() && sub.url == selectedSubtitle.url))
                                     TvTrackMenuItem(
                                         label = label,
                                         subtitle = sub.provider?.takeIf { it.isNotBlank() },
-                                        isSelected = subtitleTrackIndex == idx,
+                                        isSelected = isTrackSelected,
                                         isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == idx,
                                         onClick = { onSelectSubtitle(globalIdx) }
                                     )

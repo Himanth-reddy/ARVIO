@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.player.engine.exoplayer
 
 import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
@@ -116,20 +117,22 @@ class ExoPlayerEngine(
 
     override fun selectAudioTrack(index: Int) {
         val tracks = exoPlayer.currentTracks
-        var audioGroupIndex = 0
+        var flatTrackIndex = 0
         for (group in tracks.groups) {
             if (group.type == C.TRACK_TYPE_AUDIO) {
-                if (audioGroupIndex == index) {
-                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                        .buildUpon()
-                        .setOverrideForType(
-                            TrackSelectionOverride(group.mediaTrackGroup, 0)
-                        )
-                        .build()
-                    _state.update { it.copy(selectedAudioIndex = index) }
-                    return
+                for (trackIdx in 0 until group.length) {
+                    if (flatTrackIndex == index) {
+                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                            .buildUpon()
+                            .setOverrideForType(
+                                TrackSelectionOverride(group.mediaTrackGroup, trackIdx)
+                            )
+                            .build()
+                        _state.update { it.copy(selectedAudioIndex = index) }
+                        return
+                    }
+                    flatTrackIndex++
                 }
-                audioGroupIndex++
             }
         }
     }
@@ -143,11 +146,13 @@ class ExoPlayerEngine(
             _state.update { it.copy(selectedSubtitleTrack = null) }
         } else {
             val tracks = exoPlayer.currentTracks
+            var textIndex = 0
             for (group in tracks.groups) {
                 if (group.type == C.TRACK_TYPE_TEXT) {
                     for (i in 0 until group.length) {
                         val format = group.getTrackFormat(i)
-                        if (format.id == track.id) {
+                        val resolvedId = format.id ?: textIndex.toString()
+                        if (format.id == track.id || resolvedId == track.id) {
                             exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                                 .buildUpon()
                                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
@@ -158,6 +163,7 @@ class ExoPlayerEngine(
                             _state.update { it.copy(selectedSubtitleTrack = track) }
                             return
                         }
+                        textIndex++
                     }
                 }
             }
@@ -171,6 +177,10 @@ class ExoPlayerEngine(
     override fun setVolume(volume: Float) {
         exoPlayer.volume = volume.coerceIn(0f, 1f)
         _state.update { it.copy(volume = volume, isMuted = volume == 0f) }
+    }
+
+    override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+        _state.update { it.copy(playbackSpeed = playbackParameters.speed) }
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {

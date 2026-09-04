@@ -441,6 +441,7 @@ fun PlayerScreen(
     var duration by remember { mutableLongStateOf(0L) }
     var progress by remember { mutableFloatStateOf(0f) }
     var currentPlaybackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
+    var currentPlaybackSpeed by remember { mutableFloatStateOf(1.0f) }
     var nextEpisodeTransitionInProgress by remember { mutableStateOf(false) }
 
     // Skip overlay state - shows +10/-10 without showing full controls
@@ -615,13 +616,16 @@ fun PlayerScreen(
     var showSubtitleSettings by remember { mutableStateOf(false) }
     var subtitleSettingsRow by remember { mutableIntStateOf(0) }  // 0=Delay, 1=Size, 2=Vertical
     var subtitleSyncOffsetMs by remember { mutableLongStateOf(0L) }
-    var subtitleSizePct by remember { mutableIntStateOf(100) }
-    var subtitleVerticalPct by remember {
-        mutableIntStateOf(when (uiState.subtitleOffset) {
-            "Bottom" -> 2; "Low" -> 8; "Medium" -> 15; "High" -> 25; else -> 8
-        })
+    var subtitleSizePct by remember { mutableIntStateOf(uiState.subtitleSizePct) }
+    var subtitleVerticalPct by remember { mutableIntStateOf(uiState.subtitleVerticalPct) }
+    LaunchedEffect(uiState.subtitleSizePct) {
+        subtitleSizePct = uiState.subtitleSizePct
+    }
+    LaunchedEffect(uiState.subtitleVerticalPct) {
+        subtitleVerticalPct = uiState.subtitleVerticalPct
     }
     var useVideoFrameSubtitleViewport by remember { mutableStateOf(false) }
+    var hasActiveSubtitleCues by remember { mutableStateOf(false) }
     val subtitleGroups = remember(uiState.subtitles, uiState.preferredSubtitleLang, uiState.secondarySubtitleLang, uiState.selectedStream, uiState.isAiAvailable, uiState.aiTargetLanguageName) {
         val streamSource = uiState.selectedStream?.source ?: ""
         val primaryName = getFullLanguageName(uiState.preferredSubtitleLang)
@@ -1200,6 +1204,9 @@ fun PlayerScreen(
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         currentPlaybackState = playbackState
+                        if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                            hasActiveSubtitleCues = false
+                        }
                         val stateStr = when (playbackState) {
                             Player.STATE_IDLE -> "IDLE"
                             Player.STATE_BUFFERING -> "BUFFERING"
@@ -1214,6 +1221,7 @@ fun PlayerScreen(
                     // Feed the selected text track's rendered cues to "Find best match" so it can
                     // read a built-in subtitle's timing (embedded tracks have no URL to parse).
                     override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                        hasActiveSubtitleCues = cueGroup.cues.any { !it.text.isNullOrBlank() }
                         val shouldUseVideoFrame = cueGroup.cues.requiresVideoFrameSubtitleViewport(
                             preserveAuthoredTextPositioning = latestUiState.subtitleStylized
                         )
@@ -1225,6 +1233,10 @@ fun PlayerScreen(
                             cueGroup.presentationTimeUs / 1000L,
                             cueGroup.cues.firstOrNull()?.text?.toString()
                         )
+                    }
+
+                    override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+                        currentPlaybackSpeed = playbackParameters.speed
                     }
 
                     override fun onIsPlayingChanged(playing: Boolean) {
@@ -1633,80 +1645,13 @@ fun PlayerScreen(
             scope = coroutineScope
         )
     }
-
-    val closeQuickSeekOverlay: (Boolean) -> Unit = { commitPending ->
-        if (commitPending) {
-            commitQuickSeekNow()
-        } else {
-            quickSeekCommitJob?.cancel()
-            quickSeekCommitJob = null
-        }
-        showSkipOverlay = false
-        skipPreviewPosition = 0L
-        quickSeekOriginPosition = 0L
-        seekPreviewFrame = null
-    }
-
-    val queueQuickSeek: (Long) -> Unit = queueQuickSeek@{ deltaMs ->
-        if (isCasting) {
-            if (deltaMs > 0L) castManager.skipForward(deltaMs) else castManager.skipBack(-deltaMs)
-            return@queueQuickSeek
-        }
-        if (playerReleased || duration <= 0L) return@queueQuickSeek
-
-        val now = System.currentTimeMillis()
-        val continuing = showSkipOverlay && now - lastSkipTime < QUICK_SEEK_DISMISS_DELAY_MS
-        if (!continuing) {
-            val originPosition = exoPlayer.currentPosition.coerceIn(0L, duration)
-            quickSeekOriginPosition = originPosition
-            skipPreviewPosition = originPosition
-            seekPreviewFrame = null
-        }
-        val targetPosition = (skipPreviewPosition + deltaMs).coerceIn(0L, duration)
-        skipPreviewPosition = targetPosition
-        val targetBucket = quantizeSeekPreviewPosition(targetPosition, duration)
-        val wantsPreview = abs(targetPosition - quickSeekOriginPosition) >=
-            QUICK_SEEK_PREVIEW_THRESHOLD_MS
-        seekPreviewFrame = if (wantsPreview) {
-            seekPreviewProvider.memoryFrameAt(targetBucket)
-                ?.takeIf { it.positionMs == targetBucket }
-        } else {
-            null
-        }
-        lastSkipTime = now
-        showSkipOverlay = true
-
-        quickSeekCommitJob?.cancel()
-        quickSeekCommitJob = coroutineScope.launch {
-            if (wantsPreview && allowSecondarySeekPreviewDecoder) {
-                val deadline = System.currentTimeMillis() + QUICK_SEEK_PREVIEW_COMMIT_GRACE_MS
-                while (
-                    showSkipOverlay &&
-                    skipPreviewPosition == targetPosition &&
-                    seekPreviewFrame?.positionMs != targetBucket &&
-                    System.currentTimeMillis() < deadline
-                ) {
-                    delay(16L)
-                }
-            } else {
-                delay(
-                    if (allowSecondarySeekPreviewDecoder) {
-                        QUICK_SEEK_COMMIT_DELAY_MS
-                    } else {
-                        CONSTRAINED_SEEK_COMMIT_DELAY_MS
-                    }
-                )
-            }
-            if (!playerReleased && skipPreviewPosition == targetPosition) {
-                exoPlayer.seekTo(targetPosition)
-            }
-            quickSeekCommitJob = null
-        }
-    }
-
-    // Observe audio delay & route to sync processor
+    // Observe audio delay & route to video offset renderer
     LaunchedEffect(uiState.audioDelayMs) {
-        aiRenderersFactory.syncOffsetUs.set(-uiState.audioDelayMs * 1000L)
+        aiRenderersFactory.audioDelayUs.set(uiState.audioDelayMs * 1000L)
+    }
+
+    LaunchedEffect(exoPlayer) {
+        currentPlaybackSpeed = exoPlayer.playbackParameters.speed
     }
 
     // Auto-skip intro & outro enforcement
@@ -3140,7 +3085,7 @@ fun PlayerScreen(
                         }
                         Key.MediaStop -> {
                             exoPlayer.pause()
-                            onBack()
+                            onExitPlayer()
                             return@onKeyEvent true
                         }
                         Key.MediaRewind -> {
@@ -3217,7 +3162,7 @@ fun PlayerScreen(
                         if (showControls) {
                             showControls = false
                         } else {
-                            onBack()
+                            onExitPlayer()
                         }
                         return@onKeyEvent true
                     }
@@ -3236,14 +3181,14 @@ fun PlayerScreen(
                             }
                             Key.Enter, Key.DirectionCenter -> {
                                 if (uiState.isSetupError) {
-                                    onBack()
+                                    onExitPlayer()
                                 } else {
-                                    if (errorModalFocusIndex == 0) viewModel.retry() else onBack()
+                                    if (errorModalFocusIndex == 0) viewModel.retry() else onExitPlayer()
                                 }
                                 true
                             }
                             Key.Back, Key.Escape -> {
-                                onBack()
+                                onExitPlayer()
                                 true
                             }
                             else -> false
@@ -3435,7 +3380,7 @@ fun PlayerScreen(
 
                     when (event.key) {
                         Key.Back, Key.Escape -> {
-                            onBack()
+                            onExitPlayer()
                             true
                         }
                         Key.DirectionLeft -> {
@@ -3454,7 +3399,13 @@ fun PlayerScreen(
                                 val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
                                 val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
                                 skipPreviewPosition = targetPosition
-                                exoPlayer.seekTo(targetPosition)
+                                controlsSeekJob?.cancel()
+                                controlsSeekJob = coroutineScope.launch {
+                                    delay(1200)
+                                    if (!playerReleased) {
+                                        exoPlayer.seekTo(skipPreviewPosition)
+                                    }
+                                }
                                 showSkipOverlay = true
                                 true
                             } else {
@@ -3477,7 +3428,13 @@ fun PlayerScreen(
                                 val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
                                 val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
                                 skipPreviewPosition = targetPosition
-                                exoPlayer.seekTo(targetPosition)
+                                controlsSeekJob?.cancel()
+                                controlsSeekJob = coroutineScope.launch {
+                                    delay(1200)
+                                    if (!playerReleased) {
+                                        exoPlayer.seekTo(skipPreviewPosition)
+                                    }
+                                }
                                 showSkipOverlay = true
                                 true
                             } else {
@@ -3821,7 +3778,7 @@ fun PlayerScreen(
                 bufferedPositionMs = exoPlayer.bufferedPosition,
                 audioTracks = audioTracks,
                 selectedAudioIndex = selectedAudioIndex,
-                currentPlaybackSpeed = playerEngine.state.value.playbackSpeed,
+                currentPlaybackSpeed = currentPlaybackSpeed,
                 aspectModeLabel = aspectModeLabel,
                 isCasting = isCasting,
                 showCastButton = true,
@@ -3886,6 +3843,8 @@ fun PlayerScreen(
                     }
                 },
                 onSelectPlaybackSpeed = { speed ->
+                    currentPlaybackSpeed = speed
+                    exoPlayer.setPlaybackSpeed(speed)
                     playerEngine.setPlaybackSpeed(speed)
                 },
                 onSkipIntro = {
@@ -3949,21 +3908,48 @@ fun PlayerScreen(
                     viewModel.setAutoSkipOutro(enabled)
                 },
                 onUpdateAudioDelay = { delayMs ->
+                    aiRenderersFactory.audioDelayUs.set(delayMs * 1000L)
+                    playerEngine.setAudioDelayMs(delayMs)
                     viewModel.setAudioDelayMs(delayMs)
                 },
                 onUpdateVolumeNormalization = { enabled ->
                     viewModel.setAudioNormalization(enabled)
                 },
+                onVolumeBoostChange = { db ->
+                    viewModel.setVolumeBoostDb(db)
+                },
+                onToggleLiveAudioTranslation = {
+                    viewModel.toggleLiveAudioTranslation()
+                },
+                onFindBestMatch = {
+                    viewModel.runFindBestMatch()
+                },
+                onActivateAiTranslation = {
+                    viewModel.activateAiTranslation()
+                },
+                subtitleDelayMs = subtitleSyncOffsetMs,
                 onUpdateSubtitleDelay = { delayMs ->
                     subtitleSyncOffsetMs = delayMs
                 },
+                subtitleSizePct = subtitleSizePct,
                 onUpdateSubtitleSize = { sizePct ->
                     subtitleSizePct = sizePct
-                    viewModel.setSubtitleSizePref(when {
-                        sizePct <= 80 -> "Small"
-                        sizePct >= 120 -> "Large"
-                        else -> "Medium"
-                    })
+                    viewModel.setSubtitleSizePct(sizePct)
+                },
+                subtitleVerticalPct = subtitleVerticalPct,
+                hasActiveSubtitleCues = hasActiveSubtitleCues,
+                onUpdateSubtitleVerticalPosition = { vertPct ->
+                    subtitleVerticalPct = vertPct
+                    viewModel.setSubtitleVerticalPct(vertPct)
+                },
+                onUpdateSubtitlePreload = { enabled ->
+                    viewModel.setSubtitlePreloadEnabled(enabled)
+                },
+                onUpdateFilterSubtitlesByLanguage = { enabled ->
+                    viewModel.setFilterSubtitlesByLanguage(enabled)
+                },
+                onUpdateSubtitleRemoveHearingImpaired = { enabled ->
+                    viewModel.setSubtitleRemoveHearingImpaired(enabled)
                 },
                 onUpdateSubtitleColor = { colorHex ->
                     viewModel.setSubtitleColorPref(when (colorHex.lowercase()) {
@@ -3975,6 +3961,15 @@ fun PlayerScreen(
                 },
                 onUpdateSubtitlePosition = { pos ->
                     viewModel.setSubtitleOffsetPref(if (pos == "top") "High" else "Bottom")
+                },
+                onUpdateSubtitleStyle = { style ->
+                    viewModel.setSubtitleStylePref(style)
+                },
+                onUpdateSubtitleFont = { font ->
+                    viewModel.setSubtitleFontPref(font)
+                },
+                onUpdateSubtitleStylized = { stylized ->
+                    viewModel.setSubtitleStylizedPref(stylized)
                 },
                 onBack = onExitPlayer
             )
@@ -4060,18 +4055,14 @@ fun PlayerScreen(
                 onUpdateSubtitleDelay = { delayMs: Long -> subtitleSyncOffsetMs = delayMs },
                 onUpdateSubtitleSize = { sizePct: Int ->
                     subtitleSizePct = sizePct
-                    viewModel.setSubtitleSizePref(when {
-                        sizePct <= 80 -> "Small"
-                        sizePct >= 120 -> "Large"
-                        else -> "Medium"
-                    })
+                    viewModel.setSubtitleSizePct(sizePct)
                 },
                 onUpdateSubtitleVerticalPosition = { posPct: Int ->
                     subtitleVerticalPct = posPct
-                    viewModel.setSubtitleOffsetPref(if (posPct >= 20) "High" else "Bottom")
+                    viewModel.setSubtitleVerticalPct(posPct)
                 },
                 onRetryPlayback = { viewModel.retry() },
-                onBack = onBack
+                onBack = onExitPlayer
             )
         }
 

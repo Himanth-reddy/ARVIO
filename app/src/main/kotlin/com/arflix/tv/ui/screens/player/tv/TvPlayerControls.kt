@@ -632,6 +632,7 @@ fun TvPlayerMetadataChrome(
     }
 }
 
+@Composable
 private fun buildTvPlaybackBaseMetaLine(
     uiState: PlayerUiState,
     mediaType: MediaType,
@@ -640,8 +641,8 @@ private fun buildTvPlaybackBaseMetaLine(
 ): String {
     val parts = mutableListOf<String>()
     if (mediaType == MediaType.TV) {
-        seasonNumber?.let { parts.add("Season $it") }
-        episodeNumber?.let { parts.add("Episode $it") }
+        seasonNumber?.let { parts.add(stringResource(R.string.season, it)) }
+        episodeNumber?.let { parts.add(stringResource(R.string.episode, it)) }
     } else {
         uiState.releaseYear?.trim()?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
     }

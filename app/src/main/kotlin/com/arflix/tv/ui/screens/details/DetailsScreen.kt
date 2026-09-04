@@ -290,7 +290,9 @@ fun DetailsScreen(
         )
         val validStreams = uiState.streams.filter(::isAutoPlayableStream)
         val minThreshold = minQualityThreshold(uiState.autoPlayMinQuality)
-        val selectedStream = bestAutoPlayStream(validStreams, minThreshold)
+        val isMatchingEpisode = mediaType != MediaType.TV ||
+            (identity != null && uiState.streamsEpisodeIdentity == identity)
+        val selectedStream = if (isMatchingEpisode) bestAutoPlayStream(validStreams, minThreshold) else null
 
         viewModel.recordPlayedEpisode(mediaId, identity)
         if (selectedStream != null && !uiState.isLoadingStreams) {

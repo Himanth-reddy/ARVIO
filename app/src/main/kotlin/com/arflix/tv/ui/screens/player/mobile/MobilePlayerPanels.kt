@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -45,9 +47,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +69,29 @@ import com.arflix.tv.data.model.Episode
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.ui.screens.player.AudioTrackInfo
+import com.arflix.tv.ui.screens.player.SubtitleFontOption
+import com.arflix.tv.ui.screens.player.resolveSubtitleTypeface
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import kotlin.math.abs
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.gestures.detectDragGestures
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * Shared dim scrim backdrop. Tapping dismisses any open panel.
@@ -419,64 +446,206 @@ private fun SourceRow(
 }
 
 /**
- * Audio Track Bottom Sheet.
+ * Native touch-optimized Audio Bottom Sheet.
+ * Root: Instant 1-tap audio track selection + Audio Settings entry.
+ * Sub-page: Audio Settings (Audio Delay with +/-100ms and +/-25ms stepper chips, Volume Normalization, Volume Boost, Gemini Live Voice Translation).
  */
 @Composable
 fun MobileAudioTrackSheet(
     visible: Boolean,
     audioTracks: List<AudioTrackInfo>,
     selectedAudioIndex: Int,
+    volumeLevelPct: Float,
+    volumeBoostDb: Int,
+    audioDelayMs: Long,
+    volumeNormalization: Boolean,
+    isLiveAudioTranslating: Boolean,
     onSelectAudio: (AudioTrackInfo) -> Unit,
+    onUpdateVolumeLevel: (Float) -> Unit,
+    onVolumeBoostChange: (Int) -> Unit = {},
+    onUpdateAudioDelay: (Long) -> Unit,
+    onToggleVolumeNorm: (Boolean) -> Unit,
+    onToggleLiveAudioTranslation: () -> Unit,
     onClose: () -> Unit,
+    initialTab: String = "tracks",
+    initialView: String = initialTab,
     modifier: Modifier = Modifier
 ) {
+    val viewStack = remember(visible, initialView) {
+        mutableStateListOf(
+            when (initialView) {
+                "settings", "audiosettings" -> "audiosettings"
+                "delay", "audiodelay" -> "audiodelay"
+                else -> "root"
+            }
+        )
+    }
+
+    LaunchedEffect(visible, initialView) {
+        if (visible) {
+            viewStack.clear()
+            viewStack.add(
+                when (initialView) {
+                    "settings", "audiosettings" -> "audiosettings"
+                    "delay", "audiodelay" -> "audiodelay"
+                    else -> "root"
+                }
+            )
+        }
+    }
+
+    BackHandler(enabled = visible && viewStack.size > 1) {
+        viewStack.removeAt(viewStack.lastIndex)
+    }
+
+    val currentView = viewStack.lastOrNull() ?: "root"
+    val title = when (currentView) {
+        "audiodelay" -> "Audio Delay"
+        "audiosettings" -> "Audio Settings"
+        else -> "Audio"
+    }
+
     MobileBottomSheetBase(
         visible = visible,
-        title = "Audio Track",
+        title = title,
+        showBackButton = viewStack.size > 1,
+        onBack = { if (viewStack.size > 1) viewStack.removeAt(viewStack.lastIndex) },
         onClose = onClose,
+        headerExtra = null,
         modifier = modifier
     ) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            itemsIndexed(audioTracks) { index, track ->
-                val isActive = index == selectedAudioIndex
-                val trackTitle = track.label?.takeIf { it.isNotBlank() }
-                    ?: track.language?.takeIf { it.isNotBlank() }
-                    ?: "Audio ${index + 1}"
-
-                Row(
+        when (currentView) {
+            "audiodelay" -> {
+                DelayAdjusterContent(
+                    title = "Audio Delay",
+                    delayMs = audioDelayMs,
+                    minMs = -5000L,
+                    maxMs = 5000L,
+                    onUpdateDelay = onUpdateAudioDelay
+                )
+            }
+            "audiosettings" -> {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(MobilePlayerTokens.ShapeCard)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {
-                                onSelectAudio(track)
-                                onClose()
-                            }
-                        )
-                        .padding(horizontal = 14.dp, vertical = 13.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 10.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = trackTitle,
-                        color = if (isActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
-                        fontSize = 14.sp,
-                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal
+                    SectionHeader("ENHANCEMENTS")
+                    ToggleRow(
+                        label = "Volume Normalization",
+                        checked = volumeNormalization,
+                        onToggle = { onToggleVolumeNorm(!volumeNormalization) }
                     )
 
-                    if (isActive) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = MobilePlayerTokens.InkPrimary,
-                            modifier = Modifier.size(18.dp)
+                    ToggleRow(
+                        label = "Gemini Live Voice Translation",
+                        checked = isLiveAudioTranslating,
+                        onToggle = onToggleLiveAudioTranslation
+                    )
+                }
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    item { SectionHeader("TRACKS") }
+                    if (audioTracks.isEmpty()) {
+                        item {
+                            Text(
+                                text = "Default Audio Track",
+                                color = MobilePlayerTokens.InkSecondary,
+                                fontSize = 13.5.sp,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                            )
+                        }
+                    } else {
+                        itemsIndexed(audioTracks) { index, track ->
+                            val isActive = index == selectedAudioIndex
+                            val trackTitle = track.label?.takeIf { it.isNotBlank() }
+                                ?: track.language?.takeIf { it.isNotBlank() }
+                                ?: "Audio ${index + 1}"
+                            val codecDetail = formatAudioCodecDisplayName(track.codec)
+                            val channelDetail = when (track.channelCount) {
+                                1 -> "Mono"
+                                2 -> "Stereo"
+                                6 -> "5.1"
+                                8 -> "7.1"
+                                else -> if (track.channelCount > 0) "${track.channelCount} ch" else null
+                            }
+                            val metaSummary = listOfNotNull(codecDetail, channelDetail).joinToString(" · ")
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MobilePlayerTokens.ShapeCard)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = {
+                                            onSelectAudio(track)
+                                            onClose()
+                                        }
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    if (isActive) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = MobilePlayerTokens.InkPrimary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    } else {
+                                        Spacer(modifier = Modifier.size(16.dp))
+                                    }
+                                    Column {
+                                        Text(
+                                            text = trackTitle,
+                                            color = if (isActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                            fontSize = 13.5.sp,
+                                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal
+                                        )
+                                        if (metaSummary.isNotBlank()) {
+                                            Text(
+                                                text = metaSummary,
+                                                color = MobilePlayerTokens.InkTertiary,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Settings Section at the bottom
+                    item {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        SectionHeader("SETTINGS")
+                    }
+                    item {
+                        NavRow(
+                            label = "Audio Settings",
+                            meta = "Enhancements & sync",
+                            onClick = { viewStack.add("audiosettings") }
+                        )
+                    }
+                    item {
+                        NavRow(
+                            label = "Audio Delay",
+                            meta = if (audioDelayMs != 0L) (if (audioDelayMs > 0) "+$audioDelayMs ms" else "$audioDelayMs ms") else "0 ms",
+                            onClick = { viewStack.add("audiodelay") }
                         )
                     }
                 }
@@ -486,31 +655,79 @@ fun MobileAudioTrackSheet(
 }
 
 /**
- * Subtitles Bottom Sheet with 2-Stage Drilldown (Option 1):
- * Stage 1: Clean Languages Overview list with active indicators, track counts, and Off option.
- * Stage 2: Detailed Track List for the selected language with badges (Embedded, Provider, SDH, Forced).
+ * Subtitles Bottom Sheet with Pinned Top Tabs (Subtitles vs Settings).
  */
 @Composable
 fun MobileSubtitlesSheet(
     visible: Boolean,
     subtitles: List<Subtitle>,
     selectedSubtitle: Subtitle?,
+    isFindingBestMatch: Boolean = false,
+    matchLanguageName: String = "",
+    onFindBestMatch: () -> Unit = {},
+    isAiTranslating: Boolean = false,
+    isAiAvailable: Boolean = false,
+    aiTargetLanguageName: String = "",
+    onActivateAiTranslation: () -> Unit = {},
+    subtitleDelayMs: Long = 0L,
+    onUpdateSubtitleDelay: (Long) -> Unit = {},
+    subtitleSizePct: Int = 100,
+    onUpdateSubtitleSize: (Int) -> Unit = {},
+    subtitleColorHex: String = "#fff",
+    onUpdateSubtitleColor: (String) -> Unit = {},
+    subtitlePosition: String = "bottom",
+    onUpdateSubtitlePosition: (String) -> Unit = {},
+    subtitleVerticalPct: Int = 2,
+    onUpdateSubtitleVerticalPosition: (Int) -> Unit = {},
+    onStartInteractiveRepositioning: () -> Unit = {},
+    subtitleStyle: String = "Bold",
+    onUpdateSubtitleStyle: (String) -> Unit = {},
+    subtitleFont: String = "System",
+    onUpdateSubtitleFont: (String) -> Unit = {},
+    subtitleStylized: Boolean = true,
+    onUpdateSubtitleStylized: (Boolean) -> Unit = {},
+    subtitlePreloadEnabled: Boolean = false,
+    onToggleSubtitlePreload: (Boolean) -> Unit = {},
+    filterSubtitlesByLanguage: Boolean = true,
+    onToggleFilterSubtitlesByLanguage: (Boolean) -> Unit = {},
+    subtitleRemoveHearingImpaired: Boolean = false,
+    onToggleSubtitleRemoveHearingImpaired: (Boolean) -> Unit = {},
+    initialView: String = "root",
     onSelectSubtitle: (Subtitle?) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val viewStack = remember(visible, initialView) {
+        mutableStateListOf(
+            when (initialView) {
+                "settings", "substyle" -> "substyle"
+                "delay", "subdelay" -> "subdelay"
+                else -> "root"
+            }
+        )
+    }
     var selectedLanguageName by remember { mutableStateOf<String?>(null) }
 
-    // Reset drilldown when sheet becomes visible (opening fresh), NOT while exiting
-    LaunchedEffect(visible) {
+    LaunchedEffect(visible, initialView) {
         if (visible) {
+            viewStack.clear()
+            viewStack.add(
+                when (initialView) {
+                    "settings", "substyle" -> "substyle"
+                    "delay", "subdelay" -> "subdelay"
+                    else -> "root"
+                }
+            )
             selectedLanguageName = null
         }
     }
 
-    // Intercept hardware/gesture back when inside Stage 2
-    BackHandler(enabled = visible && selectedLanguageName != null) {
-        selectedLanguageName = null
+    BackHandler(enabled = visible && (viewStack.size > 1 || selectedLanguageName != null)) {
+        if (viewStack.size > 1) {
+            viewStack.removeAt(viewStack.lastIndex)
+        } else {
+            selectedLanguageName = null
+        }
     }
 
     val subtitleGroups = remember(subtitles) {
@@ -522,105 +739,98 @@ fun MobileSubtitlesSheet(
 
     val activeLangName = selectedSubtitle?.let { getFullLanguageName(it.lang).ifBlank { "Unknown" } }
 
-    val currentTitle = selectedLanguageName?.let { "$it Subtitles" } ?: "Subtitles"
-    val showBack = selectedLanguageName != null
+    val currentView = viewStack.lastOrNull() ?: "root"
+    val title = when {
+        currentView == "subdelay" -> "Subtitle Delay"
+        currentView == "fonts" -> "Subtitle Font"
+        currentView == "tracks" -> "${selectedLanguageName ?: "Track"} Subtitles"
+        currentView == "substyle" -> "Subtitle Settings"
+        else -> "Subtitles"
+    }
+    val showBack = viewStack.size > 1
 
     MobileBottomSheetBase(
         visible = visible,
-        title = currentTitle,
+        title = title,
         showBackButton = showBack,
-        onBack = { selectedLanguageName = null },
+        onBack = {
+            if (viewStack.size > 1) {
+                viewStack.removeAt(viewStack.lastIndex)
+            } else {
+                selectedLanguageName = null
+            }
+        },
         onClose = onClose,
+        headerExtra = null,
         modifier = modifier
     ) {
-        val currentLang = selectedLanguageName
-        if (currentLang == null) {
-            // ── Stage 1: Languages Overview ──
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                // 1. Off Option
-                item {
-                    val isOffSelected = selectedSubtitle == null
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isOffSelected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = {
-                                    onSelectSubtitle(null)
-                                    onClose()
-                                }
-                            )
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Off (Disable Subtitles)",
-                            color = if (isOffSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
-                            fontSize = 14.sp,
-                            fontWeight = if (isOffSelected) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                        if (isOffSelected) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                tint = MobilePlayerTokens.InkPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                // 2. Language Groups
-                itemsIndexed(subtitleGroups, key = { index, group -> "${index}_${group.first}" }) { _, (langName, tracks) ->
-                    val isLangActive = langName == activeLangName
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isLangActive) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = {
-                                    selectedLanguageName = langName
-                                }
-                            )
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = langName,
-                                color = if (isLangActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
-                                fontSize = 14.sp,
-                                fontWeight = if (isLangActive) FontWeight.SemiBold else FontWeight.Normal
-                            )
-                            if (isLangActive && selectedSubtitle != null) {
-                                Text(
-                                    text = "Active: ${selectedSubtitle.label.ifBlank { langName }}",
-                                    color = MobilePlayerTokens.InkTertiary,
-                                    fontSize = 11.5.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
+        when {
+            currentView == "subdelay" -> {
+                DelayAdjusterContent(
+                    title = "Subtitle Delay",
+                    delayMs = subtitleDelayMs,
+                    minMs = -10000L,
+                    maxMs = 10000L,
+                    onUpdateDelay = onUpdateSubtitleDelay
+                )
+            }
+            currentView == "substyle" -> {
+                SubtitleSettingsContent(
+                    subtitleSizePct = subtitleSizePct,
+                    onUpdateSubtitleSize = onUpdateSubtitleSize,
+                    subtitleColorHex = subtitleColorHex,
+                    onUpdateSubtitleColor = onUpdateSubtitleColor,
+                    subtitlePosition = subtitlePosition,
+                    onUpdateSubtitlePosition = onUpdateSubtitlePosition,
+                    subtitleVerticalPct = subtitleVerticalPct,
+                    onUpdateSubtitleVerticalPosition = onUpdateSubtitleVerticalPosition,
+                    onStartInteractiveRepositioning = onStartInteractiveRepositioning,
+                    subtitleStyle = subtitleStyle,
+                    onUpdateSubtitleStyle = onUpdateSubtitleStyle,
+                    subtitleFont = subtitleFont,
+                    subtitleStylized = subtitleStylized,
+                    onUpdateSubtitleStylized = onUpdateSubtitleStylized,
+                    subtitlePreloadEnabled = subtitlePreloadEnabled,
+                    onToggleSubtitlePreload = onToggleSubtitlePreload,
+                    filterSubtitlesByLanguage = filterSubtitlesByLanguage,
+                    onToggleFilterSubtitlesByLanguage = onToggleFilterSubtitlesByLanguage,
+                    subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired,
+                    onToggleSubtitleRemoveHearingImpaired = onToggleSubtitleRemoveHearingImpaired,
+                    onOpenFonts = { viewStack.add("fonts") }
+                )
+            }
+            currentView == "fonts" -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    items(SubtitleFontOption.entries) { fontOption ->
+                        val isSelected = fontOption.preferenceValue.equals(subtitleFont, ignoreCase = true)
                         Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MobilePlayerTokens.ShapeCard)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        onUpdateSubtitleFont(fontOption.preferenceValue)
+                                        viewStack.removeAt(viewStack.lastIndex)
+                                    }
+                                )
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            if (isLangActive) {
+                            Text(
+                                text = fontOption.preferenceValue,
+                                color = if (isSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                            if (isSelected) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
                                     contentDescription = null,
@@ -628,95 +838,611 @@ fun MobileSubtitlesSheet(
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
-                            Text(
-                                text = "${tracks.size}",
-                                color = MobilePlayerTokens.InkTertiary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Normal
-                            )
-                            Icon(
-                                imageVector = Icons.Default.ChevronRight,
-                                contentDescription = "Open $langName tracks",
-                                tint = MobilePlayerTokens.InkTertiary.copy(alpha = 0.7f),
-                                modifier = Modifier.size(18.dp)
-                            )
                         }
                     }
                 }
             }
-        } else {
-            // ── Stage 2: Detailed Tracks for Chosen Language ──
-            val tracksForLang = subtitleGroups.firstOrNull { it.first == currentLang }?.second ?: emptyList()
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                itemsIndexed(tracksForLang, key = { index, sub -> "${index}_${sub.id}_${sub.url}" }) { index, sub ->
-                    val isActive = selectedSubtitle?.id == sub.id
-                    val trackTitle = sub.label.ifBlank { "$currentLang Track ${index + 1}" }
-                    val isSdh = trackTitle.contains("sdh", ignoreCase = true) ||
-                        trackTitle.contains("cc", ignoreCase = true) ||
-                        trackTitle.contains("hearing", ignoreCase = true)
+            currentView == "tracks" -> {
+                val currentLang = selectedLanguageName
+                val tracksForLang = subtitleGroups.firstOrNull { it.first == currentLang }?.second ?: emptyList()
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    itemsIndexed(tracksForLang, key = { index, sub -> "${index}_${sub.id}_${sub.url}" }) { index, sub ->
+                        val isActive = selectedSubtitle?.id == sub.id
+                        val trackTitle = sub.label.ifBlank { "$currentLang Track ${index + 1}" }
+                        val isSdh = trackTitle.contains("sdh", ignoreCase = true) ||
+                            trackTitle.contains("cc", ignoreCase = true) ||
+                            trackTitle.contains("hearing", ignoreCase = true)
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isActive) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = {
-                                    onSelectSubtitle(sub)
-                                    selectedLanguageName = null
-                                    onClose()
-                                }
-                            )
-                            .padding(horizontal = 14.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = trackTitle,
-                                color = if (isActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
-                                fontSize = 13.5.sp,
-                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal
-                            )
-
-                            // Badges Row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MobilePlayerTokens.ShapeCard)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        onSelectSubtitle(sub)
+                                        onClose()
+                                    }
+                                )
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Row(
-                                modifier = Modifier.padding(top = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                if (sub.isEmbedded) {
-                                    SubtitleBadge(text = "Embedded")
-                                } else if (sub.provider.isNotBlank()) {
-                                    SubtitleBadge(text = sub.provider)
+                                if (isActive) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MobilePlayerTokens.InkPrimary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.size(16.dp))
                                 }
-                                if (isSdh) {
-                                    SubtitleBadge(text = "SDH")
-                                }
-                                if (sub.isForced) {
-                                    SubtitleBadge(text = "Forced")
+                                Column {
+                                    Text(
+                                        text = trackTitle,
+                                        color = if (isActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+
+                                    Row(
+                                        modifier = Modifier.padding(top = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (sub.isEmbedded) {
+                                            SubtitleBadge(text = "Embedded")
+                                        } else if (sub.provider.isNotBlank()) {
+                                            SubtitleBadge(text = sub.provider)
+                                        }
+                                        if (isSdh) {
+                                            SubtitleBadge(text = "SDH")
+                                        }
+                                        if (sub.isForced) {
+                                            SubtitleBadge(text = "Forced")
+                                        }
+                                    }
                                 }
                             }
                         }
+                    }
+                }
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    item {
+                        val matchTitle = if (matchLanguageName.isNotBlank()) "Find Best Match ($matchLanguageName)" else "Find Best Match (Auto)"
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MobilePlayerTokens.ShapeCard)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        onFindBestMatch()
+                                        onClose()
+                                    }
+                                )
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isFindingBestMatch) "Scanning Best Match…" else matchTitle,
+                                    color = MobilePlayerTokens.InkPrimary,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Auto-sync and pick best timing match",
+                                    color = MobilePlayerTokens.InkTertiary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            SubtitleBadge(text = if (isFindingBestMatch) "Scanning" else "Auto Sync")
+                        }
+                    }
 
-                        if (isActive) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                tint = MobilePlayerTokens.InkPrimary,
-                                modifier = Modifier.size(18.dp)
+                    if (isAiAvailable || isAiTranslating) {
+                        item {
+                            val aiTitle = if (aiTargetLanguageName.isNotBlank()) "AI Translation ($aiTargetLanguageName)" else "AI Translation"
+                            ToggleRow(
+                                label = aiTitle,
+                                checked = isAiTranslating,
+                                onToggle = { onActivateAiTranslation() }
+                            )
+                        }
+                    }
+
+                    item {
+                        val isOffSelected = selectedSubtitle == null && !isAiTranslating
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MobilePlayerTokens.ShapeCard)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        onSelectSubtitle(null)
+                                        onClose()
+                                    }
+                                )
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                if (isOffSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MobilePlayerTokens.InkPrimary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.size(16.dp))
+                                }
+                                Text(
+                                    text = "Off",
+                                    color = if (isOffSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = if (isOffSelected) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        SectionHeader("LANGUAGES")
+                    }
+
+                    if (subtitleGroups.isEmpty()) {
+                        item {
+                            Text(
+                                text = "No subtitles found",
+                                color = MobilePlayerTokens.InkSecondary,
+                                fontSize = 13.5.sp,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                            )
+                        }
+                    } else {
+                        itemsIndexed(subtitleGroups, key = { index, group -> "${index}_${group.first}" }) { _, (langName, tracks) ->
+                            val isLangActive = langName == activeLangName && selectedSubtitle != null
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MobilePlayerTokens.ShapeCard)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = {
+                                            selectedLanguageName = langName
+                                            viewStack.add("tracks")
+                                        }
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    if (isLangActive) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = MobilePlayerTokens.InkPrimary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    } else {
+                                        Spacer(modifier = Modifier.size(16.dp))
+                                    }
+                                    Column {
+                                        Text(
+                                            text = langName,
+                                            color = if (isLangActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                            fontSize = 13.5.sp,
+                                            fontWeight = if (isLangActive) FontWeight.SemiBold else FontWeight.Normal
+                                        )
+                                        if (isLangActive && selectedSubtitle != null) {
+                                            val label = selectedSubtitle.label.ifBlank { "Track active" }
+                                            Text(
+                                                text = label,
+                                                color = MobilePlayerTokens.InkTertiary,
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "${tracks.size}",
+                                        color = MobilePlayerTokens.InkTertiary,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = MobilePlayerTokens.InkTertiary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Settings Section at the bottom
+                    item {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        SectionHeader("SETTINGS")
+                    }
+                    item {
+                        NavRow(
+                            label = "Subtitle Settings",
+                            meta = "Size, style, font & more",
+                            onClick = { viewStack.add("substyle") }
+                        )
+                    }
+                    item {
+                        val delayMeta = if (subtitleDelayMs != 0L) (if (subtitleDelayMs > 0) "+$subtitleDelayMs ms" else "$subtitleDelayMs ms") else "0 ms"
+                        NavRow(
+                            label = "Subtitle Delay",
+                            meta = delayMeta,
+                            onClick = { viewStack.add("subdelay") }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubtitleSettingsContent(
+    subtitleSizePct: Int,
+    onUpdateSubtitleSize: (Int) -> Unit,
+    subtitleColorHex: String,
+    onUpdateSubtitleColor: (String) -> Unit,
+    subtitlePosition: String,
+    onUpdateSubtitlePosition: (String) -> Unit,
+    subtitleVerticalPct: Int,
+    onUpdateSubtitleVerticalPosition: (Int) -> Unit,
+    onStartInteractiveRepositioning: () -> Unit,
+    subtitleStyle: String,
+    onUpdateSubtitleStyle: (String) -> Unit,
+    subtitleFont: String,
+    subtitleStylized: Boolean,
+    onUpdateSubtitleStylized: (Boolean) -> Unit,
+    subtitlePreloadEnabled: Boolean,
+    onToggleSubtitlePreload: (Boolean) -> Unit,
+    filterSubtitlesByLanguage: Boolean,
+    onToggleFilterSubtitlesByLanguage: (Boolean) -> Unit,
+    subtitleRemoveHearingImpaired: Boolean,
+    onToggleSubtitleRemoveHearingImpaired: (Boolean) -> Unit,
+    onOpenFonts: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val isBold = subtitleStyle.equals("Bold", ignoreCase = true)
+    val previewTypeface = remember(context, subtitleFont, isBold) {
+        resolveSubtitleTypeface(context, subtitleFont, isBold)
+    }
+    val previewFontFamily = remember(previewTypeface) {
+        FontFamily(previewTypeface)
+    }
+    val previewColor = remember(subtitleColorHex) {
+        when (subtitleColorHex.lowercase()) {
+            "#ffe066" -> Color(0xFFFFE066)
+            "#66d9ff" -> Color(0xFF66D9FF)
+            "#ff6666" -> Color(0xFFFF6666)
+            else -> Color.White
+        }
+    }
+    val previewFontSize = (15f * (subtitleSizePct / 100f)).coerceIn(11f, 24f).sp
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            SectionHeader("PREVIEW")
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(86.dp)
+                    .clip(MobilePlayerTokens.ShapeCard)
+                    .background(Color(0xFF0C0E14))
+                    .border(1.dp, Color(0xFF1E2330), MobilePlayerTokens.ShapeCard)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Hello, how are you?",
+                    color = previewColor,
+                    fontSize = previewFontSize,
+                    fontFamily = previewFontFamily,
+                    fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    style = TextStyle(
+                        shadow = Shadow(
+                            color = Color.Black.copy(alpha = 0.95f),
+                            offset = Offset(1.5f, 1.5f),
+                            blurRadius = 3.5f
+                        )
+                    )
+                )
+            }
+        }
+
+        item {
+            SectionHeader("SIZE")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MobilePlayerTokens.ShapeCard)
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Text size",
+                    color = MobilePlayerTokens.InkPrimary,
+                    fontSize = 13.5.sp
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "–",
+                        color = MobilePlayerTokens.InkPrimary,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { onUpdateSubtitleSize((subtitleSizePct - 10).coerceAtLeast(50)) }
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                    Text(
+                        text = "$subtitleSizePct%",
+                        color = MobilePlayerTokens.InkPrimary,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.width(46.dp),
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "+",
+                        color = MobilePlayerTokens.InkPrimary,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { onUpdateSubtitleSize((subtitleSizePct + 10).coerceAtMost(250)) }
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+        }
+
+        // Color
+        item {
+            SectionHeader("COLOR")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MobilePlayerTokens.ShapeCard)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val swatches = listOf(
+                    "#fff" to Color(0xFFFFFFFF),
+                    "#ffe066" to Color(0xFFFFE066),
+                    "#66d9ff" to Color(0xFF66D9FF),
+                    "#ff6666" to Color(0xFFFF6666)
+                )
+                swatches.forEach { (hex, color) ->
+                    val isSelected = hex.equals(subtitleColorHex, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(color)
+                            .then(
+                                if (isSelected) Modifier.border(2.5.dp, Color(0xFF0B0C10), CircleShape)
+                                    .border(4.dp, Color.White, CircleShape)
+                                else Modifier.border(1.dp, Color(0x40FFFFFF), CircleShape)
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { onUpdateSubtitleColor(hex) }
+                            )
+                    )
+                }
+            }
+        }
+
+        // Position (No fixed Bottom/Top presets, dedicated on-screen repositioning)
+        item {
+            SectionHeader("POSITION")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MobilePlayerTokens.ShapeCard)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onStartInteractiveRepositioning
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "Subtitle Position",
+                        color = MobilePlayerTokens.InkPrimary,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "$subtitleVerticalPct% from bottom",
+                        color = MobilePlayerTokens.InkTertiary,
+                        fontSize = 11.sp
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Adjust on Screen",
+                        color = Color(0xFFFFB300),
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = Color(0xFFFFB300),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        // Style & Font
+        item {
+            SectionHeader("STYLE & FONT")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MobilePlayerTokens.ShapeCard)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Font Weight",
+                    color = MobilePlayerTokens.InkPrimary,
+                    fontSize = 13.5.sp
+                )
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    listOf("Bold" to "Bold", "Normal" to "Normal").forEach { (valKey, label) ->
+                        val isSelected = valKey.equals(subtitleStyle, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) Color.White.copy(alpha = 0.22f) else Color.Transparent)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = { onUpdateSubtitleStyle(valKey) }
+                                )
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                                fontSize = 12.5.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                     }
                 }
             }
+        }
+
+        item {
+            NavRow(
+                label = "Font Family",
+                meta = subtitleFont,
+                onClick = onOpenFonts
+            )
+        }
+
+        item {
+            ToggleRow(
+                label = "Stylized Subtitles (ASS / SSA)",
+                checked = subtitleStylized,
+                onToggle = { onUpdateSubtitleStylized(!subtitleStylized) }
+            )
+        }
+
+        item {
+            SectionHeader("GENERAL")
+            ToggleRow(
+                label = "Preload Subtitles",
+                checked = subtitlePreloadEnabled,
+                onToggle = { onToggleSubtitlePreload(!subtitlePreloadEnabled) }
+            )
+        }
+
+        item {
+            ToggleRow(
+                label = "Filter by App Language",
+                checked = filterSubtitlesByLanguage,
+                onToggle = { onToggleFilterSubtitlesByLanguage(!filterSubtitlesByLanguage) }
+            )
+        }
+
+        item {
+            ToggleRow(
+                label = "Remove Hearing Impaired (SDH)",
+                checked = subtitleRemoveHearingImpaired,
+                onToggle = { onToggleSubtitleRemoveHearingImpaired(!subtitleRemoveHearingImpaired) }
+            )
         }
     }
 }
@@ -919,24 +1645,10 @@ fun MobileMoreSettingsSheet(
     autoSkipIntro: Boolean,
     autoSkipOutro: Boolean,
     aspectRatio: String,
-    audioDelayMs: Long,
-    volumeNormalization: Boolean,
-    subtitleDelayMs: Long,
-    subtitleSizePct: Int,
-    subtitleColorHex: String,
-    subtitlePosition: String,
-    selectedSourceName: String,
     onToggleAutoplay: (Boolean) -> Unit,
     onToggleAutoSkipIntro: (Boolean) -> Unit,
     onToggleAutoSkipOutro: (Boolean) -> Unit,
     onSelectAspectRatio: (String) -> Unit,
-    onUpdateAudioDelay: (Long) -> Unit,
-    onToggleVolumeNorm: (Boolean) -> Unit,
-    onUpdateSubtitleDelay: (Long) -> Unit,
-    onUpdateSubtitleSize: (Int) -> Unit,
-    onUpdateSubtitleColor: (String) -> Unit,
-    onUpdateSubtitlePosition: (String) -> Unit,
-    onOpenSourcesDrawer: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -958,9 +1670,6 @@ fun MobileMoreSettingsSheet(
     val currentView = viewStack.lastOrNull() ?: "root"
     val title = when (currentView) {
         "aspect" -> "Aspect Ratio"
-        "audiodelay" -> "Audio Delay"
-        "subdelay" -> "Subtitle Delay"
-        "substyle" -> "Subtitle Style"
         else -> "More Settings"
     }
 
@@ -1008,64 +1717,9 @@ fun MobileMoreSettingsSheet(
                     item { SectionHeader("VIDEO") }
                     item {
                         NavRow(
-                            label = "Quality",
-                            meta = selectedSourceName.ifBlank { "Auto" },
-                            onClick = {
-                                onClose()
-                                onOpenSourcesDrawer()
-                            }
-                        )
-                    }
-                    item {
-                        NavRow(
                             label = "Aspect Ratio",
                             meta = aspectRatio,
                             onClick = { viewStack.add("aspect") }
-                        )
-                    }
-
-                    // Audio Section
-                    item { SectionHeader("AUDIO") }
-                    item {
-                        NavRow(
-                            label = "Audio Delay",
-                            meta = "$audioDelayMs ms",
-                            onClick = { viewStack.add("audiodelay") }
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            label = "Volume Normalization",
-                            checked = volumeNormalization,
-                            onToggle = { onToggleVolumeNorm(!volumeNormalization) }
-                        )
-                    }
-
-                    // Subtitles Section
-                    item { SectionHeader("SUBTITLES") }
-                    item {
-                        NavRow(
-                            label = "Subtitle Delay",
-                            meta = "$subtitleDelayMs ms",
-                            onClick = { viewStack.add("subdelay") }
-                        )
-                    }
-                    item {
-                        NavRow(
-                            label = "Subtitle Style",
-                            meta = "Size, color, position",
-                            onClick = { viewStack.add("substyle") }
-                        )
-                    }
-
-                    // Advanced Section
-                    item { SectionHeader("ADVANCED") }
-                    item {
-                        Text(
-                            text = "No additional advanced options are available yet.",
-                            color = MobilePlayerTokens.InkTertiary,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                         )
                     }
                 }
@@ -1108,159 +1762,6 @@ fun MobileMoreSettingsSheet(
                                     tint = MobilePlayerTokens.InkPrimary,
                                     modifier = Modifier.size(16.dp)
                                 )
-                            }
-                        }
-                    }
-                }
-            }
-            "audiodelay" -> {
-                StepperPanel(
-                    label = "Audio offset",
-                    valueText = "$audioDelayMs ms",
-                    onDecrease = { onUpdateAudioDelay((audioDelayMs - 25L).coerceAtLeast(-500L)) },
-                    onIncrease = { onUpdateAudioDelay((audioDelayMs + 25L).coerceAtMost(500L)) }
-                )
-            }
-            "subdelay" -> {
-                StepperPanel(
-                    label = "Subtitle offset",
-                    valueText = "$subtitleDelayMs ms",
-                    onDecrease = { onUpdateSubtitleDelay((subtitleDelayMs - 25L).coerceAtLeast(-500L)) },
-                    onIncrease = { onUpdateSubtitleDelay((subtitleDelayMs + 25L).coerceAtMost(500L)) }
-                )
-            }
-            "substyle" -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    // Size Stepper
-                    Column {
-                        SectionHeader("SIZE")
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Text size",
-                                color = MobilePlayerTokens.InkSecondary,
-                                fontSize = 13.5.sp
-                            )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                Text(
-                                    text = "–",
-                                    color = MobilePlayerTokens.InkPrimary,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = { onUpdateSubtitleSize((subtitleSizePct - 10).coerceAtLeast(70)) }
-                                        )
-                                        .padding(4.dp)
-                                )
-                                Text(
-                                    text = "$subtitleSizePct%",
-                                    color = MobilePlayerTokens.InkPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.width(42.dp),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                                Text(
-                                    text = "+",
-                                    color = MobilePlayerTokens.InkPrimary,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = { onUpdateSubtitleSize((subtitleSizePct + 10).coerceAtMost(150)) }
-                                        )
-                                        .padding(4.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Color Swatches
-                    Column {
-                        SectionHeader("COLOR")
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val swatches = listOf(
-                                "#fff" to Color(0xFFFFFFFF),
-                                "#ffe066" to Color(0xFFFFE066),
-                                "#66d9ff" to Color(0xFF66D9FF),
-                                "#ff6666" to Color(0xFFFF6666)
-                            )
-                            swatches.forEach { (hex, color) ->
-                                val isSelected = hex.equals(subtitleColorHex, ignoreCase = true)
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clip(CircleShape)
-                                        .background(color)
-                                        .then(
-                                            if (isSelected) Modifier.border(2.5.dp, Color(0xFF0B0C10), CircleShape)
-                                                .border(4.dp, Color.White, CircleShape)
-                                            else Modifier.border(1.dp, Color(0x40FFFFFF), CircleShape)
-                                        )
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = { onUpdateSubtitleColor(hex) }
-                                        )
-                                )
-                            }
-                        }
-                    }
-
-                    // Position Tabs
-                    Column {
-                        SectionHeader("POSITION")
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(20.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            listOf("bottom" to "Bottom", "top" to "Top").forEach { (posKey, label) ->
-                                val isSelected = posKey.equals(subtitlePosition, ignoreCase = true)
-                                Column(
-                                    modifier = Modifier
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = { onUpdateSubtitlePosition(posKey) }
-                                        )
-                                        .padding(vertical = 4.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = label,
-                                        color = if (isSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkTertiary,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Spacer(modifier = Modifier.height(3.dp))
-                                    if (isSelected) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(28.dp)
-                                                .height(2.dp)
-                                                .background(Color.White)
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
@@ -1421,8 +1922,302 @@ private fun StepperPanel(
     }
 }
 
+@Composable
+private fun ExactDelayInputDialog(
+    currentDelayMs: Long,
+    title: String,
+    onDismiss: () -> Unit,
+    onApply: (Long) -> Unit
+) {
+    var textValue by remember { mutableStateOf(currentDelayMs.toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF161A26),
+        title = {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Enter offset in milliseconds (negative = advance, positive = delay):",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 13.sp
+                )
+                OutlinedTextField(
+                    value = textValue,
+                    onValueChange = { textValue = it },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFFFFB300),
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
+                        cursorColor = Color(0xFFFFB300)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val parsed = textValue.trim().toLongOrNull() ?: currentDelayMs
+                    onApply(parsed)
+                }
+            ) {
+                Text("Apply", color = Color(0xFFFFB300), fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { onApply(0L) }) {
+                    Text("Reset (0 ms)", color = Color.White.copy(alpha = 0.65f))
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color.White.copy(alpha = 0.65f))
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun DelayAdjusterContent(
+    title: String,
+    delayMs: Long,
+    minMs: Long = -5000L,
+    maxMs: Long = 5000L,
+    onUpdateDelay: (Long) -> Unit
+) {
+    var showInputDialog by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Big Readout with Amber Accent when != 0
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { showInputDialog = true }
+                )
+                .padding(horizontal = 24.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = if (delayMs > 0) "+$delayMs ms" else "$delayMs ms",
+                color = if (delayMs != 0L) Color(0xFFFFB300) else MobilePlayerTokens.InkPrimary,
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = if (delayMs == 0L) "Synchronized • Tap to type number" else if (delayMs > 0) "Delayed (+) • Tap to type number" else "Advanced (–) • Tap to type number",
+                color = MobilePlayerTokens.InkTertiary,
+                fontSize = 11.5.sp
+            )
+        }
+
+        // Continuous Slider with 0 at Center
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Slider(
+                value = delayMs.toFloat().coerceIn(minMs.toFloat(), maxMs.toFloat()),
+                onValueChange = { onUpdateDelay(it.roundToLong()) },
+                valueRange = minMs.toFloat()..maxMs.toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = if (delayMs != 0L) Color(0xFFFFB300) else Color.White,
+                    activeTrackColor = if (delayMs != 0L) Color(0xFFFFB300) else Color.White,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${minMs / 1000}s",
+                    color = MobilePlayerTokens.InkTertiary,
+                    fontSize = 11.sp
+                )
+                Text(
+                    text = "0 ms",
+                    color = MobilePlayerTokens.InkSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "+${maxMs / 1000}s",
+                    color = MobilePlayerTokens.InkTertiary,
+                    fontSize = 11.sp
+                )
+            }
+        }
+
+        // Reset Button if != 0
+        if (delayMs != 0L) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { onUpdateDelay(0L) }
+                    )
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Reset to 0 ms",
+                    color = MobilePlayerTokens.InkSecondary,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+
+    if (showInputDialog) {
+        ExactDelayInputDialog(
+            currentDelayMs = delayMs,
+            title = title,
+            onDismiss = { showInputDialog = false },
+            onApply = { newMs ->
+                onUpdateDelay(newMs.coerceIn(minMs, maxMs))
+                showInputDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun CombinedClickableRow(
+    label: String,
+    meta: String = "",
+    subtitle: String? = null,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MobilePlayerTokens.ShapeCard)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = { onLongClick() }
+                )
+            }
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = MobilePlayerTokens.InkPrimary,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Medium
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    color = MobilePlayerTokens.InkTertiary,
+                    fontSize = 11.sp
+                )
+            }
+        }
+        if (meta.isNotBlank()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = meta,
+                    color = MobilePlayerTokens.InkSecondary,
+                    fontSize = 12.5.sp
+                )
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MobilePlayerTokens.InkTertiary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
 /**
- * Base bottom sheet container with drag handle, title, and close/back buttons.
+ * Tab selector for segmented sheet switching.
+ */
+@Composable
+private fun SheetTabSelector(
+    selectedTab: String,
+    tabs: List<Pair<String, String>>,
+    onSelectTab: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(alpha = 0.08f))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        tabs.forEach { (key, label) ->
+            val isSelected = selectedTab == key
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isSelected) Color.White.copy(alpha = 0.22f) else Color.Transparent)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { onSelectTab(key) }
+                    )
+                    .padding(vertical = 7.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label,
+                    color = if (isSelected) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Base bottom sheet container with drag handle, title, optional back, and close button.
  */
 @Composable
 private fun MobileBottomSheetBase(
@@ -1432,6 +2227,7 @@ private fun MobileBottomSheetBase(
     onBack: () -> Unit = {},
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    headerExtra: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     AnimatedVisibility(
@@ -1447,7 +2243,7 @@ private fun MobileBottomSheetBase(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 380.dp)
+                    .heightIn(max = 420.dp)
                     .clip(MobilePlayerTokens.ShapeSheet)
                     .background(MobilePlayerTokens.PanelBg)
                     .navigationBarsPadding()
@@ -1501,6 +2297,10 @@ private fun MobileBottomSheetBase(
                         contentDescription = "Close",
                         onClick = onClose
                     )
+                }
+
+                if (headerExtra != null) {
+                    headerExtra()
                 }
 
                 // Content
@@ -1570,3 +2370,223 @@ internal fun formatAudioCodecDisplayName(codec: String?): String? {
         else -> codec.substringAfterLast('/').uppercase()
     }
 }
+
+/**
+ * Interactive full-screen overlay for dragging & adjusting subtitle vertical position directly over video.
+ */
+@Composable
+fun MobileSubtitleRepositionOverlay(
+    visible: Boolean,
+    verticalPercent: Int, // 1 .. 88 (% from bottom)
+    hasActiveSubtitles: Boolean = false,
+    subtitleColorHex: String = "#fff",
+    subtitleStyle: String = "Bold",
+    subtitleFont: String = "System",
+    subtitleSizePct: Int = 100,
+    onUpdateVerticalPercent: (Int) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (!visible) return
+
+    BackHandler(enabled = visible) {
+        onDismiss()
+    }
+
+    val context = LocalContext.current
+    val parsedColor = remember(subtitleColorHex) {
+        when (subtitleColorHex.lowercase()) {
+            "#ffe066" -> Color(0xFFFFE066)
+            "#66d9ff" -> Color(0xFF66D9FF)
+            "#ff6666" -> Color(0xFFFF6666)
+            else -> {
+                try {
+                    Color(android.graphics.Color.parseColor(subtitleColorHex))
+                } catch (_: Exception) {
+                    Color.White
+                }
+            }
+        }
+    }
+    val isBold = !subtitleStyle.equals("Normal", ignoreCase = true)
+    val isBackground = subtitleStyle.equals("Background", ignoreCase = true)
+    val typeface = remember(subtitleFont, isBold, context) {
+        resolveSubtitleTypeface(context, subtitleFont, isBold)
+    }
+    val fontFamily = remember(typeface) {
+        if (typeface != null) FontFamily(typeface) else FontFamily.Default
+    }
+
+    var accumulatedPct by remember { mutableFloatStateOf(verticalPercent.toFloat().coerceIn(1f, 88f)) }
+    val currentUpdate = rememberUpdatedState(onUpdateVerticalPercent)
+
+    LaunchedEffect(verticalPercent) {
+        if (abs(accumulatedPct - verticalPercent) > 1.5f) {
+            accumulatedPct = verticalPercent.toFloat().coerceIn(1f, 88f)
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.15f))
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        val totalHeight = size.height.toFloat().coerceAtLeast(1f)
+                        // Dragging UP decreases Y, so -dragAmount.y > 0 (moves higher from bottom)
+                        // Dragging DOWN increases Y, so -dragAmount.y < 0 (moves lower towards bottom)
+                        val deltaPct = (-dragAmount.y / totalHeight) * 100f
+                        accumulatedPct = (accumulatedPct + deltaPct).coerceIn(1f, 88f)
+                        val intVal = accumulatedPct.roundToInt().coerceIn(1, 88)
+                        currentUpdate.value(intVal)
+                    }
+                )
+            }
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .displayCutoutPadding()
+    ) {
+        val screenHeight = maxHeight
+        val currentPercent = accumulatedPct.coerceIn(1f, 88f)
+        val bottomOffset = screenHeight * (currentPercent / 100f)
+
+        // Top instruction bar
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF12141A).copy(alpha = 0.92f))
+                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "Adjust Subtitle Position",
+                    color = Color.White,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Drag up/down anywhere to move • ${currentPercent.roundToInt()}% from bottom",
+                    color = Color(0xFFFFB300),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {
+                                accumulatedPct = 2f
+                                currentUpdate.value(2)
+                            }
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Reset",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFFFB300))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onDismiss
+                        )
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Done",
+                        color = Color.Black,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Subtitle preview:
+        // If there are real subtitles present on screen right now, ExoPlayer's SubtitleView
+        // already renders and moves them live at this exact position.
+        // If no real subtitles are on screen, render the sample subtitle preview.
+        if (!hasActiveSubtitles) {
+            val computedSizeSp = (24f * (subtitleSizePct.coerceIn(50, 300) / 100f)).sp
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = bottomOffset)
+                    .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    // Outline stroke layer (matches CaptionStyleCompat.EDGE_TYPE_OUTLINE)
+                    if (!subtitleStyle.equals("Normal", ignoreCase = true) && !isBackground) {
+                        Text(
+                            text = "Sample Subtitle",
+                            fontSize = computedSizeSp,
+                            fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+                            fontFamily = fontFamily,
+                            textAlign = TextAlign.Center,
+                            style = TextStyle.Default.copy(
+                                drawStyle = Stroke(
+                                    width = 6f,
+                                    join = StrokeJoin.Round
+                                ),
+                                color = Color.Black
+                            )
+                        )
+                    }
+
+                    // Main subtitle text
+                    Text(
+                        text = "Sample Subtitle",
+                        color = parsedColor,
+                        fontSize = computedSizeSp,
+                        fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontFamily = fontFamily,
+                        textAlign = TextAlign.Center,
+                        style = if (isBackground) {
+                            TextStyle(
+                                shadow = Shadow(
+                                    color = Color.Black.copy(alpha = 0.8f),
+                                    offset = Offset(1.5f, 1.5f),
+                                    blurRadius = 3f
+                                )
+                            )
+                        } else {
+                            TextStyle.Default
+                        },
+                        modifier = if (isBackground) {
+                            Modifier
+                                .background(Color(0xB4000000), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        } else {
+                            Modifier
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+

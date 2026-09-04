@@ -23,7 +23,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.zIndex
+import com.arflix.tv.R
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
@@ -135,7 +137,8 @@ fun ArvioTvPlayer(
     var errorModalFocusIndex by remember { mutableIntStateOf(0) }
 
     // Auto-hide controls timer
-    LaunchedEffect(showControls, isPlaying, showSubtitleMenu, showSourceMenu, showSubtitleSettings) {
+    var interactionCount by remember { mutableIntStateOf(0) }
+    LaunchedEffect(showControls, isPlaying, showSubtitleMenu, showSourceMenu, showSubtitleSettings, interactionCount) {
         if (showControls && isPlaying && !showSubtitleMenu && !showSourceMenu && !showSubtitleSettings) {
             delay(5000)
             showControls = false
@@ -192,169 +195,175 @@ fun ArvioTvPlayer(
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
 
-                // Error modal D-pad handling
-                if (uiState.error != null) {
-                    val maxButtons = if (uiState.isSetupError) 0 else 1
-                    return@onKeyEvent when (event.key) {
-                        Key.DirectionLeft -> { if (errorModalFocusIndex > 0) errorModalFocusIndex--; true }
-                        Key.DirectionRight -> { if (errorModalFocusIndex < maxButtons) errorModalFocusIndex++; true }
-                        Key.Enter, Key.DirectionCenter -> {
-                            if (uiState.isSetupError) onBack()
-                            else if (errorModalFocusIndex == 0) onRetryPlayback()
-                            else onBack()
-                            true
+                val handled = when {
+                    // Error modal D-pad handling
+                    uiState.error != null -> {
+                        val maxButtons = if (uiState.isSetupError) 0 else 1
+                        when (event.key) {
+                            Key.DirectionLeft -> { if (errorModalFocusIndex > 0) errorModalFocusIndex--; true }
+                            Key.DirectionRight -> { if (errorModalFocusIndex < maxButtons) errorModalFocusIndex++; true }
+                            Key.Enter, Key.DirectionCenter -> {
+                                if (uiState.isSetupError) onBack()
+                                else if (errorModalFocusIndex == 0) onRetryPlayback()
+                                else onBack()
+                                true
+                            }
+                            Key.Back, Key.Escape -> { onBack(); true }
+                            else -> false
                         }
-                        Key.Back, Key.Escape -> { onBack(); true }
+                    }
+
+                    // Subtitle settings panel D-pad handling
+                    showSubtitleSettings -> {
+                        when (event.key) {
+                            Key.DirectionUp -> { subtitleSettingsRow = (subtitleSettingsRow - 1).coerceAtLeast(0); true }
+                            Key.DirectionDown -> { subtitleSettingsRow = (subtitleSettingsRow + 1).coerceAtMost(2); true }
+                            Key.DirectionLeft -> {
+                                when (subtitleSettingsRow) {
+                                    0 -> { subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L); onUpdateSubtitleDelay(subtitleSyncOffsetMs) }
+                                    1 -> { subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50); onUpdateSubtitleSize(subtitleSizePct) }
+                                    2 -> { subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0); onUpdateSubtitleVerticalPosition(subtitleVerticalPct) }
+                                }
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                when (subtitleSettingsRow) {
+                                    0 -> { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L); onUpdateSubtitleDelay(subtitleSyncOffsetMs) }
+                                    1 -> { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300); onUpdateSubtitleSize(subtitleSizePct) }
+                                    2 -> { subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50); onUpdateSubtitleVerticalPosition(subtitleVerticalPct) }
+                                }
+                                true
+                            }
+                            Key.Back, Key.Escape -> {
+                                showSubtitleSettings = false
+                                showControls = true
+                                coroutineScope.launch {
+                                    delay(120)
+                                    runCatching { subtitleSettingsBtnFocusRequester.requestFocus() }
+                                }
+                                true
+                            }
+                            else -> true
+                        }
+                    }
+
+                    // Subtitle / Audio Menu D-pad handling
+                    showSubtitleMenu -> {
+                        when (event.key) {
+                            Key.DirectionUp -> {
+                                when {
+                                    subtitleMenuTab == 1 -> { if (audioMenuIndex > 0) audioMenuIndex-- }
+                                    subtitlePanelFocus == 0 -> { if (subtitleLangIndex > 0) subtitleLangIndex-- }
+                                    else -> { if (subtitleTrackIndex > 0) subtitleTrackIndex-- }
+                                }
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                when {
+                                    subtitleMenuTab == 1 -> { if (audioMenuIndex < audioTracks.size - 1) audioMenuIndex++ }
+                                    subtitlePanelFocus == 0 -> { if (subtitleLangIndex < subtitleGroups.size) subtitleLangIndex++ }
+                                    else -> {
+                                        val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                                        if (group != null && subtitleTrackIndex < group.second.size - 1) subtitleTrackIndex++
+                                    }
+                                }
+                                true
+                            }
+                            Key.DirectionLeft -> {
+                                if (subtitlePanelFocus == 1) subtitlePanelFocus = 0
+                                else if (subtitleMenuTab == 1) subtitleMenuTab = 0
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                if (subtitleMenuTab == 0 && subtitlePanelFocus == 0 && subtitleLangIndex > 0) {
+                                    subtitlePanelFocus = 1
+                                    subtitleTrackIndex = 0
+                                } else if (subtitleMenuTab == 0 && subtitlePanelFocus == 0 && subtitleLangIndex == 0) {
+                                    subtitleMenuTab = 1
+                                }
+                                true
+                            }
+                            Key.Enter, Key.DirectionCenter -> {
+                                if (subtitleMenuTab == 1) {
+                                    audioTracks.getOrNull(audioMenuIndex)?.let { onSelectAudioTrack(it) }
+                                    showSubtitleMenu = false
+                                    showControls = true
+                                } else if (subtitlePanelFocus == 0) {
+                                    if (subtitleLangIndex == 0) {
+                                        onSelectSubtitle(null)
+                                        showSubtitleMenu = false
+                                        showControls = true
+                                    } else {
+                                        subtitlePanelFocus = 1
+                                        subtitleTrackIndex = 0
+                                    }
+                                } else {
+                                    val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                                    val trackPair = group?.second?.getOrNull(subtitleTrackIndex)
+                                    if (trackPair != null) {
+                                        onSelectSubtitle(trackPair.second)
+                                    }
+                                    showSubtitleMenu = false
+                                    showControls = true
+                                }
+                                true
+                            }
+                            Key.Back, Key.Escape -> {
+                                showSubtitleMenu = false
+                                showControls = true
+                                coroutineScope.launch {
+                                    delay(150)
+                                    runCatching { subtitleButtonFocusRequester.requestFocus() }
+                                }
+                                true
+                            }
+                            else -> true
+                        }
+                    }
+
+                    // Global Controls Key Events
+                    else -> when (event.key) {
+                        Key.MediaPlayPause -> { onTogglePlayPause(); showControls = true; true }
+                        Key.MediaPlay -> { onTogglePlayPause(); showControls = true; true }
+                        Key.MediaPause -> { onTogglePlayPause(); showControls = true; true }
+                        Key.MediaFastForward -> { onForward10(); true }
+                        Key.MediaRewind -> { onRewind10(); true }
+                        Key.DirectionCenter, Key.Enter -> {
+                            if (!showControls) {
+                                showControls = true
+                                coroutineScope.launch {
+                                    delay(50)
+                                    runCatching { playButtonFocusRequester.requestFocus() }
+                                }
+                                true
+                            } else false
+                        }
+                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> {
+                            if (!showControls) {
+                                showControls = true
+                                coroutineScope.launch {
+                                    delay(50)
+                                    runCatching { playButtonFocusRequester.requestFocus() }
+                                }
+                                true
+                            } else false
+                        }
+                        Key.Back, Key.Escape -> {
+                            if (showControls) {
+                                showControls = false
+                                true
+                            } else {
+                                onBack()
+                                true
+                            }
+                        }
                         else -> false
                     }
                 }
-
-                // Subtitle settings panel D-pad handling
-                if (showSubtitleSettings) {
-                    return@onKeyEvent when (event.key) {
-                        Key.DirectionUp -> { subtitleSettingsRow = (subtitleSettingsRow - 1).coerceAtLeast(0); true }
-                        Key.DirectionDown -> { subtitleSettingsRow = (subtitleSettingsRow + 1).coerceAtMost(2); true }
-                        Key.DirectionLeft -> {
-                            when (subtitleSettingsRow) {
-                                0 -> { subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L); onUpdateSubtitleDelay(subtitleSyncOffsetMs) }
-                                1 -> { subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50); onUpdateSubtitleSize(subtitleSizePct) }
-                                2 -> { subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0); onUpdateSubtitleVerticalPosition(subtitleVerticalPct) }
-                            }
-                            true
-                        }
-                        Key.DirectionRight -> {
-                            when (subtitleSettingsRow) {
-                                0 -> { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L); onUpdateSubtitleDelay(subtitleSyncOffsetMs) }
-                                1 -> { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300); onUpdateSubtitleSize(subtitleSizePct) }
-                                2 -> { subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50); onUpdateSubtitleVerticalPosition(subtitleVerticalPct) }
-                            }
-                            true
-                        }
-                        Key.Back, Key.Escape -> {
-                            showSubtitleSettings = false
-                            showControls = true
-                            coroutineScope.launch {
-                                delay(120)
-                                runCatching { subtitleSettingsBtnFocusRequester.requestFocus() }
-                            }
-                            true
-                        }
-                        else -> true
-                    }
+                if (handled) {
+                    interactionCount++
                 }
-
-                // Subtitle / Audio Menu D-pad handling
-                if (showSubtitleMenu) {
-                    return@onKeyEvent when (event.key) {
-                        Key.DirectionUp -> {
-                            when {
-                                subtitleMenuTab == 1 -> { if (audioMenuIndex > 0) audioMenuIndex-- }
-                                subtitlePanelFocus == 0 -> { if (subtitleLangIndex > 0) subtitleLangIndex-- }
-                                else -> { if (subtitleTrackIndex > 0) subtitleTrackIndex-- }
-                            }
-                            true
-                        }
-                        Key.DirectionDown -> {
-                            when {
-                                subtitleMenuTab == 1 -> { if (audioMenuIndex < audioTracks.size - 1) audioMenuIndex++ }
-                                subtitlePanelFocus == 0 -> { if (subtitleLangIndex < subtitleGroups.size) subtitleLangIndex++ }
-                                else -> {
-                                    val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
-                                    if (group != null && subtitleTrackIndex < group.second.size - 1) subtitleTrackIndex++
-                                }
-                            }
-                            true
-                        }
-                        Key.DirectionLeft -> {
-                            if (subtitlePanelFocus == 1) subtitlePanelFocus = 0
-                            else if (subtitleMenuTab == 1) subtitleMenuTab = 0
-                            true
-                        }
-                        Key.DirectionRight -> {
-                            if (subtitleMenuTab == 0 && subtitlePanelFocus == 0 && subtitleLangIndex > 0) {
-                                subtitlePanelFocus = 1
-                                subtitleTrackIndex = 0
-                            } else if (subtitleMenuTab == 0 && subtitlePanelFocus == 0 && subtitleLangIndex == 0) {
-                                subtitleMenuTab = 1
-                            }
-                            true
-                        }
-                        Key.Enter, Key.DirectionCenter -> {
-                            if (subtitleMenuTab == 1) {
-                                audioTracks.getOrNull(audioMenuIndex)?.let { onSelectAudioTrack(it) }
-                                showSubtitleMenu = false
-                                showControls = true
-                            } else if (subtitlePanelFocus == 0) {
-                                if (subtitleLangIndex == 0) {
-                                    onSelectSubtitle(null)
-                                    showSubtitleMenu = false
-                                    showControls = true
-                                } else {
-                                    subtitlePanelFocus = 1
-                                    subtitleTrackIndex = 0
-                                }
-                            } else {
-                                val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
-                                val trackPair = group?.second?.getOrNull(subtitleTrackIndex)
-                                if (trackPair != null) {
-                                    onSelectSubtitle(trackPair.second)
-                                }
-                                showSubtitleMenu = false
-                                showControls = true
-                            }
-                            true
-                        }
-                        Key.Back, Key.Escape -> {
-                            showSubtitleMenu = false
-                            showControls = true
-                            coroutineScope.launch {
-                                delay(150)
-                                runCatching { subtitleButtonFocusRequester.requestFocus() }
-                            }
-                            true
-                        }
-                        else -> true
-                    }
-                }
-
-                // Global Controls Key Events
-                when (event.key) {
-                    Key.MediaPlayPause -> { onTogglePlayPause(); showControls = true; true }
-                    Key.MediaPlay -> { onTogglePlayPause(); showControls = true; true }
-                    Key.MediaPause -> { onTogglePlayPause(); showControls = true; true }
-                    Key.MediaFastForward -> { onForward10(); true }
-                    Key.MediaRewind -> { onRewind10(); true }
-                    Key.DirectionCenter, Key.Enter -> {
-                        if (!showControls) {
-                            showControls = true
-                            coroutineScope.launch {
-                                delay(50)
-                                runCatching { playButtonFocusRequester.requestFocus() }
-                            }
-                            true
-                        } else false
-                    }
-                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> {
-                        if (!showControls) {
-                            showControls = true
-                            coroutineScope.launch {
-                                delay(50)
-                                runCatching { playButtonFocusRequester.requestFocus() }
-                            }
-                            true
-                        } else false
-                    }
-                    Key.Back, Key.Escape -> {
-                        if (showControls) {
-                            showControls = false
-                            true
-                        } else {
-                            onBack()
-                            true
-                        }
-                    }
-                    else -> false
-                }
+                handled
             }
     ) {
         // TV Skip Intro Button
@@ -406,11 +415,24 @@ fun ArvioTvPlayer(
             nextEpisodeButtonFocusRequester = nextEpisodeButtonFocusRequester,
             trackbarFocusRequester = trackbarFocusRequester,
             skipIntroFocusRequester = skipIntroFocusRequester,
-            onTogglePlayPause = onTogglePlayPause,
-            onRewind10 = onRewind10,
-            onForward10 = onForward10,
-            onCycleAspectRatio = onCycleAspectRatio,
+            onTogglePlayPause = {
+                interactionCount++
+                onTogglePlayPause()
+            },
+            onRewind10 = {
+                interactionCount++
+                onRewind10()
+            },
+            onForward10 = {
+                interactionCount++
+                onForward10()
+            },
+            onCycleAspectRatio = {
+                interactionCount++
+                onCycleAspectRatio()
+            },
             onOpenSubtitlesMenu = {
+                interactionCount++
                 showSubtitleMenu = true
                 coroutineScope.launch {
                     delay(50)
@@ -418,6 +440,7 @@ fun ArvioTvPlayer(
                 }
             },
             onToggleSubtitleSettings = {
+                interactionCount++
                 showSubtitleSettings = !showSubtitleSettings
                 if (showSubtitleSettings) {
                     subtitleSettingsRow = 0
@@ -428,17 +451,24 @@ fun ArvioTvPlayer(
                 }
             },
             onOpenSourceMenu = {
+                interactionCount++
                 showSourceMenu = true
                 showControls = true
             },
-            onPlayNextEpisode = onPlayNextEpisode,
+            onPlayNextEpisode = {
+                interactionCount++
+                onPlayNextEpisode()
+            },
             onScrubSeekDelta = { deltaMs ->
+                interactionCount++
                 if (durationMs > 0L) {
-                    scrubPreviewPosition = (scrubPreviewPosition + deltaMs).coerceIn(0L, durationMs)
+                    val base = if (isControlScrubbing) scrubPreviewPosition else currentPositionMs
+                    scrubPreviewPosition = (base + deltaMs).coerceIn(0L, durationMs)
                     isControlScrubbing = true
                 }
             },
             onCommitScrub = {
+                interactionCount++
                 if (isControlScrubbing) {
                     onSeekTo(scrubPreviewPosition)
                     isControlScrubbing = false
@@ -449,6 +479,7 @@ fun ArvioTvPlayer(
         // TV Subtitle & Audio Menu Dialog
         TvSubtitleMenu(
             isVisible = showSubtitleMenu,
+            selectedSubtitle = uiState.selectedSubtitle,
             audioTracks = audioTracks,
             selectedAudioIndex = selectedAudioIndex,
             activeTab = subtitleMenuTab,
@@ -523,7 +554,7 @@ fun ArvioTvPlayer(
             hasStreamingAddons = !uiState.isSetupError,
             addonOrderedIds = uiState.addonOrderedIds,
             title = uiState.title,
-            subtitle = if (seasonNumber != null && episodeNumber != null) "S$seasonNumber E$episodeNumber" else "",
+            subtitle = if (seasonNumber != null && episodeNumber != null) stringResource(R.string.player_season_episode_short, seasonNumber, episodeNumber) else "",
             onFocusedStream = onPrewarmStreams,
             onSelect = { stream ->
                 onSelectStream(stream)
@@ -548,7 +579,7 @@ fun ArvioTvPlayer(
         NextEpisodeOverlay(
             isVisible = showNextEpisodePrompt,
             showTitle = uiState.title,
-            episodeTitle = "Episode $pendingNextEpisode",
+            episodeTitle = stringResource(R.string.episode, pendingNextEpisode),
             seasonNumber = pendingNextSeason,
             episodeNumber = pendingNextEpisode,
             episodeImage = uiState.backdropUrl,

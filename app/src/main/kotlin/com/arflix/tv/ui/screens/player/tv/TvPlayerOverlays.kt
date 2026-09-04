@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -92,7 +93,7 @@ fun TvVolumeIndicator(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .fillMaxSize(volFrac)
+                        .fillMaxHeight(volFrac)
                         .background(playerAccent, RoundedCornerShape(4.dp))
                         .align(Alignment.BottomCenter)
                 )
@@ -281,7 +282,7 @@ fun TvErrorOverlay(
                 if (isSetupError) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = stringResource(R.string.no_results),
+                        text = stringResource(R.string.player_addon_setup_hint),
                         style = ArflixTypography.caption,
                         color = TextSecondary.copy(alpha = 0.7f),
                         textAlign = TextAlign.Center,

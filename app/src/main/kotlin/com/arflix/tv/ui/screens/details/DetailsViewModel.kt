@@ -76,6 +76,7 @@ data class DetailsUiState(
     val isLoadingPerson: Boolean = false,
     // Streams
     val streams: List<StreamSource> = emptyList(),
+    val streamsEpisodeIdentity: EpisodeIdentity? = null,
     val subtitles: List<Subtitle> = emptyList(),
     val isLoadingStreams: Boolean = false,
     val streamSearchStartTime: Long = 0L,
@@ -1798,6 +1799,7 @@ class DetailsViewModel @Inject constructor(
             completedAddons = 0,
             totalAddons = 0,
             streams = emptyList(),
+            streamsEpisodeIdentity = identity,
             subtitles = emptyList(),
             streamSearchStartTime = System.currentTimeMillis(),
             pluginScrapersLoading = false
@@ -1844,6 +1846,7 @@ class DetailsViewModel @Inject constructor(
                 completedAddons = 0,
                 totalAddons = 0,
                 streams = emptyList(),
+                streamsEpisodeIdentity = identity,
                 subtitles = emptyList(),
                 addonOrderedIds = orderedAddonIds,
                 streamSearchStartTime = System.currentTimeMillis(),

@@ -38,13 +38,17 @@ import androidx.compose.ui.zIndex
 @Composable
 fun MobileEdgeIndicator(
     visible: Boolean,
-    levelPct: Float, // 0.0f .. 1.0f
+    levelPct: Float, // 0.0f .. 2.0f for volume, 0.0f .. 1.0f for brightness
     isLeft: Boolean,
     modifier: Modifier = Modifier,
     @DrawableRes iconRes: Int? = null,
     icon: ImageVector? = null,
     isAuto: Boolean = false,
 ) {
+    val isBoost = levelPct > 1.005f
+    val boostColor = Color(0xFFFFB300) // Amber accent for boost mode (> 100%)
+    val activeColor = if (isBoost) boostColor else MobilePlayerTokens.InkPrimary
+
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(tween(140)),
@@ -67,14 +71,14 @@ fun MobileEdgeIndicator(
                     Icon(
                         painter = painterResource(iconRes),
                         contentDescription = null,
-                        tint = MobilePlayerTokens.InkPrimary,
+                        tint = activeColor,
                         modifier = Modifier.size(22.dp)
                     )
                 } else if (icon != null) {
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        tint = MobilePlayerTokens.InkPrimary,
+                        tint = activeColor,
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -89,20 +93,35 @@ fun MobileEdgeIndicator(
                     .background(Color.White.copy(alpha = 0.25f)),
                 contentAlignment = Alignment.BottomCenter
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(if (isAuto) 0f else levelPct.coerceIn(0f, 1f))
-                        .background(MobilePlayerTokens.InkPrimary, RoundedCornerShape(2.dp))
-                )
+                if (!isAuto) {
+                    val normalFraction = levelPct.coerceIn(0f, 1f)
+                    // White bar for standard volume (0% .. 100%)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(normalFraction)
+                            .background(Color.White, RoundedCornerShape(2.dp))
+                    )
+
+                    // Orange bar for boost mode (100% .. 200%) filling from bottom on top of white, consuming it
+                    if (levelPct > 1.0f) {
+                        val boostFraction = (levelPct - 1.0f).coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(boostFraction)
+                                .background(boostColor, RoundedCornerShape(2.dp))
+                        )
+                    }
+                }
             }
 
             // Percentage or "Auto" value label
             Text(
-                text = if (isAuto) "Auto" else "${(levelPct * 100).toInt()}",
-                color = MobilePlayerTokens.InkPrimary,
+                text = if (isAuto) "Auto" else "${(levelPct * 100).toInt()}%",
+                color = activeColor,
                 fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = if (isBoost) FontWeight.Bold else FontWeight.SemiBold,
                 style = androidx.compose.ui.text.TextStyle(
                     shadow = MobilePlayerTokens.TextShadow
                 )

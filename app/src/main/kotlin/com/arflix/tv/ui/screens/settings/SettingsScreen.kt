@@ -4610,17 +4610,6 @@ private fun MobileSettingsSubPage(
                         )
                     }
                 }
-                MobileSettingsCategory(title = stringResource(R.string.settings_section_audio)) {
-                    MobileSettingsRow(
-                        icon = Icons.Default.VolumeUp,
-                        title = stringResource(R.string.volume_boost),
-                        value = if (uiState.volumeBoostDb > 0) "+${uiState.volumeBoostDb} dB" else "0 dB",
-                        isToggle = false,
-                        isFocused = false,
-                        showDivider = false,
-                        onClick = { viewModel.cycleVolumeBoost() }
-                    )
-                }
             }
             "Appearance" -> {
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_appearance)) {

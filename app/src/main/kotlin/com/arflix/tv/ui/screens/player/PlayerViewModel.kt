@@ -160,11 +160,14 @@ data class PlayerUiState(
     val secondarySubtitleLang: String = "",
     val frameRateMatchingMode: String = "Off",
     val subtitleSize: String = "Medium",
+    val subtitleSizePct: Int = 100,
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
     val subtitleFont: String = SubtitleFontOption.DefaultPreference,
     val subtitleStylized: Boolean = true,
-    val subtitleOffset: String = "Bottom",
+    val subtitleVerticalPct: Int = 2,
+    val filterSubtitlesByLanguage: Boolean = false,
+    val subtitleRemoveHearingImpaired: Boolean = false,
     val error: PlayerMessage? = null,
     val isSetupError: Boolean = false, // true when error is due to missing addons (shows friendly guide instead of red error)
     // Auto-play next episode at end of current one. Mirrors the profile-scoped
@@ -645,6 +648,12 @@ class PlayerViewModel @Inject constructor(
             val frameRateMatchingMode = resolveFrameRateMatchingMode()
             val prefs = context.settingsDataStore.data.first()
             val subSize = prefs[profileManager.profileStringKey("subtitle_size")] ?: "Medium"
+            val subSizePct = prefs[profileManager.profileIntKey("subtitle_size_pct")] ?: when (subSize.lowercase()) {
+                "small" -> 80
+                "large" -> 120
+                "extra large" -> 140
+                else -> 100
+            }
             val subColor = prefs[profileManager.profileStringKey("subtitle_color")] ?: "White"
             val subStyle = prefs[profileManager.profileStringKey("subtitle_style")] ?: "Bold"
             val subFont = SubtitleFontOption.fromPreference(
@@ -652,6 +661,11 @@ class PlayerViewModel @Inject constructor(
             ).preferenceValue
             val subStylized = prefs[profileManager.profileBooleanKey("subtitle_stylized")] ?: true
             val subOffset = prefs[profileManager.profileStringKey("subtitle_offset")] ?: "Bottom"
+            val subVertPct = prefs[profileManager.profileIntKey("subtitle_vertical_pct")] ?: when (subOffset) {
+                "Bottom" -> 2; "Low" -> 8; "Medium" -> 15; "High" -> 25; else -> 2
+            }
+            val filterSubLang = prefs[filterSubtitlesByLanguageKey()] ?: true
+            val removeHi = prefs[profileManager.profileBooleanKey("subtitle_remove_hearing_impaired")] ?: false
             val autoPlayNext = prefs[autoPlayNextKey()] ?: true
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val volumeBoostDb = prefs[profileManager.profileStringKey("volume_boost_db")]
@@ -704,11 +718,15 @@ class PlayerViewModel @Inject constructor(
                 secondarySubtitleLang = secondarySub,
                 frameRateMatchingMode = frameRateMatchingMode,
                 subtitleSize = subSize,
+                subtitleSizePct = subSizePct,
                 subtitleColor = subColor,
                 subtitleStyle = subStyle,
                 subtitleFont = subFont,
                 subtitleStylized = subStylized,
                 subtitleOffset = subOffset,
+                subtitleVerticalPct = subVertPct,
+                filterSubtitlesByLanguage = filterSubLang,
+                subtitleRemoveHearingImpaired = removeHi,
                 autoPlayNext = autoPlayNext,
                 autoSkipIntro = autoSkipIntro,
                 autoSkipOutro = autoSkipOutro,
@@ -2995,10 +3013,80 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun setSubtitleSizePref(size: String) {
-        _uiState.value = _uiState.value.copy(subtitleSize = size)
+        val mappedPct = when (size.lowercase()) {
+            "small" -> 80
+            "large" -> 120
+            "extra large" -> 140
+            else -> 100
+        }
+        _uiState.value = _uiState.value.copy(subtitleSize = size, subtitleSizePct = mappedPct)
         viewModelScope.launch {
             context.settingsDataStore.edit { prefs ->
                 prefs[profileManager.profileStringKey("subtitle_size")] = size
+                prefs[profileManager.profileIntKey("subtitle_size_pct")] = mappedPct
+            }
+        }
+    }
+
+    fun setSubtitleSizePct(pct: Int) {
+        val clamped = pct.coerceIn(50, 200)
+        val name = when {
+            clamped <= 80 -> "Small"
+            clamped >= 130 -> "Extra Large"
+            clamped >= 115 -> "Large"
+            else -> "Medium"
+        }
+        _uiState.value = _uiState.value.copy(subtitleSizePct = clamped, subtitleSize = name)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileIntKey("subtitle_size_pct")] = clamped
+                prefs[profileManager.profileStringKey("subtitle_size")] = name
+            }
+        }
+    }
+
+    fun setSubtitleVerticalPct(pct: Int) {
+        val clamped = pct.coerceIn(1, 88)
+        val name = when {
+            clamped >= 60 -> "Top"
+            clamped >= 25 -> "High"
+            clamped >= 12 -> "Medium"
+            clamped >= 5 -> "Low"
+            else -> "Bottom"
+        }
+        _uiState.value = _uiState.value.copy(subtitleVerticalPct = clamped, subtitleOffset = name)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileIntKey("subtitle_vertical_pct")] = clamped
+                prefs[profileManager.profileStringKey("subtitle_offset")] = name
+            }
+        }
+    }
+
+    fun setSubtitlePreloadEnabled(enabled: Boolean) {
+        subtitlePreloadEnabled = enabled
+        _uiState.value = _uiState.value.copy(subtitlePreloadEnabled = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[subtitlePreloadKey] = enabled
+            }
+        }
+    }
+
+    fun setFilterSubtitlesByLanguage(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(filterSubtitlesByLanguage = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[filterSubtitlesByLanguageKey()] = enabled
+            }
+        }
+    }
+
+    fun setSubtitleRemoveHearingImpaired(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(subtitleRemoveHearingImpaired = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("subtitle_remove_hearing_impaired")] = enabled
             }
         }
     }
@@ -3017,6 +3105,43 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { prefs ->
                 prefs[profileManager.profileStringKey("subtitle_offset")] = offset
+            }
+        }
+    }
+
+    fun setVolumeBoostDb(boostDb: Int) {
+        val clamped = boostDb.coerceIn(0, 15)
+        _uiState.value = _uiState.value.copy(volumeBoostDb = clamped)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("volume_boost_db")] = clamped.toString()
+            }
+        }
+    }
+
+    fun setSubtitleStylePref(style: String) {
+        _uiState.value = _uiState.value.copy(subtitleStyle = style)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_style")] = style
+            }
+        }
+    }
+
+    fun setSubtitleFontPref(font: String) {
+        _uiState.value = _uiState.value.copy(subtitleFont = font)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_font")] = font
+            }
+        }
+    }
+
+    fun setSubtitleStylizedPref(stylized: Boolean) {
+        _uiState.value = _uiState.value.copy(subtitleStylized = stylized)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("subtitle_stylized")] = stylized
             }
         }
     }
@@ -4244,7 +4369,8 @@ class PlayerViewModel @Inject constructor(
         val stream = _uiState.value.selectedStream
         if (stream != null) {
             _uiState.value = _uiState.value.copy(error = null)
-            selectStream(stream, currentStartPositionMs)
+            val resumeTarget = lastKnownPositionMs.takeIf { it > 0L } ?: currentStartPositionMs
+            selectStream(stream, resumeTarget)
         } else {
             reloadStreams()
         }

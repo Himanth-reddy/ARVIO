@@ -32,6 +32,7 @@ class AiSubtitleRenderersFactory(
 ) : DefaultRenderersFactory(context) {
 
     val syncOffsetUs = java.util.concurrent.atomic.AtomicLong(0L)
+    val audioDelayUs = java.util.concurrent.atomic.AtomicLong(0L)
 
     var audioCaptureProcessor: AudioCaptureProcessor? = null
         private set
@@ -105,10 +106,14 @@ class AiSubtitleRenderersFactory(
         // decoder plays fine. Forcing MODE_ON keeps the platform MediaCodecVideoRenderer first;
         // enableDecoderFallback + forceDisableMediaCodecAsynchronousQueueing (set on the factory)
         // handle genuine hardware failures/hangs reactively — no device-class heuristic.
+        val baseOut = ArrayList<Renderer>()
         super.buildVideoRenderers(
             context, EXTENSION_RENDERER_MODE_ON, mediaCodecSelector,
-            enableDecoderFallback, eventHandler, eventListener, allowedVideoJoiningTimeMs, out
+            enableDecoderFallback, eventHandler, eventListener, allowedVideoJoiningTimeMs, baseOut
         )
+        for (renderer in baseOut) {
+            out.add(VideoOffsetRenderer(renderer, audioDelayUs))
+        }
     }
 
     override fun buildAudioSink(
@@ -636,5 +641,18 @@ private class SubtitleOffsetRenderer(
             cls = cls.superclass
         }
         return null
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private class VideoOffsetRenderer(
+    private val baseRenderer: Renderer,
+    private val audioDelayUs: java.util.concurrent.atomic.AtomicLong
+) : Renderer by baseRenderer {
+
+    override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
+        val delayUs = audioDelayUs.get()
+        val adjustedUs = if (delayUs != 0L) (positionUs + delayUs).coerceAtLeast(0L) else positionUs
+        baseRenderer.render(adjustedUs, elapsedRealtimeUs)
     }
 }

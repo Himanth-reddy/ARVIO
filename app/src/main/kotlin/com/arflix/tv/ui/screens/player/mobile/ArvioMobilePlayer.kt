@@ -155,10 +155,25 @@ fun ArvioMobilePlayer(
     onUpdateAutoSkipOutro: (Boolean) -> Unit,
     onUpdateAudioDelay: (Long) -> Unit,
     onUpdateVolumeNormalization: (Boolean) -> Unit,
+    onVolumeBoostChange: (Int) -> Unit = {},
+    onToggleLiveAudioTranslation: () -> Unit = {},
+    onFindBestMatch: () -> Unit = {},
+    onActivateAiTranslation: () -> Unit = {},
+    subtitleDelayMs: Long = 0L,
     onUpdateSubtitleDelay: (Long) -> Unit,
     onUpdateSubtitleSize: (Int) -> Unit,
     onUpdateSubtitleColor: (String) -> Unit,
     onUpdateSubtitlePosition: (String) -> Unit,
+    subtitleSizePct: Int = 100,
+    subtitleVerticalPct: Int = 2,
+    hasActiveSubtitleCues: Boolean = false,
+    onUpdateSubtitleVerticalPosition: (Int) -> Unit = {},
+    onUpdateSubtitlePreload: (Boolean) -> Unit = {},
+    onUpdateFilterSubtitlesByLanguage: (Boolean) -> Unit = {},
+    onUpdateSubtitleRemoveHearingImpaired: (Boolean) -> Unit = {},
+    onUpdateSubtitleStyle: (String) -> Unit = {},
+    onUpdateSubtitleFont: (String) -> Unit = {},
+    onUpdateSubtitleStylized: (Boolean) -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -191,9 +206,12 @@ fun ArvioMobilePlayer(
     var showEpisodesDrawer by remember { mutableStateOf(false) }
     var showSourcesDrawer by remember { mutableStateOf(false) }
     var showAudioSheet by remember { mutableStateOf(false) }
+    var audioSheetInitialTab by remember { mutableStateOf("tracks") }
     var showSubtitlesSheet by remember { mutableStateOf(false) }
+    var subtitleSheetInitialView by remember { mutableStateOf("root") }
     var showSpeedSheet by remember { mutableStateOf(false) }
     var showMoreSettingsSheet by remember { mutableStateOf(false) }
+    var isRepositioningSubtitles by remember { mutableStateOf(false) }
 
     val anyPanelOpen = showEpisodesDrawer || showSourcesDrawer || showAudioSheet ||
         showSubtitlesSheet || showSpeedSheet || showMoreSettingsSheet
@@ -205,6 +223,7 @@ fun ArvioMobilePlayer(
         showSubtitlesSheet = false
         showSpeedSheet = false
         showMoreSettingsSheet = false
+        isRepositioningSubtitles = false
     }
 
     BackHandler(enabled = anyPanelOpen) {
@@ -219,7 +238,7 @@ fun ArvioMobilePlayer(
     // Android system bars follow the player controls visibility state:
     // Controls visible -> Show status bar and navigation bar
     // Controls hidden (or locked) -> Hide status bar and navigation bar
-    val areControlsVisible = (showControls || anyPanelOpen) && !isLocked && uiState.error == null
+    val areControlsVisible = (showControls || anyPanelOpen) && !isLocked && uiState.error == null && !isRepositioningSubtitles
     PlayerSystemBarsEffect(
         activity = activity,
         showBars = areControlsVisible
@@ -258,10 +277,15 @@ fun ArvioMobilePlayer(
         mutableIntStateOf(audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: -1)
     }
 
-    LaunchedEffect(audioManager) {
+    LaunchedEffect(audioManager, uiState.volumeBoostDb) {
         val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 10
         lastKnownStreamVolume = current
-        volumeLevel = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+        val hardwarePct = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+        volumeLevel = if (uiState.volumeBoostDb > 0 && current >= maxVolume) {
+            1.0f + (uiState.volumeBoostDb.toFloat() / 15f).coerceIn(0f, 1f)
+        } else {
+            hardwarePct
+        }
     }
 
     // Trigger counters ensuring HUD indicators always restart the auto-hide timer
@@ -269,7 +293,7 @@ fun ArvioMobilePlayer(
     var volumeIndicatorTrigger by remember { mutableIntStateOf(0) }
 
     // Hardware Physical Volume Buttons Observer (only triggers on actual STREAM_MUSIC volume delta)
-    DisposableEffect(context, audioManager, maxVolume) {
+    DisposableEffect(context, audioManager, maxVolume, uiState.volumeBoostDb) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
@@ -278,7 +302,15 @@ fun ArvioMobilePlayer(
                         val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: return
                         if (lastKnownStreamVolume != -1 && current != lastKnownStreamVolume) {
                             lastKnownStreamVolume = current
-                            volumeLevel = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+                            if (current < maxVolume && uiState.volumeBoostDb > 0) {
+                                onVolumeBoostChange(0)
+                            }
+                            val hardwarePct = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+                            volumeLevel = if (uiState.volumeBoostDb > 0 && current >= maxVolume) {
+                                1.0f + (uiState.volumeBoostDb.toFloat() / 15f).coerceIn(0f, 1f)
+                            } else {
+                                hardwarePct
+                            }
                             volumeIndicatorTrigger++
                         }
                     }
@@ -292,7 +324,15 @@ fun ArvioMobilePlayer(
                 val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: return
                 if (lastKnownStreamVolume != -1 && current != lastKnownStreamVolume) {
                     lastKnownStreamVolume = current
-                    volumeLevel = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+                    if (current < maxVolume && uiState.volumeBoostDb > 0) {
+                        onVolumeBoostChange(0)
+                    }
+                    val hardwarePct = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+                    volumeLevel = if (uiState.volumeBoostDb > 0 && current >= maxVolume) {
+                        1.0f + (uiState.volumeBoostDb.toFloat() / 15f).coerceIn(0f, 1f)
+                    } else {
+                        hardwarePct
+                    }
                     volumeIndicatorTrigger++
                 }
             }
@@ -397,15 +437,19 @@ fun ArvioMobilePlayer(
         }
     }
 
+    var hasAutoAdvanced by remember(uiState.title, uiState.seasonNumber, uiState.episodeNumber) { mutableStateOf(false) }
+
     // Auto-advance to next episode when Up Next countdown reaches 10s mark
     LaunchedEffect(currentPositionMs, isOutroInterval, activeSkip, durationMs, isTv, nextEpisode, uiState.autoPlayNext, dismissedUpNext, hasPlaybackStarted) {
-        if (!hasPlaybackStarted || !isTv || nextEpisode == null || !uiState.autoPlayNext || dismissedUpNext) return@LaunchedEffect
+        if (!hasPlaybackStarted || !isTv || nextEpisode == null || !uiState.autoPlayNext || dismissedUpNext || hasAutoAdvanced) return@LaunchedEffect
         if (isOutroInterval && activeSkip != null) {
             val upNextEndMs = (activeSkip.startMs + 10000L).coerceAtMost(activeSkip.endMs)
             if (currentPositionMs >= upNextEndMs && currentPositionMs < (durationMs - 500L)) {
+                hasAutoAdvanced = true
                 onPlayNextEpisode()
             }
         } else if (durationMs > 20000L && currentPositionMs >= (durationMs - 5000L) && currentPositionMs < (durationMs - 500L)) {
+            hasAutoAdvanced = true
             onPlayNextEpisode()
         }
     }
@@ -414,7 +458,10 @@ fun ArvioMobilePlayer(
     LaunchedEffect(currentPositionMs, durationMs, hasPlaybackStarted, isTv, nextEpisode, uiState.autoPlayNext, dismissedUpNext) {
         if (durationMs > 0L && currentPositionMs >= (durationMs - 600L) && hasPlaybackStarted) {
             if (isTv && nextEpisode != null && uiState.autoPlayNext && !dismissedUpNext) {
-                onPlayNextEpisode()
+                if (!hasAutoAdvanced) {
+                    hasAutoAdvanced = true
+                    onPlayNextEpisode()
+                }
             } else {
                 onBack()
             }
@@ -640,8 +687,7 @@ fun ArvioMobilePlayer(
                     detectPlayerVerticalAdjustmentGesture(
                         thresholdPx = 28.dp.toPx(),
                         sensitivity = 0.95f,
-                        minValue = 0.0f,
-                        maxValue = 1.0f,
+                        getBounds = { 0.0f..1.0f },
                         getInitialValue = { brightnessLevel },
                         onActivate = {
                             showControls = false
@@ -662,13 +708,17 @@ fun ArvioMobilePlayer(
                 .fillMaxHeight()
                 .fillMaxWidth(0.5f)
                 .align(Alignment.CenterEnd)
-                .pointerInput(isLocked, anyPanelOpen, maxVolume, uiState.error, isHeartbeatLoading) {
+                .pointerInput(isLocked, anyPanelOpen, maxVolume, uiState.error, isHeartbeatLoading, uiState.volumeBoostDb) {
                     if (isLocked || anyPanelOpen || uiState.error != null || isHeartbeatLoading) return@pointerInput
                     detectPlayerVerticalAdjustmentGesture(
                         thresholdPx = 28.dp.toPx(),
                         sensitivity = 0.95f,
-                        minValue = 0.0f,
-                        maxValue = 1.0f,
+                        getBounds = { initVal ->
+                            val hasActiveBoost = uiState.volumeBoostDb > 0 || initVal > 1.005f
+                            val strokeMin = if (hasActiveBoost) 1.0f else 0.0f
+                            val strokeMax = if (initVal < 0.999f) 1.0f else 2.0f
+                            strokeMin..strokeMax
+                        },
                         getInitialValue = { volumeLevel },
                         onActivate = {
                             showControls = false
@@ -677,8 +727,21 @@ fun ArvioMobilePlayer(
                         onValueChange = { newLevel ->
                             volumeLevel = newLevel
                             volumeIndicatorTrigger++
-                            val targetVol = (newLevel * maxVolume).roundToInt().coerceIn(0, maxVolume)
-                            audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                            if (newLevel <= 1.0f) {
+                                val targetVol = (newLevel * maxVolume).roundToInt().coerceIn(0, maxVolume)
+                                lastKnownStreamVolume = targetVol
+                                audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                                if (uiState.volumeBoostDb > 0) {
+                                    onVolumeBoostChange(0)
+                                }
+                            } else {
+                                lastKnownStreamVolume = maxVolume
+                                audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, maxVolume, 0)
+                                val targetBoostDb = ((newLevel - 1.0f) * 15f).roundToInt().coerceIn(0, 15)
+                                if (targetBoostDb != uiState.volumeBoostDb) {
+                                    onVolumeBoostChange(targetBoostDb)
+                                }
+                            }
                         }
                     )
                 }
@@ -775,7 +838,7 @@ fun ArvioMobilePlayer(
         )
 
         AnimatedVisibility(
-            visible = hasPlaybackStarted && showControls && !isLocked && uiState.error == null,
+            visible = hasPlaybackStarted && showControls && !isLocked && uiState.error == null && !isRepositioningSubtitles,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(240)),
             modifier = Modifier.fillMaxSize()
@@ -855,10 +918,12 @@ fun ArvioMobilePlayer(
                     },
                     onOpenAudio = {
                         closeAllPanels()
+                        audioSheetInitialTab = "tracks"
                         showAudioSheet = true
                     },
                     onOpenSubtitles = {
                         closeAllPanels()
+                        subtitleSheetInitialView = "root"
                         showSubtitlesSheet = true
                     },
                     onOpenSpeed = {
@@ -1175,15 +1240,87 @@ fun ArvioMobilePlayer(
             visible = showAudioSheet,
             audioTracks = audioTracks,
             selectedAudioIndex = selectedAudioIndex,
+            volumeLevelPct = volumeLevel,
+            volumeBoostDb = uiState.volumeBoostDb,
+            audioDelayMs = uiState.audioDelayMs,
+            volumeNormalization = uiState.audioNormalization,
+            isLiveAudioTranslating = uiState.isLiveAudioTranslating,
+            initialTab = audioSheetInitialTab,
             onSelectAudio = onSelectAudioTrack,
+            onUpdateVolumeLevel = { newLevel: Float ->
+                volumeLevel = newLevel
+                volumeIndicatorTrigger++
+                if (newLevel <= 1.0f) {
+                    val targetVol = (newLevel * maxVolume).roundToInt().coerceIn(0, maxVolume)
+                    lastKnownStreamVolume = targetVol
+                    audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                    if (uiState.volumeBoostDb > 0) {
+                        onVolumeBoostChange(0)
+                    }
+                } else {
+                    lastKnownStreamVolume = maxVolume
+                    audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, maxVolume, 0)
+                    val targetBoostDb = ((newLevel - 1.0f) * 15f).roundToInt().coerceIn(0, 15)
+                    if (targetBoostDb != uiState.volumeBoostDb) {
+                        onVolumeBoostChange(targetBoostDb)
+                    }
+                }
+            },
+            onVolumeBoostChange = onVolumeBoostChange,
+            onUpdateAudioDelay = onUpdateAudioDelay,
+            onToggleVolumeNorm = onUpdateVolumeNormalization,
+            onToggleLiveAudioTranslation = onToggleLiveAudioTranslation,
             onClose = { showAudioSheet = false }
         )
+
+        val currentSubColorHex = when (uiState.subtitleColor.lowercase()) {
+            "yellow" -> "#ffe066"
+            "cyan" -> "#66d9ff"
+            "red" -> "#ff6666"
+            else -> "#fff"
+        }
+        val currentSubPos = if (uiState.subtitleOffset.equals("high", ignoreCase = true) || uiState.subtitleOffset.equals("top", ignoreCase = true)) "top" else "bottom"
 
         // Subtitles Sheet
         MobileSubtitlesSheet(
             visible = showSubtitlesSheet,
             subtitles = uiState.subtitles,
             selectedSubtitle = uiState.selectedSubtitle,
+            isFindingBestMatch = uiState.isFindingBestMatch,
+            matchLanguageName = uiState.matchLanguageName,
+            onFindBestMatch = onFindBestMatch,
+            isAiTranslating = uiState.isAiTranslating,
+            isAiAvailable = uiState.isAiAvailable,
+            aiTargetLanguageName = uiState.aiTargetLanguageName,
+            onActivateAiTranslation = onActivateAiTranslation,
+            subtitleDelayMs = subtitleDelayMs,
+            onUpdateSubtitleDelay = onUpdateSubtitleDelay,
+            subtitleSizePct = subtitleSizePct,
+            onUpdateSubtitleSize = onUpdateSubtitleSize,
+            subtitleColorHex = currentSubColorHex,
+            onUpdateSubtitleColor = onUpdateSubtitleColor,
+            subtitlePosition = currentSubPos,
+            onUpdateSubtitlePosition = onUpdateSubtitlePosition,
+            subtitleVerticalPct = subtitleVerticalPct,
+            onUpdateSubtitleVerticalPosition = onUpdateSubtitleVerticalPosition,
+            onStartInteractiveRepositioning = {
+                showControls = false
+                showSubtitlesSheet = false
+                isRepositioningSubtitles = true
+            },
+            subtitleStyle = uiState.subtitleStyle,
+            onUpdateSubtitleStyle = onUpdateSubtitleStyle,
+            subtitleFont = uiState.subtitleFont,
+            onUpdateSubtitleFont = onUpdateSubtitleFont,
+            subtitleStylized = uiState.subtitleStylized,
+            onUpdateSubtitleStylized = onUpdateSubtitleStylized,
+            subtitlePreloadEnabled = uiState.subtitlePreloadEnabled,
+            onToggleSubtitlePreload = onUpdateSubtitlePreload,
+            filterSubtitlesByLanguage = uiState.filterSubtitlesByLanguage,
+            onToggleFilterSubtitlesByLanguage = onUpdateFilterSubtitlesByLanguage,
+            subtitleRemoveHearingImpaired = uiState.subtitleRemoveHearingImpaired,
+            onToggleSubtitleRemoveHearingImpaired = onUpdateSubtitleRemoveHearingImpaired,
+            initialView = subtitleSheetInitialView,
             onSelectSubtitle = onSelectSubtitleTrack,
             onClose = { showSubtitlesSheet = false }
         )
@@ -1203,27 +1340,25 @@ fun ArvioMobilePlayer(
             autoSkipIntro = uiState.autoSkipIntro,
             autoSkipOutro = uiState.autoSkipOutro,
             aspectRatio = aspectModeLabel,
-            audioDelayMs = uiState.audioDelayMs,
-            volumeNormalization = uiState.audioNormalization,
-            subtitleDelayMs = 0L,
-            subtitleSizePct = 100,
-            subtitleColorHex = "#fff",
-            subtitlePosition = "bottom",
-            selectedSourceName = uiState.selectedStream?.source.orEmpty(),
             onToggleAutoplay = onUpdateAutoplay,
             onToggleAutoSkipIntro = onUpdateAutoSkipIntro,
             onToggleAutoSkipOutro = onUpdateAutoSkipOutro,
             onSelectAspectRatio = onSelectAspectRatio,
-            onUpdateAudioDelay = onUpdateAudioDelay,
-            onToggleVolumeNorm = onUpdateVolumeNormalization,
-            onUpdateSubtitleDelay = onUpdateSubtitleDelay,
-            onUpdateSubtitleSize = onUpdateSubtitleSize,
-            onUpdateSubtitleColor = onUpdateSubtitleColor,
-            onUpdateSubtitlePosition = onUpdateSubtitlePosition,
-            onOpenSourcesDrawer = {
-                showSourcesDrawer = true
-            },
             onClose = { showMoreSettingsSheet = false }
+        )
+
+        // Interactive Subtitle Repositioning Overlay
+        MobileSubtitleRepositionOverlay(
+            visible = isRepositioningSubtitles,
+            verticalPercent = subtitleVerticalPct,
+            hasActiveSubtitles = hasActiveSubtitleCues,
+            subtitleColorHex = currentSubColorHex,
+            subtitleStyle = uiState.subtitleStyle,
+            subtitleFont = uiState.subtitleFont,
+            subtitleSizePct = subtitleSizePct,
+            onUpdateVerticalPercent = onUpdateSubtitleVerticalPosition,
+            onDismiss = { isRepositioningSubtitles = false },
+            modifier = Modifier.zIndex(45f)
         )
     }
 }
@@ -1278,8 +1413,7 @@ private enum class PlayerSwipeGestureState {
 private suspend fun PointerInputScope.detectPlayerVerticalAdjustmentGesture(
     thresholdPx: Float,
     sensitivity: Float = 0.95f,
-    minValue: Float,
-    maxValue: Float,
+    getBounds: (initialValue: Float) -> ClosedFloatingPointRange<Float> = { 0f..1f },
     getInitialValue: () -> Float,
     onActivate: () -> Unit,
     onValueChange: (Float) -> Unit
@@ -1288,6 +1422,7 @@ private suspend fun PointerInputScope.detectPlayerVerticalAdjustmentGesture(
         val down = awaitFirstDown(requireUnconsumed = false)
         val initialPosition = down.position
         val initialValue = getInitialValue()
+        val bounds = getBounds(initialValue)
         val playerHeight = size.height.toFloat().coerceAtLeast(1f)
 
         var gestureState = PlayerSwipeGestureState.UNCLASSIFIED
@@ -1319,7 +1454,7 @@ private suspend fun PointerInputScope.detectPlayerVerticalAdjustmentGesture(
                 change.consume()
                 val effectiveDeltaY = totalDeltaY - activationDeltaY
                 val normalizedDelta = -effectiveDeltaY / playerHeight
-                val newValue = (initialValue + normalizedDelta * sensitivity).coerceIn(minValue, maxValue)
+                val newValue = (initialValue + normalizedDelta * sensitivity).coerceIn(bounds.start, bounds.endInclusive)
                 onValueChange(newValue)
             }
         }

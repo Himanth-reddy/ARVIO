@@ -806,12 +806,12 @@ fun MobilePlayerBottomSection(
                 Icon(
                     painter = painterResource(if (isSubtitleOff) R.drawable.ic_huge_captions_off else R.drawable.ic_huge_captions),
                     contentDescription = null,
-                    tint = if (isSubtitleOff) MobilePlayerTokens.InkSecondary else MobilePlayerTokens.InkPrimary,
+                    tint = MobilePlayerTokens.InkSecondary,
                     modifier = Modifier.size(15.dp)
                 )
                 Text(
                     text = if (isSubtitleOff) "Subtitles Off" else "Subtitles: $currentSubtitleTrack",
-                    color = if (isSubtitleOff) MobilePlayerTokens.InkSecondary else MobilePlayerTokens.InkPrimary,
+                    color = MobilePlayerTokens.InkSecondary,
                     fontSize = 12.5.sp,
                     style = androidx.compose.ui.text.TextStyle(
                         shadow = MobilePlayerTokens.TextShadow

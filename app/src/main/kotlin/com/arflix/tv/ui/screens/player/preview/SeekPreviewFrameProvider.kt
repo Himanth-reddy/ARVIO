@@ -76,6 +76,7 @@ internal fun quantizeSeekPreviewPositionWithHysteresis(
     if (durationMs <= 0L) return 0L
     if (currentBucket < 0L) return quantizeSeekPreviewPosition(positionMs, durationMs)
     val clamped = positionMs.coerceIn(0L, durationMs)
+    if (clamped >= durationMs) return durationMs
     val threshold = (PREVIEW_INTERVAL_MS / 2L) + hysteresisMs
     if (kotlin.math.abs(clamped - currentBucket) <= threshold) {
         return currentBucket.coerceAtMost(durationMs)

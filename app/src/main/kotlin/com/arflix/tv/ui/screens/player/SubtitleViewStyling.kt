@@ -17,12 +17,7 @@ internal fun SubtitleView.applySubtitleAppearance(
     preserveEmbeddedStyles: Boolean,
     inPictureInPicture: Boolean,
 ) {
-    val baseSizeSp = when (sizePreference) {
-        "Small" -> 18f
-        "Large" -> 30f
-        "Extra Large" -> 36f
-        else -> 24f
-    }
+    val baseSizeSp = 24f
     val foregroundColor = when (colorPreference) {
         "Yellow" -> Color.YELLOW
         "Green" -> Color.GREEN
@@ -59,7 +54,7 @@ internal fun SubtitleView.applySubtitleAppearance(
         TypedValue.COMPLEX_UNIT_SP,
         baseSizeSp * (sizePercent.coerceIn(50, 300) / 100f) * pipScale,
     )
-    setBottomPaddingFraction((verticalPercent / 100f).coerceIn(0f, 0.5f))
+    setBottomPaddingFraction((verticalPercent / 100f).coerceIn(0.01f, 0.88f))
     val applyEmbeddedStyles = shouldPreserveEmbeddedSubtitleStyles(
         fontPreference = fontPreference,
         stylizedSubtitlesEnabled = preserveEmbeddedStyles,

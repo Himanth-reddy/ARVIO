@@ -68,6 +68,7 @@ class GeminiLiveTranslationService(
     // Segmentation: show one sentence at a time so lines from different speakers/utterances
     // never merge onto a single subtitle line. Completed sentences queue up and are drained
     // one at a time; the trailing in-progress text shows live once the queue is empty.
+    private val segmentationLock = Any()
     private val pendingLines = ArrayDeque<String>()
     private var livePartial = StringBuilder()
     private var lineJob: Job? = null
@@ -178,10 +179,12 @@ class GeminiLiveTranslationService(
 
                 // TEXT parts are incremental token chunks that carry their own spacing,
                 // so append verbatim (no trim / no injected space) to avoid splitting words.
-                livePartial.append(fragment)
-                extractCompletedSentences()
-                Log.d(TAG, "live: partial=\"${livePartial.toString().trim()}\" queued=${pendingLines.size}")
-                startDrainer()
+                synchronized(segmentationLock) {
+                    livePartial.append(fragment)
+                    extractCompletedSentences()
+                    Log.d(TAG, "live: partial=\"${livePartial.toString().trim()}\" queued=${pendingLines.size}")
+                    startDrainer()
+                }
             }
 
             // Turn-based (general) model: a completed turn is a clean utterance boundary — flush
@@ -195,12 +198,14 @@ class GeminiLiveTranslationService(
     }
 
     private fun onTurnComplete() {
-        val rest = livePartial.toString().trim()
-        if (rest.isNotEmpty()) {
-            pendingLines.addLast(rest)
-            while (pendingLines.size > MAX_PENDING_LINES) pendingLines.removeFirst()
-            livePartial = StringBuilder()
-            startDrainer()
+        synchronized(segmentationLock) {
+            val rest = livePartial.toString().trim()
+            if (rest.isNotEmpty()) {
+                pendingLines.addLast(rest)
+                while (pendingLines.size > MAX_PENDING_LINES) pendingLines.removeFirst()
+                livePartial = StringBuilder()
+                startDrainer()
+            }
         }
         sentenceStartMs = 0L
         firstFragmentLogged = false
@@ -232,19 +237,25 @@ class GeminiLiveTranslationService(
      * new sentences appended while it's draining are picked up by the loop.
      */
     private fun startDrainer() {
-        if (lineJob?.isActive == true) return
-        lineJob = scope.launch {
-            while (pendingLines.isNotEmpty()) {
-                val line = pendingLines.removeFirst()
-                _text.value = line
-                sentenceStartMs = 0L
-                firstFragmentLogged = false
-                delay(MIN_LINE_MS)
+        synchronized(segmentationLock) {
+            if (lineJob?.isActive == true) return
+            lineJob = scope.launch {
+                while (true) {
+                    val line = synchronized(segmentationLock) {
+                        if (pendingLines.isNotEmpty()) pendingLines.removeFirst() else null
+                    } ?: break
+                    _text.value = line
+                    sentenceStartMs = 0L
+                    firstFragmentLogged = false
+                    delay(MIN_LINE_MS)
+                }
+                // Caught up — show whatever partial sentence is currently being spoken.
+                val partial = synchronized(segmentationLock) {
+                    livePartial.toString().trim()
+                }
+                if (partial.isNotEmpty()) _text.value = partial
+                scheduleClear()
             }
-            // Caught up — show whatever partial sentence is currently being spoken.
-            val partial = livePartial.toString().trim()
-            if (partial.isNotEmpty()) _text.value = partial
-            scheduleClear()
         }
     }
 
@@ -252,15 +263,22 @@ class GeminiLiveTranslationService(
         clearJob?.cancel()
         clearJob = scope.launch {
             delay(CLEAR_DELAY_MS)
-            if (pendingLines.isEmpty() && livePartial.isBlank()) _text.value = null
+            val shouldClear = synchronized(segmentationLock) {
+                pendingLines.isEmpty() && livePartial.isBlank()
+            }
+            if (shouldClear) _text.value = null
         }
     }
 
     private fun resetSegmentation() {
-        lineJob?.cancel()
-        clearJob?.cancel()
-        pendingLines.clear()
-        livePartial = StringBuilder()
+        synchronized(segmentationLock) {
+            lineJob?.cancel()
+            lineJob = null
+            clearJob?.cancel()
+            clearJob = null
+            pendingLines.clear()
+            livePartial = StringBuilder()
+        }
         sentenceStartMs = 0L
         firstFragmentLogged = false
         _text.value = null
@@ -304,14 +322,19 @@ class GeminiLiveTranslationService(
 
     fun disconnect() {
         stopSender()
-        lineJob?.cancel()
-        clearJob?.cancel()
+        while (audioQueue.tryReceive().isSuccess) { /* discard */ }
+        synchronized(segmentationLock) {
+            lineJob?.cancel()
+            lineJob = null
+            clearJob?.cancel()
+            clearJob = null
+            pendingLines.clear()
+            livePartial = StringBuilder()
+        }
         ws?.close(1000, "stopped")
         ws = null
         _state.value = GeminiLiveState.DISCONNECTED
         _text.value = null
-        pendingLines.clear()
-        livePartial = StringBuilder()
         sentenceStartMs = 0L
         firstFragmentLogged = false
         lastFragmentTimeMs = 0L
