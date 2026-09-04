@@ -64,6 +64,7 @@ interface TmdbApi {
     suspend fun getMovieDetails(
         @Path("movie_id") movieId: Int,
         @Query("api_key") apiKey: String,
+        @Query("append_to_response") appendToResponse: String = "release_dates",
         @Query("language") language: String? = null
     ): TmdbMovieDetails
 
@@ -71,6 +72,7 @@ interface TmdbApi {
     suspend fun getTvDetails(
         @Path("tv_id") tvId: Int,
         @Query("api_key") apiKey: String,
+        @Query("append_to_response") appendToResponse: String = "content_ratings",
         @Query("language") language: String? = null
     ): TmdbTvDetails
 
@@ -263,7 +265,10 @@ data class TmdbMovieDetails(
     val genres: List<TmdbGenre> = emptyList(),
     val status: String? = null,
     val adult: Boolean = false,
-    @SerializedName("belongs_to_collection") val belongsToCollection: TmdbCollectionRef? = null
+    @SerializedName("belongs_to_collection") val belongsToCollection: TmdbCollectionRef? = null,
+    // Appended via append_to_response. Nullable so the response stays valid
+    // when TMDB omits the block.
+    @SerializedName("release_dates") val releaseDates: TmdbReleaseDatesResponse? = null
 )
 
 /** Reference to a TMDB collection (franchise) returned inside movie/TV details. */
@@ -289,7 +294,10 @@ data class TmdbTvDetails(
     @SerializedName("episode_run_time") val episodeRunTime: List<Int> = emptyList(),
     val status: String? = null,
     val genres: List<TmdbGenre> = emptyList(),
-    val seasons: List<TmdbTvSeason> = emptyList()
+    val seasons: List<TmdbTvSeason> = emptyList(),
+    // Appended via append_to_response. Nullable so the response stays valid
+    // when TMDB omits the block.
+    @SerializedName("content_ratings") val contentRatings: TmdbContentRatingsResponse? = null
 )
 
 data class TmdbSeasonDetails(
@@ -311,6 +319,32 @@ data class TmdbEpisode(
     @SerializedName("vote_average") val voteAverage: Float = 0f,
     val runtime: Int? = null,
     @SerializedName("air_date") val airDate: String? = null
+)
+
+/**
+ * Age certifications for a movie, appended to /movie/{id} as `release_dates`.
+ * A country can list several certifications (theatrical, TV, streaming), so the
+ * per-country entry carries a list.
+ */
+data class TmdbReleaseDatesResponse(val results: List<TmdbReleaseDatesResult> = emptyList())
+data class TmdbReleaseDatesResult(
+    @SerializedName("iso_3166_1") val iso31661: String = "",
+    @SerializedName("release_dates") val releaseDates: List<TmdbReleaseDate> = emptyList()
+)
+/** `type` 3 is the theatrical release. Unknown types sort last, see ContentRating. */
+data class TmdbReleaseDate(
+    val certification: String? = null,
+    val type: Int = Int.MAX_VALUE
+)
+
+/**
+ * Age certifications for a TV show, appended to /tv/{id} as `content_ratings`.
+ * Unlike movies there is exactly one value per country.
+ */
+data class TmdbContentRatingsResponse(val results: List<TmdbContentRatingResult> = emptyList())
+data class TmdbContentRatingResult(
+    @SerializedName("iso_3166_1") val iso31661: String = "",
+    val rating: String? = null
 )
 
 data class TmdbGenre(val id: Int = 0, val name: String = "")
