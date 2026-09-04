@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.BaseColumns
+import android.util.LruCache
 import androidx.annotation.RequiresApi
 import androidx.tvprovider.media.tv.Channel
 import androidx.tvprovider.media.tv.ChannelLogoUtils
@@ -25,6 +26,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,8 +49,11 @@ class LauncherContinueWatchingRepository @Inject constructor(
     private val traktRepository: TraktRepository,
     private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val watchHistoryRepository: WatchHistoryRepository,
-    private val streamRepository: StreamRepository
+    private val streamRepository: StreamRepository,
+    private val mediaRepository: MediaRepository
 ) {
+
+    private val titleCache = LruCache<String, String>(200)
     companion object {
         private const val TAG = "LauncherCW"
         private const val CHANNEL_INTERNAL_ID = "arvio_continue_watching_channel"
@@ -109,43 +118,86 @@ class LauncherContinueWatchingRepository @Inject constructor(
                 addons = installedAddons
             )
         }
-        if (filteredPrimary.isNotEmpty()) {
-            return filteredPrimary.take(Constants.MAX_CONTINUE_WATCHING)
+
+        val selectedItems = if (filteredPrimary.isNotEmpty()) {
+            filteredPrimary.take(Constants.MAX_CONTINUE_WATCHING)
+        } else {
+            val historyFallback = runCatching { watchHistoryRepository.getContinueWatching() }.getOrDefault(emptyList())
+            historyFallback
+                .sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }
+                .map { entry ->
+                    ContinueWatchingItem(
+                        id = entry.show_tmdb_id,
+                        title = entry.title.orEmpty(),
+                        mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE,
+                        progress = (entry.progress * 100f).toInt().coerceIn(0, 99),
+                        season = entry.season,
+                        episode = entry.episode,
+                        episodeTitle = entry.episode_title,
+                        posterPath = entry.poster_path,
+                        backdropPath = entry.backdrop_path,
+                        resumePositionSeconds = entry.position_seconds,
+                        durationSeconds = entry.duration_seconds,
+                        streamAddonId = entry.stream_addon_id
+                    )
+                }
+                .filterNot { item ->
+                    SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                        mediaType = item.mediaType,
+                        id = item.id,
+                        streamAddonId = item.streamAddonId,
+                        title = item.title,
+                        addons = installedAddons
+                    )
+                }
+                .distinctBy { "${it.mediaType}:${it.id}:${it.season ?: -1}:${it.episode ?: -1}" }
+                .take(Constants.MAX_CONTINUE_WATCHING)
         }
 
-        val historyFallback = runCatching { watchHistoryRepository.getContinueWatching() }.getOrDefault(emptyList())
-        return historyFallback
-            .sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }
-            .map { entry ->
-                ContinueWatchingItem(
-                    id = entry.show_tmdb_id,
-                    title = entry.title.orEmpty(),
-                    mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE,
-                    progress = (entry.progress * 100f).toInt().coerceIn(0, 99),
-                    season = entry.season,
-                    episode = entry.episode,
-                    episodeTitle = entry.episode_title,
-                    posterPath = entry.poster_path,
-                    backdropPath = entry.backdrop_path,
-                    resumePositionSeconds = entry.position_seconds,
-                    durationSeconds = entry.duration_seconds,
-                    streamAddonId = entry.stream_addon_id
-                )
-            }
-            .filterNot { item ->
-                SportsAddonCapabilities.isLiveStreamOrSportsItem(
-                    mediaType = item.mediaType,
-                    id = item.id,
-                    streamAddonId = item.streamAddonId,
-                    title = item.title,
-                    addons = installedAddons
-                )
-            }
-            .distinctBy { "${it.mediaType}:${it.id}:${it.season ?: -1}:${it.episode ?: -1}" }
-            .take(Constants.MAX_CONTINUE_WATCHING)
+       // Limit of 4 simultaneous calls to avoid saturating the network
+        val semaphore = Semaphore(4)
+        val currentLang = mediaRepository.contentLanguage
+
+        return coroutineScope {
+            selectedItems.map { item ->
+                async {
+                    semaphore.withPermit {
+                        // Cache keys including current language
+                        val titleKey = "${currentLang}_${item.mediaType}_${item.id}"
+                        val epKey = "${currentLang}_tv_${item.id}_${item.season}_${item.episode}"
+
+                        val localizedTitle = titleCache.get(titleKey) ?: runCatching {
+                            val t = if (item.mediaType == MediaType.TV) {
+                                mediaRepository.getLightweightTvTitle(item.id, currentLang)
+                            } else {
+                                mediaRepository.getLightweightMovieTitle(item.id, currentLang)
+                            }
+                            t?.takeIf { it.isNotBlank() }?.also { titleCache.put(titleKey, it) }
+                        }.getOrNull() ?: item.title
+
+                        val resolvedEpisodeTitle = if (item.mediaType == MediaType.TV && item.season != null && item.episode != null) {
+                            titleCache.get(epKey) ?: runCatching {
+                                val ep = mediaRepository.getLightweightEpisodeTitle(
+                                    item.id,
+                                    item.season,
+                                    item.episode,
+                                    currentLang
+                                )
+                                ep?.takeIf { it.isNotBlank() }?.also { titleCache.put(epKey, it) }
+                            }.getOrNull()
+                        } else {
+                            null
+                        } ?: item.episodeTitle
+
+                        item.copy(
+                            title = localizedTitle,
+                            episodeTitle = resolvedEpisodeTitle
+                        )
+                    }
+                }
+            }.awaitAll()
+        }
     }
-
-
     @RequiresApi(Build.VERSION_CODES.O)
     private fun syncPublishedRows(items: List<ContinueWatchingItem>) {
         val channelId = ensurePreviewChannel() ?: return
