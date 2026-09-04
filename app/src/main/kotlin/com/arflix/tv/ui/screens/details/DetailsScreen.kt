@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -2072,291 +2073,284 @@ private fun DetailsContent(
 
         // Layer 4 removed for performance - radial gradients are expensive on TV
 
-        // Hero metadata positioned above the content rows
+        // Unified hero metadata and action buttons positioned safely below the top bar
         val heroStartPadding = 36.dp
         val heroEndPadding = 400.dp
         val configuration = LocalConfiguration.current
-        val hasPosterDetailRails = usePosterCards && (collectionItems.isNotEmpty() || similar.isNotEmpty())
-        // Poster details rails need extra vertical room for two title lines,
-        // subtitle text, and focus bleed; otherwise the title block clips.
-        val minContentRowHeight = if (hasPosterDetailRails) 322.dp else 260.dp
-        val maxContentRowHeight = if (hasPosterDetailRails) 350.dp else 330.dp
-        val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(
-            minimumValue = minContentRowHeight,
-            maximumValue = maxContentRowHeight
-        )
-        val contentRowBottomPadding = 0.dp
-        val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
-        val buttonsBottomPadding = contentRowTopPadding - 4.dp
-        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 46.dp else 58.dp
+        val isCompactHeight = configuration.screenHeightDp < 720
+        val heroTopPadding = AppTopBarContentTopInset + if (isCompactHeight) 10.dp else 16.dp
 
-        Box(
+        val hasPosterDetailRails = usePosterCards && (collectionItems.isNotEmpty() || similar.isNotEmpty())
+        val minContentRowHeight = if (hasPosterDetailRails) 216.dp else 188.dp
+        val maxContentRowHeight = if (hasPosterDetailRails) 240.dp else 210.dp
+        val contentRowHeight = if (isCompactHeight) {
+            minContentRowHeight
+        } else {
+            (configuration.screenHeightDp * 0.34f).dp.coerceIn(
+                minimumValue = minContentRowHeight,
+                maximumValue = maxContentRowHeight
+            )
+        }
+        val contentRowBottomPadding = 0.dp
+
+        Column(
             modifier = Modifier
-                .align(Alignment.BottomStart)
+                .align(Alignment.TopStart)
                 .padding(
-                    bottom = heroBottomPadding,
+                    top = heroTopPadding,
                     start = heroStartPadding,
                     end = heroEndPadding
                 )
         ) {
-            Column(verticalArrangement = Arrangement.Bottom) {
-                val showInCinema = remember(item.releaseDate, item.mediaType) {
-                    isInCinema(item)
-                }
-                val inCinemaColor = Color(0xFF8AD5FF)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            val showInCinema = remember(item.releaseDate, item.mediaType) {
+                isInCinema(item)
+            }
+            val inCinemaColor = Color(0xFF8AD5FF)
+            val logoHeight = if (isCompactHeight) 64.dp else 72.dp
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier.height(logoHeight),
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    Box(
-                        modifier = Modifier.height(72.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Crossfade(
-                            targetState = logoUrl,
-                            animationSpec = tween(300, easing = FastOutSlowInEasing),
-                            label = "mobile_logo_crossfade"
-                        ) { currentLogoUrl ->
-                            if (!currentLogoUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = currentLogoUrl,
-                                    contentDescription = item.title,
-                                    contentScale = ContentScale.Fit,
-                                    alignment = Alignment.CenterStart,
-                                    modifier = Modifier
-                                        .height(72.dp)
-                                        .width(320.dp)
-                                )
-                            } else {
-                                Text(
-                                    text = item.title,
-                                    style = ArflixTypography.heroTitle.copy(
-                                        fontSize = 24.sp,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = Color.White,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-
-                    if (showInCinema) {
-                        Box(
-                            modifier = Modifier
-                                .background(inCinemaColor, RoundedCornerShape(6.dp))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
+                    Crossfade(
+                        targetState = logoUrl,
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                        label = "tv_logo_crossfade"
+                    ) { currentLogoUrl ->
+                        if (!currentLogoUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = currentLogoUrl,
+                                contentDescription = item.title,
+                                contentScale = ContentScale.Fit,
+                                alignment = Alignment.CenterStart,
+                                modifier = Modifier
+                                    .height(logoHeight)
+                                    .width(320.dp)
+                            )
+                        } else {
                             Text(
-                                text = stringResource(R.string.in_cinema),
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 10.sp,
+                                text = item.title,
+                                style = ArflixTypography.heroTitle.copy(
+                                    fontSize = 24.sp,
                                     fontWeight = FontWeight.Bold
                                 ),
-                                color = Color.Black
+                                color = Color.White,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                val tvSeriesLabel = stringResource(R.string.details_label_tv_series)
-                val movieLabel = stringResource(R.string.movie)
-                val genreText = genres.take(2).map(::formatGenreName).joinToString(" / ").ifEmpty {
-                    if (item.mediaType == MediaType.TV) tvSeriesLabel else movieLabel
-                }
-                val isCompactHeight = configuration.screenHeightDp < 720
-                val displayDate = item.releaseDate?.takeIf { it.isNotEmpty() } ?: item.year
-                val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
-                val rating = imdbRatingFor(item)
-                val ratingValue = parseRatingValue(rating)
-                val hasRatingMetadata = ratingValue > 0f
-                val primaryNetworkLogo = item.primaryNetworkLogo?.takeIf { it.isNotBlank() }
-                val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
-                val hasBudgetMetadata = !budgetText.isNullOrBlank()
-                val hasSecondaryMetadata = primaryNetworkLogo != null ||
-                    hasRatingMetadata ||
-                    hasBudgetMetadata
-                val overviewMaxHeight = if (isCompactHeight) 68.dp else 72.dp
-
-                val separatorStyle = ArflixTypography.caption.copy(
-                    fontSize = 13.sp,
-                    shadow = textShadow
-                )
-
-                Column(
-                    modifier = Modifier.width(360.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
+                if (showInCinema) {
+                    Box(
+                        modifier = Modifier
+                            .background(inCinemaColor, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = genreText,
+                            text = stringResource(R.string.in_cinema),
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = Color.Black
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val tvSeriesLabel = stringResource(R.string.details_label_tv_series)
+            val movieLabel = stringResource(R.string.movie)
+            val genreText = genres.take(2).map(::formatGenreName).joinToString(" / ").ifEmpty {
+                if (item.mediaType == MediaType.TV) tvSeriesLabel else movieLabel
+            }
+            val displayDate = item.releaseDate?.takeIf { it.isNotEmpty() } ?: item.year
+            val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
+            val rating = imdbRatingFor(item)
+            val ratingValue = parseRatingValue(rating)
+            val hasRatingMetadata = ratingValue > 0f
+            val primaryNetworkLogo = item.primaryNetworkLogo?.takeIf { it.isNotBlank() }
+            val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
+            val hasBudgetMetadata = !budgetText.isNullOrBlank()
+            val hasSecondaryMetadata = primaryNetworkLogo != null ||
+                hasRatingMetadata ||
+                hasBudgetMetadata
+            val overviewMaxHeight = if (isCompactHeight) 58.dp else 68.dp
+
+            val separatorStyle = ArflixTypography.caption.copy(
+                fontSize = 13.sp,
+                shadow = textShadow
+            )
+
+            Column(
+                modifier = Modifier.width(360.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = genreText,
+                        style = ArflixTypography.caption.copy(
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            shadow = textShadow
+                        ),
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+
+                    if (displayDate.isNotEmpty()) {
+                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                        Text(
+                            text = displayDate,
                             style = ArflixTypography.caption.copy(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 shadow = textShadow
                             ),
                             color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
+                            maxLines = 1
                         )
-
-                        if (displayDate.isNotEmpty()) {
-                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                            Text(
-                                text = displayDate,
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White,
-                                maxLines = 1
-                            )
-                        }
-
-                        if (hasDuration) {
-                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                            Text(
-                                text = item.duration,
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White,
-                                maxLines = 1
-                            )
-                        }
-
-                        item.contentRating?.let { contentRating ->
-                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                            Text(
-                                text = contentRating,
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White,
-                                maxLines = 1
-                            )
-                        }
                     }
 
-                    if (hasSecondaryMetadata) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (primaryNetworkLogo != null) {
-                                val networkLogoRequest = remember(primaryNetworkLogo, context) {
-                                    ImageRequest.Builder(context)
-                                        .data(primaryNetworkLogo)
-                                        .bitmapConfig(Bitmap.Config.ARGB_8888)
-                                        .allowRgb565(false)
-                                        .build()
-                                }
-                                AsyncImage(
-                                    model = networkLogoRequest,
-                                    imageLoader = metadataLogoImageLoader,
-                                    contentDescription = stringResource(R.string.details_cd_primary_provider),
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier
-                                        .height(16.dp)
-                                        .width(52.dp)
-                                )
+                    if (hasDuration) {
+                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                        Text(
+                            text = item.duration,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                shadow = textShadow
+                            ),
+                            color = Color.White,
+                            maxLines = 1
+                        )
+                    }
 
-                                if (hasRatingMetadata || hasBudgetMetadata) {
-                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
-                                }
+                    item.contentRating?.let { contentRating ->
+                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                        Text(
+                            text = contentRating,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                shadow = textShadow
+                            ),
+                            color = Color.White,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                if (hasSecondaryMetadata) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (primaryNetworkLogo != null) {
+                            val networkLogoRequest = remember(primaryNetworkLogo, context) {
+                                ImageRequest.Builder(context)
+                                    .data(primaryNetworkLogo)
+                                    .bitmapConfig(Bitmap.Config.ARGB_8888)
+                                    .allowRgb565(false)
+                                    .build()
                             }
+                            AsyncImage(
+                                model = networkLogoRequest,
+                                imageLoader = metadataLogoImageLoader,
+                                contentDescription = stringResource(R.string.details_cd_primary_provider),
+                                contentScale = ContentScale.Fit,
+                                alignment = Alignment.CenterStart,
+                                modifier = Modifier
+                                    .height(16.dp)
+                                    .width(52.dp)
+                            )
 
-                            if (hasRatingMetadata) {
-                                DetailsImdbSvgRatingBadge(
-                                    rating = rating,
-                                    imageLoader = metadataLogoImageLoader,
-                                    ratingFontSize = 13,
-                                    logoWidth = 34.dp,
-                                    logoHeight = 14.dp,
-                                    textShadow = textShadow
-                                )
-
-                                if (hasBudgetMetadata) {
-                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
-                                }
+                            if (hasRatingMetadata || hasBudgetMetadata) {
+                                Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
                             }
+                        }
+
+                        if (hasRatingMetadata) {
+                            DetailsImdbSvgRatingBadge(
+                                rating = rating,
+                                imageLoader = metadataLogoImageLoader,
+                                ratingFontSize = 13,
+                                logoWidth = 28.dp,
+                                logoHeight = 14.dp,
+                                textShadow = textShadow
+                            )
 
                             if (hasBudgetMetadata) {
-                                Text(
-                                    text = "${stringResource(R.string.budget)} $budgetText",
-                                    style = ArflixTypography.caption.copy(
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        shadow = textShadow
-                                    ),
-                                    color = Color.White.copy(alpha = 0.74f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
+                                Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
                             }
                         }
-                    }
 
-                    if (externalRatings.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(7.dp))
-                        MdbExternalRatingsRow(
-                            ratings = externalRatings,
-                            centered = false,
-                            textShadow = textShadow
-                        )
+                        if (hasBudgetMetadata) {
+                            Text(
+                                text = "${stringResource(R.string.budget)} $budgetText",
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White.copy(alpha = 0.74f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
-
-                val displayOverview = item.overview
-
-                Box(
-                    modifier = Modifier
-                        .width(360.dp)
-                        .height(overviewMaxHeight)
-                ) {
-                    Text(
-                        text = displayOverview,
-                        style = ArflixTypography.body.copy(
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Normal,
-                            lineHeight = 16.sp,
-                            shadow = textShadow
-                        ),
-                        color = Color.White.copy(alpha = 0.9f),
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis
+                if (externalRatings.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(7.dp))
+                    MdbExternalRatingsRow(
+                        ratings = externalRatings,
+                        centered = false,
+                        textShadow = textShadow
                     )
                 }
-
             }
-        }
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(
-                    bottom = buttonsBottomPadding,
-                    start = heroStartPadding,
-                    end = heroEndPadding
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val displayOverview = item.overview
+
+            Box(
+                modifier = Modifier
+                    .width(360.dp)
+                    .heightIn(max = overviewMaxHeight)
+            ) {
+                Text(
+                    text = displayOverview,
+                    style = ArflixTypography.body.copy(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                        lineHeight = 15.sp,
+                        shadow = textShadow
+                    ),
+                    color = Color.White.copy(alpha = 0.9f),
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
                 )
-        ) {
+            }
+
+            // Space before action buttons (flexible slot for future in-between items)
+            Spacer(modifier = Modifier.height(14.dp))
+
             val buttonWatched = if (item.mediaType == MediaType.TV) {
                 episodes.getOrNull(episodeIndex)?.isWatched ?: item.isWatched
             } else {
@@ -3633,8 +3627,9 @@ private fun DetailsImdbSvgRatingBadge(
             imageLoader = imageLoader,
             contentDescription = "IMDb",
             contentScale = ContentScale.Fit,
+            alignment = Alignment.CenterStart,
             modifier = Modifier
-                .width(logoWidth)
+                .width(logoHeight * 2)
                 .height(logoHeight)
         )
         Text(
