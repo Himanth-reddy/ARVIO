@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.tv.live
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Public
@@ -63,6 +65,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -84,6 +87,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
+import com.arflix.tv.data.model.PlaylistGroupKey
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import kotlinx.coroutines.Job
@@ -111,6 +115,8 @@ fun CategorySidebar(
     onMoveCategoryUp: (String?, String) -> Unit = { _, _ -> },
     onMoveCategoryToTop: (String?, String) -> Unit = { _, _ -> },
     onMoveCategoryDown: (String?, String) -> Unit = { _, _ -> },
+    lockedGroupKeys: Set<String> = emptySet(),
+    onToggleCategoryLock: (String?, String, Boolean) -> Unit = { _, _, _ -> },
     onFocusEnter: () -> Unit = {},
     onMoveRight: () -> Unit = {},
     onMoveUpFromSearch: () -> Unit = {},
@@ -120,16 +126,25 @@ fun CategorySidebar(
     isTouchDevice: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val targetWidth = if (expanded) LiveDims.SidebarExpanded else LiveDims.SidebarCollapsed
+    val targetWidth = if (expanded) LiveDims.SidebarExpanded else 0.dp
     val animatedWidth by animateDpAsState(
         targetValue = targetWidth,
         animationSpec = tween(durationMillis = 240),
         label = "sidebar-width",
     )
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (expanded) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "sidebar-content-alpha",
+    )
+    // Keep the content mounted until the width animation finishes. Removing it
+    // immediately made the drawer pop out and left a visible focus jump.
+    val contentVisible = expanded || animatedWidth > 0.dp
     var expandedCountry by rememberSaveable { mutableStateOf<String?>(null) }
     var expandedAll by rememberSaveable { mutableStateOf(false) }
     var expandedPlaylistIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var activeMenu by remember { mutableStateOf<CategoryMenuState?>(null) }
+    var menuSelectArmed by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     val selectedCategoryFocusRequester = remember { FocusRequester() }
     val firstCategoryFocusRequester = remember { FocusRequester() }
@@ -138,6 +153,9 @@ fun CategorySidebar(
 
     fun openCategoryMenu(category: LiveCategory, hidden: Boolean) {
         val groupName = category.playlistGroupName ?: return
+        val groupKey = category.playlistId?.let { PlaylistGroupKey.build(it, groupName) }
+        val isLocked = groupKey != null && groupKey in lockedGroupKeys
+        menuSelectArmed = false
         activeMenu = CategoryMenuState(
             id = if (hidden) "hidden:${category.id}" else category.id,
             playlistId = category.playlistId,
@@ -145,7 +163,15 @@ fun CategorySidebar(
             canMove = !hidden,
             canHide = !hidden,
             canUnhide = hidden,
+            canLock = !hidden && !isLocked,
+            canUnlock = isLocked,
         )
+    }
+
+    fun isCategoryLocked(category: LiveCategory): Boolean {
+        val playlistId = category.playlistId ?: return false
+        val groupName = category.playlistGroupName ?: return false
+        return PlaylistGroupKey.build(playlistId, groupName) in lockedGroupKeys
     }
 
     val currentMenu = activeMenu
@@ -154,6 +180,8 @@ fun CategorySidebar(
             canMove = menu.canMove,
             canHide = menu.canHide,
             canUnhide = menu.canUnhide,
+            canLock = menu.canLock,
+            canUnlock = menu.canUnlock,
             onHide = {
                 activeMenu = null
                 onHideCategory(menu.playlistId, menu.groupName)
@@ -174,6 +202,14 @@ fun CategorySidebar(
                 activeMenu = null
                 onMoveCategoryDown(menu.playlistId, menu.groupName)
             },
+            onLock = {
+                activeMenu = null
+                onToggleCategoryLock(menu.playlistId, menu.groupName, false)
+            },
+            onUnlock = {
+                activeMenu = null
+                onToggleCategoryLock(menu.playlistId, menu.groupName, true)
+            },
         )
     }.orEmpty()
 
@@ -185,9 +221,34 @@ fun CategorySidebar(
 
     BackHandler(enabled = activeMenu != null) {
         activeMenu = null
+        menuSelectArmed = false
+    }
+
+    LaunchedEffect(expanded) {
+        if (!expanded) {
+            activeMenu = null
+            menuSelectArmed = false
+        }
     }
 
     val categoriesLoaded = LiveTvStartup.searchIsReachable(tree.top.size)
+    val categoryStructureKey = remember(tree, playlistSections) {
+        buildString {
+            fun appendSection(name: String, categories: List<LiveCategory>) {
+                append(name).append(':')
+                categories.forEach { category -> append(category.id).append(',') }
+                append('|')
+            }
+            appendSection("top", tree.top)
+            appendSection("global", tree.global.categories)
+            appendSection("hidden", tree.hidden.categories)
+            appendSection("countries", tree.countries.categories)
+            appendSection("adult", tree.adult.categories)
+            playlistSections.forEach { section ->
+                appendSection("playlist:${section.id}", section.categories)
+            }
+        }
+    }
 
     // Compose gives the initial D-pad focus to the first focusable row, which
     // is search — so every time Live TV opened the selector sat in the search
@@ -196,6 +257,8 @@ fun CategorySidebar(
     // exists. Guarded so it only runs for a fresh entry, never fighting a user
     // who deliberately moved to search afterwards.
     var searchHasFocus by remember { mutableStateOf(false) }
+    var sidebarHasFocus by remember { mutableStateOf(false) }
+    var claimingCategoryFocus by remember { mutableStateOf(false) }
     // True once the user has deliberately gone to search (pressed up into it,
     // or asked for it). Until then, search holding focus can only be Compose's
     // default placement or the mini player's surface bouncing focus back, and
@@ -203,30 +266,53 @@ fun CategorySidebar(
     var userChoseSearch by remember { mutableStateOf(false) }
     var categoryHasHadFocus by remember { mutableStateOf(false) }
 
+    LaunchedEffect(expanded) {
+        if (!expanded) {
+            searchHasFocus = false
+            sidebarHasFocus = false
+            userChoseSearch = false
+            categoryHasHadFocus = false
+            claimingCategoryFocus = false
+        }
+    }
+
     fun onCategoryFocused() {
         categoryHasHadFocus = true
         onTopBoundaryFocusChanged(false)
     }
 
-    LaunchedEffect(categoriesLoaded, focusCategorySignal, searchHasFocus, userChoseSearch, isTouchDevice) {
-        if (isTouchDevice || !categoriesLoaded || userChoseSearch) return@LaunchedEffect
+    LaunchedEffect(
+        categoriesLoaded,
+        categoryStructureKey,
+        focusCategorySignal,
+        userChoseSearch,
+        expanded,
+        isTouchDevice,
+    ) {
+        if (isTouchDevice || !expanded || !categoriesLoaded || userChoseSearch) return@LaunchedEffect
         if (LiveTvStartup.shouldFocusSearch(focusSearchSignal)) return@LaunchedEffect
-        // A single claim is not enough: the mini player attaches its video
-        // surface a beat after the screen opens, that takes the platform focus,
-        // and Compose then falls back to the first focusable row — search. The
-        // row also lives in a LazyColumn, so its requester may not be attached
-        // on the first try. Retry briefly; re-runs whenever search takes focus
-        // again, so a late player start cannot strand the selector there.
-        repeat(LiveTvStartup.INITIAL_FOCUS_ATTEMPTS) {
-            val took = runCatching { selectedCategoryFocusRequester.requestFocus() }.isSuccess ||
-                runCatching { firstCategoryFocusRequester.requestFocus() }.isSuccess
-            if (took) return@LaunchedEffect
-            delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+        claimingCategoryFocus = true
+        try {
+            // requestFocus() in the Compose version used by ARVIO does not
+            // report whether a lazy item was attached. Check the actual focus
+            // state before accepting the selected row; otherwise retry with
+            // the always-composed first row as a reliable fallback.
+            repeat(LiveTvStartup.INITIAL_FOCUS_ATTEMPTS) {
+                runCatching { selectedCategoryFocusRequester.requestFocus() }
+                delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+                if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+
+                runCatching { firstCategoryFocusRequester.requestFocus() }
+                delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+                if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+            }
+        } finally {
+            claimingCategoryFocus = false
         }
     }
 
     LaunchedEffect(focusSearchSignal) {
-        if (LiveTvStartup.shouldFocusSearch(focusSearchSignal)) {
+        if (expanded && LiveTvStartup.shouldFocusSearch(focusSearchSignal)) {
             userChoseSearch = true
             repeat(3) {
                 runCatching { searchFocusRequester.requestFocus() }
@@ -259,16 +345,9 @@ fun CategorySidebar(
             .width(animatedWidth)
             .fillMaxHeight()
             .background(LiveColors.PanelDeep)
-            // Entering (or re-entering) the sidebar must land on the category
-            // list. Search is the first focusable child, so a plain focusGroup
-            // hands it the selector on entry and again every time the lazy list
-            // recomposes underneath the focused row — which is what pinned the
-            // selector in the search box while the playlist loaded.
-            .arvioDpadFocusGroup()
-            .onFocusChanged { focusState ->
-                if (focusState.hasFocus) {
-                    onFocusEnter()
-                }
+            .graphicsLayer {
+                alpha = contentAlpha
+                clip = true
             }
             .onPreviewKeyEvent { ev ->
                 // RTL mirrors the sidebar to the right edge, so the physical
@@ -276,31 +355,51 @@ fun CategorySidebar(
                 val logicalKey = ev.key.mirrorHorizontalForRtl(isRtl)
                 val menu = activeMenu
                 if (menu != null && activeMenuActions.isNotEmpty()) {
-                    val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.Menu
-                    if (ev.type != KeyEventType.KeyDown) {
-                        return@onPreviewKeyEvent isSelect
-                    }
-                    return@onPreviewKeyEvent when (logicalKey) {
-                        Key.DirectionUp -> {
-                            activeMenu = menu.copy(focusedIndex = (menu.focusedIndex - 1).coerceAtLeast(0))
+                    val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter
+                    when {
+                        ev.key == Key.DirectionUp && ev.type == KeyEventType.KeyDown -> {
+                            activeMenu = menu.copy(
+                                focusedIndex = (menu.focusedIndex - 1).coerceAtLeast(0),
+                            )
                             true
                         }
-                        Key.DirectionDown -> {
-                            activeMenu = menu.copy(focusedIndex = (menu.focusedIndex + 1).coerceAtMost(activeMenuActions.lastIndex))
+                        ev.key == Key.DirectionDown && ev.type == KeyEventType.KeyDown -> {
+                            activeMenu = menu.copy(
+                                focusedIndex = (menu.focusedIndex + 1).coerceAtMost(activeMenuActions.lastIndex),
+                            )
                             true
                         }
-                        Key.DirectionCenter, Key.Enter, Key.Menu -> {
-                            runActiveMenuAction(menu.focusedIndex)
+                        isSelect && ev.type == KeyEventType.KeyDown -> {
+                            // Only a fresh press may arm an action. Repeat/long-
+                            // press events belong to the hold that opened the
+                            // menu and must never trigger the highlighted item.
+                            if (ev.nativeKeyEvent.repeatCount == 0 && !ev.nativeKeyEvent.isLongPress) {
+                                menuSelectArmed = true
+                            }
                             true
                         }
-                        Key.DirectionLeft, Key.Back, Key.Escape -> {
+                        isSelect && ev.type == KeyEventType.KeyUp -> {
+                            if (menuSelectArmed) {
+                                menuSelectArmed = false
+                                runActiveMenuAction(menu.focusedIndex)
+                            }
+                            true
+                        }
+                        ev.key == Key.Menu && ev.type == KeyEventType.KeyUp -> {
+                            true
+                        }
+                        // logicalKey, not ev.key: in RTL the sidebar sits on the right edge,
+                        // so the key that dismisses the menu back toward the list is the
+                        // physical Right.
+                        (logicalKey == Key.DirectionLeft || ev.key == Key.Back || ev.key == Key.Escape) &&
+                            ev.type == KeyEventType.KeyDown -> {
                             activeMenu = null
+                            menuSelectArmed = false
                             true
                         }
                         else -> true
                     }
-                }
-                if (ev.type != KeyEventType.KeyDown) {
+                } else if (ev.type != KeyEventType.KeyDown) {
                     false
                 } else when (logicalKey) {
                     Key.DirectionLeft -> true
@@ -311,17 +410,33 @@ fun CategorySidebar(
                     else -> false
                 }
             }
+            // Entering (or re-entering) the sidebar must land on the category
+            // list. Search is the first focusable child, so a plain focusGroup
+            // hands it the selector on entry and again every time the lazy list
+            // recomposes underneath the focused row — which is what pinned the
+            // selector in the search box while the playlist loaded.
+            .arvioDpadFocusGroup()
+            .onFocusChanged { focusState ->
+                sidebarHasFocus = focusState.hasFocus
+                if (focusState.hasFocus) {
+                    onFocusEnter()
+                }
+            }
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
+        if (!contentVisible) return@Column
         SearchEntry(
             onClick = onOpenSearch,
             expanded = expanded,
             onMoveUp = onMoveUpFromSearch,
             onMoveDown = {
-                tree.top.firstOrNull()?.let { first ->
-                    onSelect(first.id)
-                }
+                // Down from search is navigation, not activation. Selecting here
+                // closed the drawer while the same physical key was still being
+                // handled, so rapid D-pad input left the guide without a focusable
+                // row. Move focus to the first category and require OK to open it.
+                userChoseSearch = false
+                runCatching { firstCategoryFocusRequester.requestFocus() }
             },
             onFocusChanged = { atTop ->
                 // Search taking focus *after* a category already had it means
@@ -329,7 +444,7 @@ fun CategorySidebar(
                 // then on. Search taking it before that is Compose's default
                 // placement (or the player bouncing focus back), which the
                 // effect above corrects.
-                if (atTop && categoryHasHadFocus) userChoseSearch = true
+                if (atTop && categoryHasHadFocus && !claimingCategoryFocus) userChoseSearch = true
                 searchHasFocus = atTop
                 onTopBoundaryFocusChanged(atTop)
             },
@@ -441,6 +556,7 @@ fun CategorySidebar(
                                 indent = 28.dp,
                                 focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
                                 onFocused = { onCategoryFocused() },
+                                locked = isCategoryLocked(cat),
                                 onLongClick = { openCategoryMenu(cat, hidden = false) },
                                 onClick = { onSelect(cat.id) },
                             )
@@ -458,6 +574,7 @@ fun CategorySidebar(
                         expanded = expanded,
                         focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
                         onFocused = { onCategoryFocused() },
+                        locked = isCategoryLocked(cat),
                         onLongClick = {
                             openCategoryMenu(cat, hidden = false)
                         },
@@ -476,6 +593,7 @@ fun CategorySidebar(
                         expanded = expanded,
                         focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
                         onFocused = { onCategoryFocused() },
+                        locked = isCategoryLocked(cat),
                         onLongClick = {
                             openCategoryMenu(cat, hidden = true)
                         },
@@ -550,12 +668,12 @@ fun CategorySidebar(
         }
         if (currentMenu != null && activeMenuActions.isNotEmpty()) {
             CategoryContextMenu(
-                onDismiss = { activeMenu = null },
+                onDismiss = {
+                    activeMenu = null
+                    menuSelectArmed = false
+                },
                 actions = activeMenuActions,
                 focusedIndex = currentMenu.focusedIndex.coerceIn(0, activeMenuActions.lastIndex),
-                onFocusedIndexChange = { index ->
-                    activeMenu = currentMenu.copy(focusedIndex = index.coerceIn(0, activeMenuActions.lastIndex))
-                },
                 onAction = { runActiveMenuAction(it) },
             )
         }
@@ -692,6 +810,7 @@ private fun SidebarRow(
     onClick: () -> Unit,
     onFocused: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    locked: Boolean = false,
     flagEmoji: String? = null,
     leadingCode: String? = null,
     hasChildren: Boolean = false,
@@ -701,8 +820,8 @@ private fun SidebarRow(
     focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
-    var consumedLongPress by remember { mutableStateOf(false) }
     var selectPressed by remember { mutableStateOf(false) }
+    var longPressTriggered by remember { mutableStateOf(false) }
     var longPressJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
     val bg = when {
@@ -742,35 +861,40 @@ private fun SidebarRow(
                 )
                 .clip(RoundedCornerShape(8.dp))
                 .background(if (focused) LiveColors.PanelRaised else bg)
-                .focusable()
-                .onKeyEvent { ev ->
+                .onPreviewKeyEvent { ev ->
                     val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter
-                    val isMenuKey = ev.key == Key.Menu
-                    if (isMenuKey && ev.type == KeyEventType.KeyDown && onLongClick != null) {
-                        consumedLongPress = true
-                        longPressJob?.cancel()
-                        onLongClick()
-                        true
-                    } else
                     when {
-                        !isSelect -> false
-                        ev.type == KeyEventType.KeyDown -> {
-                            if (ev.nativeKeyEvent.repeatCount > 0 && onLongClick != null) {
-                                if (!consumedLongPress) {
-                                    consumedLongPress = true
-                                    onLongClick()
-                                }
-                                return@onKeyEvent true
+                        ev.key == Key.Menu -> {
+                            if (ev.type == KeyEventType.KeyDown && onLongClick != null) {
+                                longPressJob?.cancel()
+                                selectPressed = false
+                                longPressTriggered = true
+                                onLongClick()
                             }
+                            onLongClick != null
+                        }
+                        !isSelect -> false
+                        ev.type == KeyEventType.KeyDown &&
+                            (ev.nativeKeyEvent.repeatCount > 0 || ev.nativeKeyEvent.isLongPress) -> {
+                            longPressJob?.cancel()
+                            if (!longPressTriggered && onLongClick != null) {
+                                selectPressed = false
+                                longPressTriggered = true
+                                onLongClick()
+                            }
+                            true
+                        }
+                        ev.type == KeyEventType.KeyDown -> {
                             if (!selectPressed) {
                                 selectPressed = true
-                                consumedLongPress = false
+                                longPressTriggered = false
                                 longPressJob?.cancel()
                                 if (onLongClick != null) {
                                     longPressJob = scope.launch {
                                         delay(480L)
-                                        if (selectPressed) {
-                                            consumedLongPress = true
+                                        if (selectPressed && !longPressTriggered) {
+                                            selectPressed = false
+                                            longPressTriggered = true
                                             onLongClick()
                                         }
                                     }
@@ -778,22 +902,19 @@ private fun SidebarRow(
                             }
                             true
                         }
-                        ev.type == KeyEventType.KeyUp && consumedLongPress -> {
-                            longPressJob?.cancel()
-                            selectPressed = false
-                            consumedLongPress = false
-                            true
-                        }
                         ev.type == KeyEventType.KeyUp -> {
                             longPressJob?.cancel()
+                            val wasLongPress = longPressTriggered
                             selectPressed = false
-                            onClick()
+                            longPressTriggered = false
+                            if (!wasLongPress) onClick()
                             true
                         }
-                        else -> false
+                        else -> true
                     }
                 }
-                .pointerInput(onLongClick) {
+                .focusable()
+                .pointerInput(onClick, onLongClick) {
                     detectTapGestures(
                         onTap = { onClick() },
                         onLongPress = { onLongClick?.invoke() },
@@ -849,6 +970,14 @@ private fun SidebarRow(
                         modifier = Modifier.size(16.dp),
                     )
                 }
+                if (locked) {
+                    Icon(
+                        imageVector = Icons.Filled.Lock,
+                        contentDescription = stringResource(R.string.live_menu_unlock_category),
+                        tint = if (focused) LiveColors.Fg else LiveColors.FgMute,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
             }
         }
     }
@@ -860,7 +989,6 @@ private fun CategoryContextMenu(
     onDismiss: () -> Unit,
     actions: List<CategoryMenuAction>,
     focusedIndex: Int,
-    onFocusedIndexChange: (Int) -> Unit,
     onAction: (Int) -> Unit,
 ) {
     if (actions.isEmpty()) return
@@ -886,7 +1014,7 @@ private fun CategoryContextMenu(
                 CategoryMenuItem(
                     action = action,
                     focused = index == focusedIndex,
-                    onClick = action.onClick,
+                    onClick = { onAction(index) },
                 )
             }
         }
@@ -897,11 +1025,15 @@ private fun buildCategoryMenuActions(
     canHide: Boolean,
     canUnhide: Boolean,
     canMove: Boolean,
+    canLock: Boolean,
+    canUnlock: Boolean,
     onHide: () -> Unit,
     onUnhide: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveToTop: () -> Unit,
     onMoveDown: () -> Unit,
+    onLock: () -> Unit,
+    onUnlock: () -> Unit,
 ): List<CategoryMenuAction> = buildList {
     if (canMove) {
         add(CategoryMenuAction(R.string.live_menu_move_top, Icons.Filled.KeyboardArrowUp, onMoveToTop))
@@ -913,6 +1045,12 @@ private fun buildCategoryMenuActions(
     }
     if (canUnhide) {
         add(CategoryMenuAction(R.string.live_menu_unhide_category, Icons.Filled.Visibility, onUnhide))
+    }
+    if (canLock) {
+        add(CategoryMenuAction(R.string.live_menu_lock_category, Icons.Filled.Lock, onLock))
+    }
+    if (canUnlock) {
+        add(CategoryMenuAction(R.string.live_menu_unlock_category, Icons.Filled.LockOpen, onUnlock))
     }
 }
 
@@ -929,6 +1067,8 @@ private data class CategoryMenuState(
     val canMove: Boolean,
     val canHide: Boolean,
     val canUnhide: Boolean,
+    val canLock: Boolean,
+    val canUnlock: Boolean,
     val focusedIndex: Int = 0,
 )
 
@@ -946,7 +1086,6 @@ private fun CategoryMenuItem(
             .clip(RoundedCornerShape(8.dp))
             .background(if (focused) LiveColors.FocusRing else Color.Transparent)
             .clickable { onClick() }
-            .pointerInput(onClick) { detectTapGestures(onTap = { onClick() }) }
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

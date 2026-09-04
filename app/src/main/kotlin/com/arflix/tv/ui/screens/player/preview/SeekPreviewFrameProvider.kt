@@ -30,9 +30,9 @@ import okhttp3.Request
 
 private const val TAG = "SeekPreview"
 private const val PREVIEW_INTERVAL_MS = 10_000L
-private const val PREVIEW_WIDTH_PX = 320
-private const val PREVIEW_MAX_HEIGHT_PX = 180
-private const val DISK_CACHE_LIMIT_BYTES = 96L * 1024L * 1024L
+private const val PREVIEW_WIDTH_PX = 480
+private const val PREVIEW_MAX_HEIGHT_PX = 270
+private const val DISK_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
 private const val RANGE_CHUNK_BYTES = 512 * 1024
 private const val RANGE_MEMORY_LIMIT_BYTES = 4 * 1024 * 1024
 private const val MEDIA3_FRAME_TIMEOUT_MS = 2_500L
@@ -82,12 +82,52 @@ internal fun fitSeekPreviewDimensions(
     if (sourceWidth <= 0 || sourceHeight <= 0 || maxWidth <= 0 || maxHeight <= 0) {
         return maxWidth.coerceAtLeast(1) to maxHeight.coerceAtLeast(1)
     }
-    val scale = minOf(
-        maxWidth.toFloat() / sourceWidth.toFloat(),
-        maxHeight.toFloat() / sourceHeight.toFloat(),
+    return fitSeekPreviewAspectRatio(
+        aspectRatio = sourceWidth.toFloat() / sourceHeight.toFloat(),
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
     )
-    return (sourceWidth * scale).roundToInt().coerceAtLeast(1) to
-        (sourceHeight * scale).roundToInt().coerceAtLeast(1)
+}
+
+internal fun fitSeekPreviewAspectRatio(
+    aspectRatio: Float,
+    maxWidth: Int,
+    maxHeight: Int,
+): Pair<Int, Int> {
+    if (!aspectRatio.isFinite() || aspectRatio <= 0f || maxWidth <= 0 || maxHeight <= 0) {
+        return maxWidth.coerceAtLeast(1) to maxHeight.coerceAtLeast(1)
+    }
+    val widthAtMaxHeight = (maxHeight * aspectRatio).roundToInt().coerceAtLeast(1)
+    return if (widthAtMaxHeight <= maxWidth) {
+        widthAtMaxHeight to maxHeight
+    } else {
+        maxWidth to (maxWidth / aspectRatio).roundToInt().coerceAtLeast(1)
+    }
+}
+
+internal fun seekPreviewDisplayAspectRatio(
+    videoWidth: Int,
+    videoHeight: Int,
+    pixelWidthHeightRatio: Float,
+    unappliedRotationDegrees: Int,
+    fallbackWidth: Int,
+    fallbackHeight: Int,
+): Float {
+    val fallback = if (fallbackWidth > 0 && fallbackHeight > 0) {
+        fallbackWidth.toFloat() / fallbackHeight.toFloat()
+    } else {
+        16f / 9f
+    }
+    if (videoWidth <= 0 || videoHeight <= 0) return fallback
+
+    val pixelRatio = pixelWidthHeightRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val encodedRatio = videoWidth.toFloat() * pixelRatio / videoHeight.toFloat()
+    val rotation = ((unappliedRotationDegrees % 360) + 360) % 360
+    return if (rotation == 90 || rotation == 270) {
+        1f / encodedRatio
+    } else {
+        encodedRatio
+    }.takeIf { it.isFinite() && it > 0f } ?: fallback
 }
 
 /**
@@ -109,9 +149,12 @@ class SeekPreviewFrameProvider(
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "arvio-seek-preview").apply { isDaemon = true }
     }
+    private val diskExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "arvio-seek-preview-disk").apply { isDaemon = true }
+    }
     private val dispatcher = executor.asCoroutineDispatcher()
     private val memoryCache = object : LruCache<String, Bitmap>(
-        if (memoryClassMb <= 256) 3 * 1024 * 1024 else 8 * 1024 * 1024
+        if (memoryClassMb <= 256) 6 * 1024 * 1024 else 16 * 1024 * 1024
     ) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
@@ -122,7 +165,7 @@ class SeekPreviewFrameProvider(
     @Volatile private var closed = false
 
     init {
-        executor.execute { pruneDiskCache() }
+        diskExecutor.execute { pruneDiskCache() }
     }
 
     suspend fun configure(source: SeekPreviewSource?) {
@@ -158,20 +201,32 @@ class SeekPreviewFrameProvider(
         }
     }
 
-    /** Reads only app-private cache and never waits behind an active video decoder request. */
-    suspend fun cachedFrameAt(positionMs: Long): SeekPreviewFrame? = withContext(Dispatchers.IO) {
-        if (closed) return@withContext null
-        val cache = activeCache ?: return@withContext null
+    /** Returns a warmed frame synchronously so D-pad input can update the UI in the same frame. */
+    fun memoryFrameAt(positionMs: Long): SeekPreviewFrame? {
+        if (closed) return null
+        val cache = activeCache ?: return null
         val bucket = quantizeSeekPreviewPosition(positionMs, cache.durationMs)
         val frameKey = "${cache.keyPrefix}_$bucket"
-        memoryCache.get(frameKey)?.let { bitmap ->
-            return@withContext SeekPreviewFrame(bitmap, bucket)
+        return memoryCache.get(frameKey)?.let { bitmap -> SeekPreviewFrame(bitmap, bucket) }
+    }
+
+    /** Reads only app-private cache and never waits behind an active video decoder request. */
+    suspend fun cachedFrameAt(positionMs: Long): SeekPreviewFrame? {
+        memoryFrameAt(positionMs)?.let { return it }
+        return withContext(Dispatchers.IO) {
+            if (closed) return@withContext null
+            val cache = activeCache ?: return@withContext null
+            val bucket = quantizeSeekPreviewPosition(positionMs, cache.durationMs)
+            val frameKey = "${cache.keyPrefix}_$bucket"
+            memoryCache.get(frameKey)?.let { bitmap ->
+                return@withContext SeekPreviewFrame(bitmap, bucket)
+            }
+            readDiskFrame(frameKey)?.let { bitmap ->
+                memoryCache.put(frameKey, bitmap)
+                return@withContext SeekPreviewFrame(bitmap, bucket)
+            }
+            null
         }
-        readDiskFrame(frameKey)?.let { bitmap ->
-            memoryCache.put(frameKey, bitmap)
-            return@withContext SeekPreviewFrame(bitmap, bucket)
-        }
-        null
     }
 
     suspend fun frameAt(positionMs: Long, cacheOnly: Boolean = false): SeekPreviewFrame? =
@@ -207,28 +262,27 @@ class SeekPreviewFrameProvider(
             active.failureCount = 0
             active.retryAfterMs = 0L
             memoryCache.put(frameKey, bitmap)
-            synchronized(diskCacheLock) { writeDiskFrame(frameKey, bitmap) }
+            persistFrameLater(frameKey, bitmap)
             Log.i(TAG, "frame ready positionMs=$bucket latencyMs=${System.currentTimeMillis() - startedAt}")
             SeekPreviewFrame(bitmap, bucket)
         }
 
-    suspend fun rememberRenderedFrame(positionMs: Long, bitmap: Bitmap): SeekPreviewFrame? =
-        withContext(Dispatchers.IO) {
-            if (closed) {
-                bitmap.recycle()
-                return@withContext null
-            }
-            val cache = activeCache ?: run {
-                bitmap.recycle()
-                return@withContext null
-            }
-            val bucket = quantizeSeekPreviewPosition(positionMs, cache.durationMs)
-            val frameKey = "${cache.keyPrefix}_$bucket"
-            val normalized = normalizeFrame(bitmap)
-            memoryCache.put(frameKey, normalized)
-            synchronized(diskCacheLock) { writeDiskFrame(frameKey, normalized) }
-            SeekPreviewFrame(normalized, bucket)
+    fun rememberRenderedFrame(positionMs: Long, bitmap: Bitmap): SeekPreviewFrame? {
+        if (closed) {
+            bitmap.recycle()
+            return null
         }
+        val cache = activeCache ?: run {
+            bitmap.recycle()
+            return null
+        }
+        val bucket = quantizeSeekPreviewPosition(positionMs, cache.durationMs)
+        val frameKey = "${cache.keyPrefix}_$bucket"
+        val normalized = normalizeFrame(bitmap)
+        memoryCache.put(frameKey, normalized)
+        persistFrameLater(frameKey, normalized)
+        return SeekPreviewFrame(normalized, bucket)
+    }
 
     override fun close() {
         if (closed) return
@@ -241,6 +295,7 @@ class SeekPreviewFrameProvider(
         }
         dispatcher.close()
         executor.shutdown()
+        diskExecutor.shutdown()
     }
 
     private data class ActiveCache(
@@ -261,11 +316,10 @@ class SeekPreviewFrameProvider(
         var failureCount: Int = 0
 
         fun extract(positionMs: Long): Bitmap {
-            // Signed debrid URLs often remain readable without the optional proxy headers. Try
-            // Media3 first because it can extract frames from modern 4K/HDR codecs that Android's
-            // legacy metadata retriever cannot decode, then retain the authenticated range source
-            // below as the fallback for providers that truly require those headers.
-            if (!media3Unavailable) {
+            // FrameExtractor cannot receive per-source HTTP headers. Keep authenticated and
+            // provider-specific streams on the range-backed retriever so previews use the exact
+            // same request identity as playback.
+            if (!media3Unavailable && !source.headers.requiresCustomRequestHeaders()) {
                 runCatching { extractWithMedia3(positionMs) }
                     .onSuccess { return it }
                     .onFailure {
@@ -423,7 +477,7 @@ class SeekPreviewFrameProvider(
         val temporary = File(cacheRoot, "$key.tmp")
         runCatching {
             temporary.outputStream().buffered().use { output ->
-                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output))
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
             }
             if (!temporary.renameTo(target)) {
                 temporary.copyTo(target, overwrite = true)
@@ -431,6 +485,16 @@ class SeekPreviewFrameProvider(
             }
         }.onFailure {
             temporary.delete()
+        }
+    }
+
+    private fun persistFrameLater(key: String, bitmap: Bitmap) {
+        runCatching {
+            diskExecutor.execute {
+                if (!closed && !bitmap.isRecycled) {
+                    synchronized(diskCacheLock) { writeDiskFrame(key, bitmap) }
+                }
+            }
         }
     }
 
@@ -538,7 +602,7 @@ private class HttpRangeMediaDataSource(
                     response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0L }
                         ?.let { resolvedSize = it }
                 }
-                val body = response.body
+                val body = response.body ?: return@use null
                 val bytes = ByteArray(RANGE_CHUNK_BYTES)
                 var total = 0
                 body.byteStream().use { input ->
@@ -576,6 +640,10 @@ private fun Request.Builder.applyHeaders(headers: Map<String, String>): Request.
             header(name, value)
         }
     }
+}
+
+private fun Map<String, String>.requiresCustomRequestHeaders(): Boolean = keys.any { name ->
+    name.lowercase() !in setOf("accept", "accept-encoding", "connection")
 }
 
 private fun sourceSignature(source: SeekPreviewSource): String = stableHash(

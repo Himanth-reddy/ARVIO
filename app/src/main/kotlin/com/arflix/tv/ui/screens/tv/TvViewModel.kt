@@ -77,6 +77,7 @@ data class TvUiState(
     val tvSession: IptvTvSessionState = IptvTvSessionState(),
     val iptvPreferencesLoaded: Boolean = false,
     val tvSessionLoaded: Boolean = false,
+    val lockedGroups: List<String> = emptyList(),
     val favoritesOnly: Boolean = false,
     val query: String = "",
     val epgLoadingChannelIds: Set<String> = emptySet(),
@@ -91,6 +92,12 @@ data class TvUiState(
 
     val hasPotentialGuideSource: Boolean get() = config.hasConfiguredEpgSource()
 }
+
+private data class IptvGroupPreferences(
+    val hiddenGroups: List<String>,
+    val groupOrder: List<String>,
+    val lockedGroups: List<String>,
+)
 
 @HiltViewModel
 class TvViewModel @Inject constructor(
@@ -133,6 +140,7 @@ class TvViewModel @Inject constructor(
     private var periodicEpgJob: Job? = null
     private var iptvCloudSyncJob: Job? = null
     private var lastObservedConfigSignature: String? = null
+    @Volatile private var initialCacheLoadComplete: Boolean = false
     private var lastAutomaticEpgReloadAt: Long = 0L
     private var visibleEpgRefreshJob: Job? = null
     private var lastVisibleEpgRefreshKey: String? = null
@@ -198,11 +206,12 @@ class TvViewModel @Inject constructor(
         observeTvSession()
         observeEpgVodActionsPreference()
         viewModelScope.launch {
-            runCatching { iptvRepository.warmupFromCacheOnly() }
-            // Try fast non-blocking in-memory read first; fall back to mutex-guarded disk read
-            val cached = iptvRepository.getMemoryCachedSnapshot()
-                ?: iptvRepository.getCachedSnapshotOrNull()
-            if (cached != null) {
+            try {
+                runCatching { iptvRepository.warmupFromCacheOnly() }
+                // Try fast non-blocking in-memory read first; fall back to mutex-guarded disk read
+                val cached = iptvRepository.getMemoryCachedSnapshot()
+                    ?: iptvRepository.getCachedSnapshotOrNull()
+                if (cached != null) {
                 val config = iptvRepository.observeConfig().first()
                 // The observeConfigAndFavorites() coroutine may have already read fresh
                 // favorites from DataStore before this cached snapshot was loaded from disk.
@@ -254,10 +263,16 @@ class TvViewModel @Inject constructor(
                         System.err.println("[EPG] Startup: using warm cached EPG (age=${epgAgeMs / 1000}s)")
                     }
                 }
-            } else {
-                refresh(force = false, showLoading = false, forceEpg = false)
+                } else {
+                    refresh(force = false, showLoading = false, forceEpg = false)
+                }
+                startPeriodicEpgRefresh()
+            } finally {
+                // The config observer starts concurrently with this cache read.
+                // Until the initial read finishes, an empty in-memory snapshot is
+                // expected and must not launch a second load of the same 50k store.
+                initialCacheLoadComplete = true
             }
-            startPeriodicEpgRefresh()
         }
     }
 
@@ -290,13 +305,18 @@ class TvViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 combine(iptvRepository.observeConfig(), iptvRepository.observeFavoriteGroups(), iptvRepository.observeFavoriteChannels()) { a, b, c -> Triple(a, b, c) },
-                iptvRepository.observeHiddenGroups(),
-                iptvRepository.observeGroupOrder()
-            ) { triple, hiddenGroups, groupOrder ->
-                Triple(triple, hiddenGroups, groupOrder)
+                combine(
+                    iptvRepository.observeHiddenGroups(),
+                    iptvRepository.observeGroupOrder(),
+                    iptvRepository.observeLockedGroups(),
+                ) { hiddenGroups, groupOrder, lockedGroups ->
+                    IptvGroupPreferences(hiddenGroups, groupOrder, lockedGroups)
+                },
+            ) { triple, groupPreferences ->
+                triple to groupPreferences
             }
                 .distinctUntilChanged()
-                .collect { (triple, hiddenGroups, groupOrder) ->
+                .collect { (triple, groupPreferences) ->
                 val (config, favoriteGroups, favoriteChannels) = triple
                 val newConfigSignature = config.syncSignature()
                 val configChanged = lastObservedConfigSignature != null &&
@@ -305,14 +325,15 @@ class TvViewModel @Inject constructor(
                 val snapshot = _uiState.value.snapshot.copy(
                     favoriteGroups = favoriteGroups,
                     favoriteChannels = favoriteChannels,
-                    hiddenGroups = hiddenGroups,
-                    groupOrder = groupOrder,
+                    hiddenGroups = groupPreferences.hiddenGroups,
+                    groupOrder = groupPreferences.groupOrder,
                     sortOrder = config.sortOrder
                 )
                 setUiState(
                     _uiState.value.copy(
                         config = config,
                         snapshot = snapshot,
+                        lockedGroups = groupPreferences.lockedGroups,
                         iptvPreferencesLoaded = true,
                     )
                 )
@@ -324,7 +345,7 @@ class TvViewModel @Inject constructor(
                     config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
 
                 // Auto-heal cases where the app has IPTV config but an empty in-memory snapshot.
-                if (hasAnyIptvConfig && snapshot.channels.isEmpty() && refreshJob?.isActive != true) {
+                if (hasAnyIptvConfig && snapshot.channels.isEmpty() && initialCacheLoadComplete && refreshJob?.isActive != true) {
                     refresh(force = false, showLoading = false)
                 } else if (configChanged && refreshJob?.isActive != true) {
                     cachedEnrichedChannels = null
@@ -872,6 +893,7 @@ class TvViewModel @Inject constructor(
     fun setLiveTvPlaybackActive(active: Boolean) {
         if (liveTvPlaybackActive == active) return
         liveTvPlaybackActive = active
+        iptvRepository.setLiveTvInteractive(active)
         // The full-guide backfill is deferred while a channel preview is playing.
         // Measured reason: filling all ~10k guide-capable channels' EPG concurrently
         // with an interactive UI exceeds this device's 384MB heap cap and crashes
@@ -916,7 +938,10 @@ class TvViewModel @Inject constructor(
             deferredCompleteEpgPriorityIds.clear()
             deferredCompleteEpgBackfill = false
             System.err.println("[EPG-Complete] Resuming deferred full guide backfill after playback idle")
-            startCompleteEpgBackfill(force = true, priorityChannelIds = priorityIds)
+            // Re-evaluate age and indexed coverage after the idle delay. Forcing
+            // this path rewrote an already complete 50k-channel guide every time
+            // the user left Live TV, causing minutes of avoidable SQLite traffic.
+            startCompleteEpgBackfill(force = false, priorityChannelIds = priorityIds)
         }.also { job ->
             job.invokeOnCompletion {
                 if (deferredCompleteEpgBackfillJob === job) {
@@ -1358,6 +1383,15 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    fun toggleLockedGroup(playlistId: String?, groupName: String) {
+        val targetPlaylistId = playlistId?.trim().orEmpty()
+        if (targetPlaylistId.isBlank() || groupName.isBlank()) return
+        viewModelScope.launch {
+            iptvRepository.toggleLockedGroup(targetPlaylistId, groupName)
+            scheduleIptvCloudSync()
+        }
+    }
+
     fun prefetchVisibleCategoryEpg(
         channelIds: List<String>,
         selectedChannelId: String?,
@@ -1558,9 +1592,14 @@ class TvViewModel @Inject constructor(
                 val shouldNetwork = forceNetworkForLargeList || currentFavoriteIds.contains(id)
                 System.err.println(
                     "[EPG-Current] largeList channel=$id cached=${hasUsefulVisibleGuideData(cacheGuide)} " +
-                        "force=$forceNetworkForLargeList fav=${currentFavoriteIds.contains(id)}"
+                    "force=$forceNetworkForLargeList fav=${currentFavoriteIds.contains(id)}"
                 )
-                if (!shouldNetwork || (hasRichSelectedGuideData(cacheGuide) && !needsFullHistory)) {
+                // Current/next from the local index is enough while browsing.
+                // Fetching a complete XMLTV file merely because a catch-up
+                // channel has fewer than six past entries caused every category
+                // switch on large playlists to start a 25MB+ parse and GC storm.
+                // The fullscreen guide requests catch-up history explicitly.
+                if (hasUsefulVisibleGuideData(cacheGuide) || !shouldNetwork) {
                     clearEpgLoading(setOf(id))
                     return@launch
                 }

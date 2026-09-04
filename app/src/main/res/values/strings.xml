@@ -911,6 +911,51 @@
     <string name="player_addon_setup_required">Addon Setup Required</string>
     <string name="player_playback_error">Playback Error</string>
     <string name="player_error_generic">An unknown error occurred</string>
+    <string name="player_phase_loading_stream">Loading video stream…</string>
+    <string name="player_phase_loading_subtitles">Loading subtitles…</string>
+    <string name="player_phase_loading_subtitles_detail">Loading subtitles… (%1$s)</string>
+    <string name="player_phase_starting_playback">Starting playback…</string>
+    <string name="player_switch_notice">%1$s — switching…</string>
+    <string name="player_switch_notice_to">%1$s — switching to %2$s…</string>
+    <string name="player_fail_source_didnt_start">Source didn\'t start</string>
+    <string name="player_fail_startup_generic">Source failed during startup. Try another source.</string>
+    <string name="player_fail_buffering_slow">Buffering too slow</string>
+    <string name="player_fail_device_cannot_play">Video can\'t play on this device</string>
+    <string name="player_fail_source_too_slow">Source too slow to load</string>
+    <string name="player_fail_no_start_after_retries">Source did not start after retries. Try another source.</string>
+    <string name="player_fail_no_start_in_time">Source did not start in time. Try another source.</string>
+    <string name="player_fail_no_video_decode">No video — device can\'t decode this format</string>
+    <string name="player_fail_render_failed">Video could not render on this device. Try another source.</string>
+    <string name="player_err_codec_unsupported">Codec not supported by this device</string>
+    <string name="player_err_network_timeout">Network timeout while loading source</string>
+    <string name="player_err_http_rejected">Source server rejected playback request</string>
+    <string name="player_err_container_invalid">Source format is invalid or unsupported</string>
+    <string name="player_err_failed_to_play">Source failed to play</string>
+    <string name="player_err_try_another">%1$s. Try another source.</string>
+    <string name="player_err_startup_try_another">%1$s during startup. Trying another source may work.</string>
+    <string name="player_err_source_blocked">Source blocked</string>
+    <string name="player_err_source_removed">Source removed</string>
+    <string name="player_err_source_expired">Source expired</string>
+    <string name="player_err_source_rate_limited">Source rate-limited</string>
+    <string name="player_err_source_unavailable">Source unavailable</string>
+    <string name="player_err_source_status">Source error (%1$d)</string>
+    <string name="player_err_source_offline">Source offline</string>
+    <string name="player_err_format_unsupported">Video format not supported by this device</string>
+    <string name="player_err_unplayable_content">Unplayable content</string>
+    <string name="player_err_source_rejected">Source rejected request</string>
+    <string name="player_err_playback">Playback error</string>
+    <string name="player_aspect_zoom">Zoom</string>
+    <string name="player_aspect_fill">Fill</string>
+    <string name="player_aspect_fit">Fit</string>
+    <string name="player_subtitle_find_best_match">Find Best Match</string>
+    <string name="player_subtitle_scanning">Scanning…</string>
+    <string name="player_subtitle_best_match_hint">Auto-pick the best-synced subtitle</string>
+    <string name="player_subtitle_searching_match">Searching for a match…</string>
+    <string name="player_audio_translate">Translate Audio</string>
+    <string name="player_skip_intro">Skip Intro</string>
+    <string name="player_skip_recap">Skip Recap</string>
+    <string name="player_skip_ending">Skip Ending</string>
+    <string name="player_skip">Skip</string>
 
     <!-- Extracted from code: Live TV -->
     <string name="live_badge_live">LIVE</string>
@@ -1031,6 +1076,14 @@
     <string name="stream_section_addons">ADDONS</string>
     <string name="stream_metric_total">Total</string>
     <string name="stream_metric_checked">Checked</string>
+    <string name="stream_status_still_checking_one">%1$s%2$d found - still checking %3$d addon</string>
+    <string name="stream_status_still_checking_many">%1$s%2$d found - still checking %3$d addons</string>
+    <string name="stream_status_searching">%1$s%2$d found - searching sources</string>
+    <string name="stream_status_searching_more">%1$s%2$d found - searching for more sources</string>
+    <string name="stream_status_addons_checked">%1$d found - %2$d/%3$d addons checked</string>
+    <string name="stream_status_found">%1$d found</string>
+    <string name="stream_unknown_source">Unknown source</string>
+    <string name="stream_recommended_source">recommended source</string>
 
     <!-- Extracted from code: ViewModels and receivers -->
     <string name="update_install_manual_confirm">Update install requires manual confirmation. Please install from Downloads.</string>
@@ -1311,6 +1364,12 @@
     <string name="live_menu_move_down">Move down</string>
     <string name="live_menu_hide_category">Hide category</string>
     <string name="live_menu_unhide_category">Unhide category</string>
+    <string name="live_menu_lock_category">Lock with profile PIN</string>
+    <string name="live_menu_unlock_category">Remove PIN lock</string>
+    <string name="live_group_enter_pin">Enter PIN to open this group</string>
+    <string name="live_group_pin_incorrect">Incorrect PIN</string>
+    <string name="live_group_pin_required_title">Profile PIN required</string>
+    <string name="live_group_pin_required_message">Set a PIN on this profile before locking TV groups.</string>
     <string name="ratings">Episode Ratings</string>
 
     <!-- Discord Rich Presence -->

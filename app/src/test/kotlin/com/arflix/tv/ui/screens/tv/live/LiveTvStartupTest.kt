@@ -85,6 +85,62 @@ class LiveTvStartupTest {
         assertThat(ids).containsExactly("a", "b")
     }
 
+    @Test
+    fun persistedLastChannelWinsOverFavoriteFallback() {
+        val selected = LiveTvStartup.chooseStartupChannelId(
+            availableChannelIds = setOf("favorite", "last", "first"),
+            firstAvailableChannelId = "first",
+            explicitChannelId = null,
+            sessionLastChannelId = "last",
+            hasOpenedBefore = true,
+            favoriteChannelIds = listOf("favorite"),
+            isFullyLoaded = true,
+        )
+
+        assertThat(selected).isEqualTo("last")
+    }
+
+    @Test
+    fun staleLastChannelFallsBackToFavoriteAfterFullLoad() {
+        val selected = LiveTvStartup.chooseStartupChannelId(
+            availableChannelIds = setOf("favorite", "first"),
+            firstAvailableChannelId = "first",
+            explicitChannelId = null,
+            sessionLastChannelId = "removed",
+            hasOpenedBefore = true,
+            favoriteChannelIds = listOf("favorite"),
+            isFullyLoaded = true,
+        )
+
+        assertThat(selected).isEqualTo("favorite")
+    }
+
+    @Test
+    fun rememberedCategoryIsRestoredOnlyWhenItStillExists() {
+        assertThat(LiveTvStartup.resumeCategoryId("grp:list_1:news", setOf("grp:list_1:news")))
+            .isEqualTo("grp:list_1:news")
+        assertThat(LiveTvStartup.resumeCategoryId("removed", setOf("grp:list_1:news")))
+            .isEqualTo("all")
+    }
+
+    @Test
+    fun backOpensHiddenCategoryDrawerBeforeLeavingTv() {
+        assertThat(LiveTvStartup.guideBackAction(isTouchDevice = false, categoryDrawerOpen = false))
+            .isEqualTo(LiveTvStartup.GuideBackAction.OPEN_CATEGORIES)
+        assertThat(LiveTvStartup.guideBackAction(isTouchDevice = false, categoryDrawerOpen = true))
+            .isEqualTo(LiveTvStartup.GuideBackAction.EXIT_TV)
+    }
+
+    @Test
+    fun largePlaylistWindowIsAnchoredBeforeTheLastChannel() {
+        assertThat(LiveTvStartup.anchoredWindowOffset(channelIndex = 20_000, visibleRowsBeforeAnchor = 16))
+            .isEqualTo(19_984)
+        assertThat(LiveTvStartup.anchoredWindowOffset(channelIndex = 8, visibleRowsBeforeAnchor = 16))
+            .isEqualTo(0)
+        assertThat(LiveTvStartup.anchoredWindowOffset(channelIndex = -1, visibleRowsBeforeAnchor = 16))
+            .isEqualTo(0)
+    }
+
     // ── Focus while loading ────────────────────────────────────────────────
 
     @Test

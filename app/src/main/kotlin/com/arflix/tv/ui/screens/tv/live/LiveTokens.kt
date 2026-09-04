@@ -84,6 +84,7 @@ object LiveDims {
     val MiniPlayerHeight = 168.dp
 
     val EpgChannelColWidth = 220.dp
+    val EpgChannelWideColWidth = 292.dp
     val EpgRowHeight       = 42.dp
     val EpgHeaderHeight    = 26.dp
     val EpgPxPerMinute     = 4

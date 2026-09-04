@@ -32,6 +32,12 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
 ) {
     private val gson = Gson()
 
+    init {
+        // Refreshes replace a complete provider snapshot. WAL lets the TV page
+        // continue reading the previous snapshot while the new one is staged.
+        setWriteAheadLoggingEnabled(true)
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -61,85 +67,110 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             )
             """.trimIndent()
         )
-        db.execSQL("CREATE INDEX idx_channels_group ON channels(source_key, group_title)")
+        db.execSQL("CREATE INDEX idx_channels_group ON channels(source_key, group_title, ord)")
+        db.execSQL("CREATE INDEX idx_channels_id ON channels(source_key, id)")
         db.execSQL(
             """
             CREATE TABLE channel_sources (
                 source_key TEXT PRIMARY KEY NOT NULL,
                 updated_ms INTEGER NOT NULL,
-                channel_count INTEGER NOT NULL
+                channel_count INTEGER NOT NULL,
+                group_summary_json TEXT
             )
             """.trimIndent()
         )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS channels")
-        db.execSQL("DROP TABLE IF EXISTS channel_sources")
-        onCreate(db)
+        if (oldVersion in 3..5) {
+            if (oldVersion < 4 && newVersion >= 4) {
+                db.execSQL("ALTER TABLE channel_sources ADD COLUMN group_summary_json TEXT")
+            }
+            if (oldVersion < 5 && newVersion >= 5) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_channels_id ON channels(source_key, id)")
+            }
+            if (oldVersion < 6 && newVersion >= 6) {
+                db.execSQL("DROP INDEX IF EXISTS idx_channels_group")
+                db.execSQL("CREATE INDEX idx_channels_group ON channels(source_key, group_title, ord)")
+            }
+            return
+        }
+        if (oldVersion !in 3..5) {
+            db.execSQL("DROP TABLE IF EXISTS channels")
+            db.execSQL("DROP TABLE IF EXISTS channel_sources")
+            onCreate(db)
+        }
     }
 
     /** Replace the whole channel set for [sourceKey] in a single transaction. */
     fun replaceAll(sourceKey: String, channels: List<IptvChannel>, updatedAtMs: Long) {
         if (sourceKey.isBlank()) return
+        val groupSummaryJson = encodeGroupSummary(channels)
         val db = writableDatabase
         db.beginTransaction()
         try {
-            db.delete("channels", "source_key = ?", arrayOf(sourceKey))
             if (channels.isNotEmpty()) {
-                val statement = db.compileStatement(
-                    """
-                    INSERT OR REPLACE INTO channels
-                    (source_key, ord, id, name, stream_url, group_title, logo, epg_id, raw_title,
-                     xtream_stream_id, catchup_days, catchup_type, catchup_source, tvg_name,
-                     provider_channel_number, request_headers_json, language, country, quality_label,
-                     variant_key, drm_json)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """.trimIndent()
-                )
+                val statements = HashMap<Int, android.database.sqlite.SQLiteStatement>(2)
                 try {
-                    channels.forEachIndexed { index, channel ->
-                        statement.clearBindings()
-                        statement.bindString(1, sourceKey)
-                        statement.bindLong(2, index.toLong())
-                        statement.bindString(3, channel.id)
-                        statement.bindString(4, channel.name)
-                        statement.bindString(5, channel.streamUrl)
-                        statement.bindString(6, channel.group)
-                        bindNullableString(statement, 7, channel.logo)
-                        bindNullableString(statement, 8, channel.epgId)
-                        bindNullableString(statement, 9, channel.rawTitle)
-                        if (channel.xtreamStreamId != null) {
-                            statement.bindLong(10, channel.xtreamStreamId.toLong())
-                        } else {
-                            statement.bindNull(10)
+                    var offset = 0
+                    while (offset < channels.size) {
+                        val rowCount = minOf(MAX_CHANNEL_INSERT_ROWS, channels.size - offset)
+                        val statement = statements.getOrPut(rowCount) {
+                            val values = List(rowCount) {
+                                "(" + List(CHANNEL_BINDINGS_PER_ROW) { "?" }.joinToString(",") + ")"
+                            }.joinToString(",")
+                            db.compileStatement(
+                                """
+                                INSERT OR REPLACE INTO channels
+                                (source_key, ord, id, name, stream_url, group_title, logo, epg_id, raw_title,
+                                 xtream_stream_id, catchup_days, catchup_type, catchup_source, tvg_name,
+                                 provider_channel_number, request_headers_json, language, country, quality_label,
+                                 variant_key, drm_json)
+                                VALUES $values
+                                """.trimIndent()
+                            )
                         }
-                        statement.bindLong(11, channel.catchupDays.toLong())
-                        bindNullableString(statement, 12, channel.catchupType)
-                        bindNullableString(statement, 13, channel.catchupSource)
-                        bindNullableString(statement, 14, channel.tvgName)
-                        bindNullableString(statement, 15, channel.providerChannelNumber)
-                        bindNullableString(
-                            statement, 16,
-                            channel.requestHeaders.takeIf { it.isNotEmpty() }?.let { gson.toJson(it) }
-                        )
-                        bindNullableString(statement, 17, channel.language)
-                        bindNullableString(statement, 18, channel.country)
-                        bindNullableString(statement, 19, channel.qualityLabel)
-                        bindNullableString(statement, 20, channel.variantKey)
-                        bindNullableString(statement, 21, channel.drmInfo?.let { gson.toJson(it) })
-                        statement.executeInsert()
+                        statement.clearBindings()
+                        var bindIndex = 1
+                        repeat(rowCount) { rowOffset ->
+                            bindIndex = bindChannel(
+                                statement = statement,
+                                startIndex = bindIndex,
+                                sourceKey = sourceKey,
+                                order = offset + rowOffset,
+                                channel = channels[offset + rowOffset]
+                            )
+                        }
+                        statement.execute()
+                        offset += rowCount
                     }
                 } finally {
-                    statement.close()
+                    statements.values.forEach { it.close() }
                 }
+
+                // Each provider position is overwritten above. Delete only rows
+                // beyond the new end, rather than first deleting all 50k rows.
+                // Apart from being much faster, this leaves the previous snapshot
+                // readable through WAL for the complete duration of a refresh.
+                db.delete(
+                    "channels",
+                    "source_key = ? AND ord >= ?",
+                    arrayOf(sourceKey, channels.size.toString())
+                )
+            } else {
+                db.delete("channels", "source_key = ?", arrayOf(sourceKey))
             }
             db.compileStatement(
-                "INSERT OR REPLACE INTO channel_sources(source_key, updated_ms, channel_count) VALUES (?,?,?)"
+                """
+                INSERT OR REPLACE INTO channel_sources
+                (source_key, updated_ms, channel_count, group_summary_json)
+                VALUES (?,?,?,?)
+                """.trimIndent()
             ).use { meta ->
                 meta.bindString(1, sourceKey)
                 meta.bindLong(2, updatedAtMs)
                 meta.bindLong(3, channels.size.toLong())
+                meta.bindString(4, groupSummaryJson)
                 meta.executeInsert()
             }
             db.setTransactionSuccessful()
@@ -207,7 +238,9 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             val byGroup = !groupTitle.isNullOrEmpty()
             val byPlaylist = !playlistId.isNullOrBlank()
             val sql = buildString {
-                append("SELECT * FROM channels WHERE source_key = ?")
+                append("SELECT * FROM channels")
+                if (byGroup && !normalizedGroup) append(" INDEXED BY idx_channels_group")
+                append(" WHERE source_key = ?")
                 if (byPlaylist) append(" AND (id LIKE ? OR id LIKE ?)")
                 if (byGroup) {
                     if (normalizedGroup) append(" AND trim(group_title) = ?") else append(" AND group_title = ?")
@@ -262,37 +295,61 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
 
     /** 0-based position of [channelId] within [groupTitle] (or all), or -1. Used to anchor the window. */
     fun indexOfId(sourceKey: String, groupTitle: String?, channelId: String): Int {
+        return indexOfId(sourceKey, playlistId = null, groupTitle = groupTitle, channelId = channelId)
+    }
+
+    /** 0-based provider position within one playlist/group, or -1 when the channel is unavailable. */
+    fun indexOfId(sourceKey: String, playlistId: String?, groupTitle: String?, channelId: String): Int {
         if (sourceKey.isBlank() || channelId.isBlank()) return -1
         val byGroup = !groupTitle.isNullOrEmpty()
+        val normalizedPlaylistId = playlistId?.trim().orEmpty()
+        val byPlaylist = normalizedPlaylistId.isNotEmpty()
         val target = readableDatabase.rawQuery(
             "SELECT ord FROM channels WHERE source_key = ? AND id = ? LIMIT 1",
             arrayOf(sourceKey, channelId)
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else return -1 }
         val sql = buildString {
             append("SELECT COUNT(*) FROM channels WHERE source_key = ?")
+            if (byPlaylist) append(" AND (id LIKE ? OR id LIKE ?)")
             if (byGroup) append(" AND group_title = ?")
             append(" AND ord < ?")
         }
-        val args = if (byGroup) arrayOf(sourceKey, groupTitle!!, target.toString())
-        else arrayOf(sourceKey, target.toString())
+        val args = buildList {
+            add(sourceKey)
+            if (byPlaylist) {
+                add("$normalizedPlaylistId:%")
+                add("stalker:$normalizedPlaylistId:%")
+            }
+            if (byGroup) add(groupTitle!!)
+            add(target.toString())
+        }.toTypedArray()
         return readableDatabase.rawQuery(sql, args).use { c -> if (c.moveToFirst()) c.getInt(0) else -1 }
     }
 
     /** Fetch specific channels by id (favorites / recents / focus lookups), in store order. */
     fun getByIds(sourceKey: String, ids: Collection<String>): List<IptvChannel> {
         if (sourceKey.isBlank() || ids.isEmpty()) return emptyList()
-        val out = ArrayList<IptvChannel>(ids.size)
+        val indexed = ArrayList<Pair<Int, IptvChannel>>(ids.size)
         ids.asSequence().filter { it.isNotBlank() }.chunked(MAX_SQL_ARGS - 1).forEach { chunk ->
             val placeholders = chunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
-                "SELECT * FROM channels WHERE source_key = ? AND id IN ($placeholders) ORDER BY ord",
+                // ORDER BY ord made SQLite prefer the (source_key, ord) primary-key
+                // index and scan a complete 50k playlist even for one favorite.
+                // Force the exact-id index and restore provider order over the tiny
+                // result set in memory instead.
+                "SELECT * FROM channels INDEXED BY idx_channels_id " +
+                    "WHERE source_key = ? AND id IN ($placeholders)",
                 (listOf(sourceKey) + chunk).toTypedArray()
             ).use { cursor ->
                 val cols = ColumnIndices(cursor)
-                while (cursor.moveToNext()) out.add(readChannel(cursor, cols))
+                val orderColumn = cursor.getColumnIndexOrThrow("ord")
+                while (cursor.moveToNext()) {
+                    indexed.add(cursor.getInt(orderColumn) to readChannel(cursor, cols))
+                }
             }
         }
-        return out
+        indexed.sortBy { it.first }
+        return indexed.map { it.second }
     }
 
     fun search(sourceKey: String, query: String, limit: Int): List<IptvChannel> {
@@ -326,7 +383,25 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
 
     fun playlistGroupCounts(sourceKey: String): List<Triple<String, String, Int>> {
         if (sourceKey.isBlank()) return emptyList()
-        return readableDatabase.rawQuery(
+        val stored = readableDatabase.rawQuery(
+            "SELECT group_summary_json FROM channel_sources WHERE source_key = ? LIMIT 1",
+            arrayOf(sourceKey)
+        ).use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0).orEmpty() else ""
+        }
+        if (stored.isNotBlank()) {
+            val decoded = runCatching {
+                gson.fromJson(stored, Array<StoredGroupSummary>::class.java)
+                    .orEmpty()
+                    .asSequence()
+                    .filter { it.groupTitle.isNotBlank() && it.count > 0 }
+                    .map { Triple(it.playlistId, it.groupTitle, it.count) }
+                    .toList()
+            }.getOrDefault(emptyList())
+            if (decoded.isNotEmpty()) return decoded
+        }
+
+        val computed = readableDatabase.rawQuery(
             """
             SELECT
                 CASE
@@ -355,6 +430,23 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             }
             out
         }
+        if (computed.isNotEmpty()) {
+            val json = gson.toJson(
+                computed.map { (playlistId, groupTitle, count) ->
+                    StoredGroupSummary(playlistId, groupTitle, count)
+                }
+            )
+            runCatching {
+                writableDatabase.compileStatement(
+                    "UPDATE channel_sources SET group_summary_json = ? WHERE source_key = ?"
+                ).use { statement ->
+                    statement.bindString(1, json)
+                    statement.bindString(2, sourceKey)
+                    statement.executeUpdateDelete()
+                }
+            }
+        }
+        return computed
     }
 
     fun deleteSource(sourceKey: String) {
@@ -436,6 +528,77 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         val drm = cursor.getColumnIndexOrThrow("drm_json")
     }
 
+    private data class StoredGroupSummary(
+        val playlistId: String = "",
+        val groupTitle: String = "",
+        val count: Int = 0
+    )
+
+    private fun encodeGroupSummary(channels: List<IptvChannel>): String {
+        if (channels.isEmpty()) return "[]"
+        val summaries = LinkedHashMap<String, StoredGroupSummary>()
+        channels.forEach { channel ->
+            val playlistId = playlistIdFromChannelId(channel.id)
+            val groupTitle = channel.group.trim().ifBlank { "Uncategorized" }
+            val key = "$playlistId\u0000$groupTitle"
+            val current = summaries[key]
+            summaries[key] = if (current == null) {
+                StoredGroupSummary(playlistId, groupTitle, 1)
+            } else {
+                current.copy(count = current.count + 1)
+            }
+        }
+        return gson.toJson(summaries.values)
+    }
+
+    private fun playlistIdFromChannelId(channelId: String): String {
+        val normalized = channelId.trim()
+        if (normalized.startsWith("stalker:")) {
+            return normalized.removePrefix("stalker:").substringBefore(':')
+        }
+        return normalized.substringBefore(':', missingDelimiterValue = "")
+    }
+
+    private fun bindChannel(
+        statement: android.database.sqlite.SQLiteStatement,
+        startIndex: Int,
+        sourceKey: String,
+        order: Int,
+        channel: IptvChannel
+    ): Int {
+        var index = startIndex
+        statement.bindString(index++, sourceKey)
+        statement.bindLong(index++, order.toLong())
+        statement.bindString(index++, channel.id)
+        statement.bindString(index++, channel.name)
+        statement.bindString(index++, channel.streamUrl)
+        statement.bindString(index++, channel.group)
+        bindNullableString(statement, index++, channel.logo)
+        bindNullableString(statement, index++, channel.epgId)
+        bindNullableString(statement, index++, channel.rawTitle)
+        if (channel.xtreamStreamId != null) {
+            statement.bindLong(index++, channel.xtreamStreamId.toLong())
+        } else {
+            statement.bindNull(index++)
+        }
+        statement.bindLong(index++, channel.catchupDays.toLong())
+        bindNullableString(statement, index++, channel.catchupType)
+        bindNullableString(statement, index++, channel.catchupSource)
+        bindNullableString(statement, index++, channel.tvgName)
+        bindNullableString(statement, index++, channel.providerChannelNumber)
+        bindNullableString(
+            statement,
+            index++,
+            channel.requestHeaders.takeIf { it.isNotEmpty() }?.let { gson.toJson(it) }
+        )
+        bindNullableString(statement, index++, channel.language)
+        bindNullableString(statement, index++, channel.country)
+        bindNullableString(statement, index++, channel.qualityLabel)
+        bindNullableString(statement, index++, channel.variantKey)
+        bindNullableString(statement, index++, channel.drmInfo?.let { gson.toJson(it) })
+        return index
+    }
+
     private fun bindNullableString(statement: android.database.sqlite.SQLiteStatement, index: Int, value: String?) {
         if (value == null) statement.bindNull(index) else statement.bindString(index, value)
     }
@@ -443,7 +606,12 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
     private companion object {
         const val DATABASE_NAME = "arvio_iptv_channels.db"
         // v3 rebuilds snapshots created before provider-order imports became canonical.
-        const val DATABASE_VERSION = 3
+        // v4 stores the provider/category summary next to the snapshot.
+        // v5 indexes channel ids so focus/EPG actions never scan a 50k-row table.
+        // v6 keeps provider order in the group index for instant deep-category reads.
+        const val DATABASE_VERSION = 6
         const val MAX_SQL_ARGS = 900
+        const val CHANNEL_BINDINGS_PER_ROW = 21
+        const val MAX_CHANNEL_INSERT_ROWS = MAX_SQL_ARGS / CHANNEL_BINDINGS_PER_ROW
     }
 }

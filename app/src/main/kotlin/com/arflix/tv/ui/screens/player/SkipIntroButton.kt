@@ -35,10 +35,12 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import com.arflix.tv.R
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.ui.theme.ArflixTypography
 import kotlinx.coroutines.delay
@@ -147,9 +149,14 @@ fun SkipIntroButton(
     }
 }
 
-private fun skipLabel(type: String?): String = when (type) {
-    "op", "mixed-op", "intro" -> "Skip Intro"
-    "recap" -> "Skip Recap"
-    "ed", "mixed-ed", "outro" -> "Skip Ending"
-    else -> "Skip"
-}
+// The interval type keys stay English — they come from the skip-times API and are matched
+// here; only the rendered button label is localized.
+@Composable
+private fun skipLabel(type: String?): String = stringResource(
+    when (type) {
+        "op", "mixed-op", "intro" -> R.string.player_skip_intro
+        "recap" -> R.string.player_skip_recap
+        "ed", "mixed-ed", "outro" -> R.string.player_skip_ending
+        else -> R.string.player_skip
+    }
+)

@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.tv.live
 
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.data.model.PlaylistGroupKey
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.orderXtreamChannelsByProviderCategories
@@ -43,6 +44,27 @@ class LiveCategoryIndexTest {
         assertThat(index.channelsFor("recent", favorites = emptyList(), recents = recents).map { it.id })
             .containsExactly("2", "3", "1")
             .inOrder()
+    }
+
+    @Test
+    fun lockedGroupCannotLeakThroughAllFavoritesOrItsCategoryBeforePinUnlock() {
+        val channels = listOf(
+            channel("list_1:1", "Public", "General"),
+            channel("list_1:2", "Restricted", "Premium"),
+        ).mapIndexed { index, channel -> channel.enrich(index + 1) }
+        val restrictedGroup = PlaylistGroupKey.build("list_1", "Premium")
+        val restrictedCategory = playlistGroupCategoryId("list_1", "Premium")
+
+        val lockedIndex = buildCategoryIndex(channels, restrictedGroups = setOf(restrictedGroup))
+
+        assertThat(lockedIndex.channelsFor("all", emptyList(), emptyList()).map { it.id })
+            .containsExactly("list_1:1")
+        assertThat(lockedIndex.channelsFor("fav", listOf("list_1:2"), emptyList())).isEmpty()
+        assertThat(lockedIndex.channelsFor(restrictedCategory, emptyList(), emptyList())).isEmpty()
+
+        val unlockedIndex = buildCategoryIndex(channels)
+        assertThat(unlockedIndex.channelsFor(restrictedCategory, emptyList(), emptyList()).map { it.id })
+            .containsExactly("list_1:2")
     }
 
     @Test

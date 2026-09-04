@@ -111,6 +111,7 @@ fun EpgGrid(
     onExitEpg: (EnrichedChannel?) -> Unit = {},
     onRequestPreviousChannels: () -> Unit = {},
     onRequestNextChannels: () -> Unit = {},
+    channelColumnWidthOverride: Dp? = null,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -118,7 +119,8 @@ fun EpgGrid(
     val selectedChannelFocusRequester = remember { FocusRequester() }
     val firstChannelFocusRequester = remember { FocusRequester() }
     val headerHeight = if (compact) 32.dp else LiveDims.EpgHeaderHeight
-    val channelColumnWidth = if (compact) 164.dp else LiveDims.EpgChannelColWidth
+    val channelColumnWidth = channelColumnWidthOverride
+        ?: if (compact) 164.dp else LiveDims.EpgChannelColWidth
     val halfHourWidth = (pxPerMin * 30f).dp
     val rowHeight = if (compact) 52.dp else LiveDims.EpgRowHeight
     val channelFocusRequesters = remember { LinkedHashMap<String, FocusRequester>() }

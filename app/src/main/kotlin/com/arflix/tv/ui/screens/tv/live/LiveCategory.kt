@@ -45,6 +45,7 @@ data class LiveCategoryIndex(
     val byCategory: Map<String, List<EnrichedChannel>>,
     val byId: Map<String, EnrichedChannel>,
     val hiddenIds: Set<String> = emptySet(),
+    val restrictedIds: Set<String> = emptySet(),
 ) {
     fun channelsFor(
         categoryId: String,
@@ -52,9 +53,9 @@ data class LiveCategoryIndex(
         recents: Collection<String>,
     ): List<EnrichedChannel> {
         return when (categoryId) {
-            "fav" -> favorites.mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds }
-            "recent" -> recents.toList().asReversed().mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds }
-            else -> byCategory[categoryId].orEmpty()
+            "fav" -> favorites.mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds || it.id in restrictedIds }
+            "recent" -> recents.toList().asReversed().mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds || it.id in restrictedIds }
+            else -> byCategory[categoryId].orEmpty().filterNot { it.id in restrictedIds }
         }
     }
 
@@ -65,7 +66,7 @@ data class LiveCategoryIndex(
 
 fun LiveCategoryIndex.isVisibleNonAdultChannel(channelId: String): Boolean {
     val channel = byId[channelId] ?: return false
-    return !channel.isAdult && channelId !in hiddenIds
+    return !channel.isAdult && channelId !in hiddenIds && channelId !in restrictedIds
 }
 
 private data class ChannelTraits(
@@ -414,6 +415,18 @@ fun isHiddenPlaylistGroup(channel: EnrichedChannel, hiddenGroups: Set<String>): 
     if (hiddenGroups.isEmpty()) return false
     val playlistId = channelPlaylistId(channel.id)
     return playlistGroupKey(playlistId, channel.source.group) in hiddenGroups
+}
+
+fun isRestrictedPlaylistGroup(channel: EnrichedChannel, restrictedGroups: Set<String>): Boolean {
+    if (restrictedGroups.isEmpty()) return false
+    val playlistId = channelPlaylistId(channel.id)
+    return playlistGroupKey(playlistId, channel.source.group) in restrictedGroups
+}
+
+fun isRestrictedPlaylistGroup(channel: IptvChannel, restrictedGroups: Set<String>): Boolean {
+    if (restrictedGroups.isEmpty()) return false
+    val playlistId = channelPlaylistId(channel.id)
+    return playlistGroupKey(playlistId, channel.group) in restrictedGroups
 }
 
 private fun isHiddenPlaylistGroup(channel: IptvChannel, hiddenGroups: Set<String>): Boolean {
@@ -1155,12 +1168,14 @@ fun buildInitialCategoryChannels(
 fun buildCategoryIndex(
     channels: List<EnrichedChannel>,
     hiddenGroups: Set<String> = emptySet(),
+    restrictedGroups: Set<String> = emptySet(),
 ): LiveCategoryIndex {
     if (channels.isEmpty()) return LiveCategoryIndex.Empty
 
     val byId = LinkedHashMap<String, EnrichedChannel>(channels.size)
     val buckets = LinkedHashMap<String, MutableList<EnrichedChannel>>()
     val hiddenIds = LinkedHashSet<String>()
+    val restrictedIds = LinkedHashSet<String>()
 
     fun add(categoryId: String, channel: EnrichedChannel) {
         buckets.getOrPut(categoryId) { ArrayList() }.add(channel)
@@ -1171,6 +1186,10 @@ fun buildCategoryIndex(
         add(playlistGroupCategoryId(channelPlaylistId(channel.source.id), channel.source.group), channel)
         if (isHiddenPlaylistGroup(channel, hiddenGroups)) {
             hiddenIds += channel.id
+            return@forEach
+        }
+        if (isRestrictedPlaylistGroup(channel, restrictedGroups)) {
+            restrictedIds += channel.id
             return@forEach
         }
         if (channel.isAdult) {
@@ -1216,6 +1235,7 @@ fun buildCategoryIndex(
         byCategory = buckets.mapValues { (_, value) -> value.toList() },
         byId = byId,
         hiddenIds = hiddenIds,
+        restrictedIds = restrictedIds,
     )
 }
 

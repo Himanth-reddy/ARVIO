@@ -1400,6 +1400,9 @@ class SettingsViewModel @Inject constructor(
             mediaRepository.contentLanguage = lang
             _uiState.value = _uiState.value.copy(contentLanguage = lang)
             syncLocalStateToCloud(silent = true)
+
+            // Refresh the Launcher "Keep watching" with the new language
+            launcherContinueWatchingRepository.refreshForCurrentProfile()
         }
     }
 
@@ -2670,7 +2673,7 @@ class SettingsViewModel @Inject constructor(
             // Auto-triggered refreshes (force=false) keep their soft TTL
             // behavior.
             if (force) {
-                runCatching { iptvRepository.purgeAllIptvSourceCaches() }
+                runCatching { iptvRepository.purgeAllIptvSourceCaches(preserveLiveSnapshot = true) }
             }
             runCatching {
                 val refreshPolicy = settingsIptvRefreshPolicy(force)

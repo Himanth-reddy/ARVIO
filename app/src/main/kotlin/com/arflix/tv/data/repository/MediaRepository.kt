@@ -35,6 +35,7 @@ import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.ContentRating
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -118,7 +119,10 @@ class MediaRepository @Inject constructor(
     @Volatile
     var contentLanguage: String = "en-US"
         set(value) {
-            field = value.ifBlank { "en-US" }.replace("iw", "he").replace('_', '-')
+            val normalized = value.ifBlank { "en-US" }.replace("iw", "he").replace('_', '-')
+            if (field == normalized) return
+            field = normalized
+            clearMediaCache()
         }
 
     // === IN-MEMORY CACHE FOR PERFORMANCE ===
@@ -2927,7 +2931,10 @@ class MediaRepository @Inject constructor(
             val details = detailsDeferred.await()
             val imdbId = externalIdsDeferred.await()?.imdbId?.also { cacheImdbId(MediaType.MOVIE, movieId, it) }
             val imdbRating = imdbId?.let { getImdbRating(MediaType.MOVIE, movieId, it) }
-            details.toMediaItem().copy(imdbRating = imdbRating.orEmpty())
+            details.toMediaItem().copy(
+                imdbRating = imdbRating.orEmpty(),
+                contentRating = ContentRating.forMovie(details.releaseDates, contentLanguage)
+            )
         }
         cacheFullDetailsItem(item)
         return item
@@ -2957,10 +2964,45 @@ class MediaRepository @Inject constructor(
             val details = detailsDeferred.await()
             val imdbId = externalIdsDeferred.await()?.imdbId?.also { cacheImdbId(MediaType.TV, tvId, it) }
             val imdbRating = imdbId?.let { getImdbRating(MediaType.TV, tvId, it) }
-            details.toMediaItem().copy(imdbRating = imdbRating.orEmpty())
+            details.toMediaItem().copy(
+                imdbRating = imdbRating.orEmpty(),
+                contentRating = ContentRating.forTv(details.contentRatings, contentLanguage)
+            )
         }
         cacheFullDetailsItem(item)
         return item
+    }
+
+    /**
+     * Lightweight calls for LauncherContinueWatchingRepository to avoid heavy IMDb rating/caching tasks.
+     */
+    suspend fun getLightweightMovieTitle(movieId: Int, language: String = contentLanguage): String? {
+        return runCatching {
+            tmdbApi.getMovieDetails(movieId, apiKey, language = language).title
+        }.getOrNull()
+    }
+
+    suspend fun getLightweightTvTitle(tvId: Int, language: String = contentLanguage): String? {
+        return runCatching {
+            // TMDB uses 'name' for series instead of 'title'
+            tmdbApi.getTvDetails(tvId, apiKey, language = language).name
+        }.getOrNull()
+    }
+
+    suspend fun getLightweightEpisodeTitle(
+        tvId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        language: String = contentLanguage
+    ): String? {
+        return runCatching {
+            tmdbApi.getTvSeason(
+                tvId = tvId,
+                seasonNumber = seasonNumber,
+                apiKey = apiKey,
+                language = language
+            ).episodes.firstOrNull { it.episodeNumber == episodeNumber }?.name
+        }.getOrNull()
     }
 
     /**
