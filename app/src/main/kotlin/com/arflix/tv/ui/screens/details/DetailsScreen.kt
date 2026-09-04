@@ -2081,21 +2081,46 @@ private fun DetailsContent(
         val heroTopPadding = AppTopBarContentTopInset + if (isCompactHeight) 10.dp else 16.dp
 
         val hasPosterDetailRails = usePosterCards && (collectionItems.isNotEmpty() || similar.isNotEmpty())
-        val minContentRowHeight = if (hasPosterDetailRails) 216.dp else 188.dp
-        val maxContentRowHeight = if (hasPosterDetailRails) 240.dp else 210.dp
-        val contentRowHeight = if (isCompactHeight) {
-            minContentRowHeight
+        val isBrowsingRails = focusSectionForUi != null && focusSectionForUi != FocusSection.BUTTONS
+
+        val shiftAmount = if (isCompactHeight) 135.dp else 175.dp
+        val heroOffsetY by animateDpAsState(
+            targetValue = if (isBrowsingRails) -shiftAmount else 0.dp,
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            label = "hero_offset_y"
+        )
+        val heroAlpha by animateFloatAsState(
+            targetValue = if (isBrowsingRails) 0.35f else 1f,
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            label = "hero_alpha"
+        )
+
+        val minRestingRowHeight = if (hasPosterDetailRails) 226.dp else 210.dp
+        val maxRestingRowHeight = if (hasPosterDetailRails) 246.dp else 226.dp
+        val restingRowHeight = if (isCompactHeight) {
+            minRestingRowHeight
         } else {
-            (configuration.screenHeightDp * 0.34f).dp.coerceIn(
-                minimumValue = minContentRowHeight,
-                maximumValue = maxContentRowHeight
+            (configuration.screenHeightDp * 0.38f).dp.coerceIn(
+                minimumValue = minRestingRowHeight,
+                maximumValue = maxRestingRowHeight
             )
         }
+        val expandedRowHeight = restingRowHeight + shiftAmount
+
+        val contentRowHeight by animateDpAsState(
+            targetValue = if (isBrowsingRails) expandedRowHeight else restingRowHeight,
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            label = "content_row_height"
+        )
         val contentRowBottomPadding = 0.dp
 
         Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .graphicsLayer {
+                    translationY = heroOffsetY.toPx()
+                    alpha = heroAlpha
+                }
                 .padding(
                     top = heroTopPadding,
                     start = heroStartPadding,
@@ -2189,11 +2214,11 @@ private fun DetailsContent(
             )
 
             Column(
-                modifier = Modifier.width(360.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+                modifier = Modifier.width(420.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -2211,7 +2236,7 @@ private fun DetailsContent(
                     )
 
                     if (displayDate.isNotEmpty()) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
                         Text(
                             text = displayDate,
                             style = ArflixTypography.caption.copy(
@@ -2225,7 +2250,7 @@ private fun DetailsContent(
                     }
 
                     if (hasDuration) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
                         Text(
                             text = item.duration,
                             style = ArflixTypography.caption.copy(
@@ -2239,7 +2264,7 @@ private fun DetailsContent(
                     }
 
                     item.contentRating?.let { contentRating ->
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
                         Text(
                             text = contentRating,
                             style = ArflixTypography.caption.copy(
@@ -2325,13 +2350,13 @@ private fun DetailsContent(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             val displayOverview = item.overview
 
             Box(
                 modifier = Modifier
-                    .width(360.dp)
+                    .width(420.dp)
                     .heightIn(max = overviewMaxHeight)
             ) {
                 Text(
@@ -2339,7 +2364,7 @@ private fun DetailsContent(
                     style = ArflixTypography.body.copy(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Normal,
-                        lineHeight = 15.sp,
+                        lineHeight = 16.sp,
                         shadow = textShadow
                     ),
                     color = Color.White.copy(alpha = 0.9f),
@@ -2358,7 +2383,7 @@ private fun DetailsContent(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val playButtonLabel = if (!playLabel.isNullOrBlank()) {
@@ -3876,11 +3901,11 @@ private fun PremiumActionButton(
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.3.sp
     )
-    val iconSize = if (isIconOnly) 20.dp else 16.dp
+    val iconSize = 20.dp
     val expandedPadding = 12.dp
     val collapsedPadding = 0.dp
     val labelSpacing = 8.dp
-    val labelExtraWidth = 12.dp
+    val labelExtraWidth = 6.dp
     val showLabel = isFocused && text.isNotBlank()
 
     val labelWidthPx = remember(text, density) {
@@ -3889,15 +3914,15 @@ private fun PremiumActionButton(
         }
     }
     val labelWidthDp = with(density) { labelWidthPx.toDp() }
-    val targetPadding = if (showLabel || !isIconOnly) expandedPadding else collapsedPadding
+    val targetPadding = if (showLabel) expandedPadding else collapsedPadding
     val horizontalPadding by animateDpAsState(
         targetValue = targetPadding,
         animationSpec = tween(140),
         label = "button_padding"
     )
-    val baseWidth = iconSize + targetPadding * 2
+    val baseWidth = iconSize + (if (showLabel) targetPadding * 2 else 0.dp)
     val expandedWidth = baseWidth + labelSpacing + labelWidthDp + labelExtraWidth
-    val targetWidth = if (showLabel) expandedWidth else baseWidth
+    val targetWidth = if (showLabel) expandedWidth else iconSize
     val animatedWidth by animateDpAsState(
         targetValue = targetWidth,
         animationSpec = tween(
@@ -3981,7 +4006,6 @@ private fun PremiumActionButton(
         contentAlignment = contentAlignment
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(labelSpacing)
         ) {
@@ -3991,7 +4015,7 @@ private fun PremiumActionButton(
                 tint = contentColor,
                 modifier = Modifier.size(iconSize)
             )
-            if (text.isNotEmpty()) {
+            if (text.isNotEmpty() && (showLabel || labelAlpha > 0.01f)) {
                 Text(
                     text = text,
                     style = textStyle,

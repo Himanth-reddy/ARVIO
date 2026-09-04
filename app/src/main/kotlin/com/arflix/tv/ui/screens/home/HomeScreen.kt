@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -1437,17 +1438,18 @@ private fun HeroSection(
     // Use primary shadow for text (Compose only supports one shadow per text)
     // But the frosted pill provides additional protection
     val textShadow = textShadowPrimary
-    val heroTextWidth = 360.dp
+    val heroTextWidth = 420.dp
+    val configuration = LocalConfiguration.current
+    val isCompactHeight = configuration.screenHeightDp < 720
+    val logoHeight = if (isCompactHeight) 64.dp else 72.dp
 
     Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.Bottom
+        modifier = modifier
     ) {
         // Performance: Instant logo transition, no animation overhead
         key(logoUrl, item.id) {
             val currentLogoUrl = logoUrl
             val currentItem = item
-            val configuration = LocalConfiguration.current
             val showInCinema = remember(currentItem.releaseDate, currentItem.mediaType) {
                 isInCinema(currentItem)
             }
@@ -1457,7 +1459,7 @@ private fun HeroSection(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Box(
-                    modifier = Modifier.height(72.dp),
+                    modifier = Modifier.height(logoHeight),
                     contentAlignment = Alignment.CenterStart
                 ) {
                     if (currentLogoUrl != null) {
@@ -1587,10 +1589,10 @@ private fun HeroSection(
 
                     Column(
                         modifier = Modifier.width(heroTextWidth),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -1613,7 +1615,7 @@ private fun HeroSection(
                                             fontSize = 13.sp,
                                             shadow = textShadow
                                         ),
-                                        color = Color.White.copy(alpha = 0.7f)
+                                        color = Color.White.copy(alpha = 0.6f)
                                     )
                                 }
                             }
@@ -1641,7 +1643,7 @@ private fun HeroSection(
                                             fontSize = 13.sp,
                                             shadow = textShadow
                                         ),
-                                        color = Color.White.copy(alpha = 0.7f)
+                                        color = Color.White.copy(alpha = 0.6f)
                                     )
                                 }
                                 Text(
@@ -1676,9 +1678,10 @@ private fun HeroSection(
                                         imageLoader = metadataLogoImageLoader,
                                         contentDescription = stringResource(R.string.home_cd_primary_provider),
                                         contentScale = ContentScale.Fit,
+                                        alignment = Alignment.CenterStart,
                                         modifier = Modifier
                                             .height(16.dp)
-                                            .width(58.dp)
+                                            .width(52.dp)
                                     )
 
                                     if (hasRatingMetadata || hasBudgetMetadata) {
@@ -1698,8 +1701,8 @@ private fun HeroSection(
                                         rating = rating,
                                         imageLoader = metadataLogoImageLoader,
                                         ratingFontSize = 13,
-                                        logoWidth = 36.dp,
-                                        logoHeight = 15.dp,
+                                        logoWidth = 28.dp,
+                                        logoHeight = 14.dp,
                                         textShadow = textShadow
                                     )
 
@@ -1734,18 +1737,18 @@ private fun HeroSection(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Overview text (EPG data for IPTV, synopsis for movies/shows)
                 val displayOverview = remember(overviewOverride, currentItem.overview) {
                     cleanOverviewText(overviewOverride ?: currentItem.overview)
                 }
 
-                val overviewMaxHeight = 72.dp
+                val overviewMaxHeight = if (isCompactHeight) 48.dp else 56.dp
                 Box(
                     modifier = Modifier
-                        .width(360.dp)
-                        .height(overviewMaxHeight)
+                        .width(heroTextWidth)
+                        .heightIn(max = overviewMaxHeight)
                 ) {
                     Text(
                         text = displayOverview,
@@ -1756,7 +1759,7 @@ private fun HeroSection(
                             shadow = textShadow
                         ),
                         color = Color.White.copy(alpha = 0.9f),
-                        maxLines = 4,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -1845,16 +1848,12 @@ private fun HomeHeroLayer(
     } else {
         // TV hero: full-screen overlay with clearlogo
         val configuration = LocalConfiguration.current
-        val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(240.dp, 320.dp)
-        val contentRowBottomPadding = 12.dp
-        val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
-        val buttonsBottomPadding = contentRowTopPadding - 10.dp
-        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 34.dp else 34.dp
+        val isCompactHeight = configuration.screenHeightDp < 720
+        val heroTopPadding = AppTopBarContentTopInset + if (isCompactHeight) 10.dp else 16.dp
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = AppTopBarContentTopInset)
                 .zIndex(3f)
         ) {
             heroItem?.let { item ->
@@ -1865,12 +1864,12 @@ private fun HomeHeroLayer(
                         overviewOverride = heroOverviewOverride,
                         showBudget = showBudget,
                         modifier = Modifier
-                            .align(Alignment.BottomStart)
+                            .align(Alignment.TopStart)
                             .padding(
+                                top = heroTopPadding,
                                 start = contentStartPadding,
                                 end = 400.dp
                             )
-                            .offset(y = -heroBottomPadding)
                     )
                 }
             }
