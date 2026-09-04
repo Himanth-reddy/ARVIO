@@ -1394,6 +1394,9 @@ class SettingsViewModel @Inject constructor(
             mediaRepository.contentLanguage = lang
             _uiState.value = _uiState.value.copy(contentLanguage = lang)
             syncLocalStateToCloud(silent = true)
+
+            // Refresh the Launcher "Keep watching" with the new language
+            launcherContinueWatchingRepository.refreshForCurrentProfile()
         }
     }
 

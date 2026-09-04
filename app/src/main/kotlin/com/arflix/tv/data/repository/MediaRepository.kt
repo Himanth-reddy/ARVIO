@@ -118,7 +118,10 @@ class MediaRepository @Inject constructor(
     @Volatile
     var contentLanguage: String = "en-US"
         set(value) {
-            field = value.ifBlank { "en-US" }.replace("iw", "he").replace('_', '-')
+            val normalized = value.ifBlank { "en-US" }.replace("iw", "he").replace('_', '-')
+            if (field == normalized) return
+            field = normalized
+            clearMediaCache()
         }
 
     // === IN-MEMORY CACHE FOR PERFORMANCE ===
@@ -2961,6 +2964,38 @@ class MediaRepository @Inject constructor(
         }
         cacheFullDetailsItem(item)
         return item
+    }
+
+    /**
+     * Lightweight calls for LauncherContinueWatchingRepository to avoid heavy IMDb rating/caching tasks.
+     */
+    suspend fun getLightweightMovieTitle(movieId: Int, language: String = contentLanguage): String? {
+        return runCatching {
+            tmdbApi.getMovieDetails(movieId, apiKey, language = language).title
+        }.getOrNull()
+    }
+
+    suspend fun getLightweightTvTitle(tvId: Int, language: String = contentLanguage): String? {
+        return runCatching {
+            // TMDB uses 'name' for series instead of 'title'
+            tmdbApi.getTvDetails(tvId, apiKey, language = language).name
+        }.getOrNull()
+    }
+
+    suspend fun getLightweightEpisodeTitle(
+        tvId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        language: String = contentLanguage
+    ): String? {
+        return runCatching {
+            tmdbApi.getTvSeason(
+                tvId = tvId,
+                seasonNumber = seasonNumber,
+                apiKey = apiKey,
+                language = language
+            ).episodes.firstOrNull { it.episodeNumber == episodeNumber }?.name
+        }.getOrNull()
     }
 
     /**
