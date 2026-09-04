@@ -260,6 +260,22 @@ private fun Map<String, String>.safePlaybackHeaders(): Map<String, String> {
 }
 
 /**
+ * Resolves a [PlayerMessage] against the app language. Nested messages (e.g. the reference-source
+ * label inside a match status) are resolved first so they are localized too.
+ */
+@Composable
+private fun PlayerMessage.localizedText(): String = when (this) {
+    is PlayerMessage.Raw -> text
+    is PlayerMessage.Res -> {
+        val args = mutableListOf<Any>()
+        formatArgs.forEach { arg ->
+            args += if (arg is PlayerMessage) arg.localizedText() else arg
+        }
+        stringResource(resourceId, *args.toTypedArray())
+    }
+}
+
+/**
  * Netflix-style Player UI for Android TV
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -661,7 +677,7 @@ fun PlayerScreen(
     var startupSameSourceRefreshAttempted by remember { mutableStateOf(false) }
     var startupUrlLock by remember { mutableStateOf<String?>(null) }
     var pendingStartupFailover by remember { mutableStateOf(false) }
-    var pendingStartupFailoverMessage by remember { mutableStateOf<String?>(null) }
+    var pendingStartupFailoverMessage by remember { mutableStateOf<PlayerMessage?>(null) }
     var pendingStartupFailureRecorded by remember { mutableStateOf(false) }
     var dvStartupFallbackStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var midPlaybackRecoveryAttempts by remember { mutableIntStateOf(0) }
@@ -900,13 +916,13 @@ fun PlayerScreen(
 
         val sourceSearchStillActive = uiState.sourceSearchActive ||
             uiState.streamProgress != null ||
-            !uiState.streamLoadPhase.isNullOrBlank()
+            uiState.streamLoadPhase != null
         if (!sourceSearchStillActive && !playbackIssueReported) {
             playbackIssueReported = true
             pendingStartupFailover = false
             viewModel.reportPlaybackError(
                 pendingStartupFailoverMessage
-                    ?: context.getString(R.string.player_fail_startup_generic)
+                    ?: PlayerMessage.Res(R.string.player_fail_startup_generic)
             )
         }
     }
@@ -1368,14 +1384,14 @@ fun PlayerScreen(
                             }
                             val sourceSearchStillActive = latestUiState.sourceSearchActive ||
                                 latestUiState.streamProgress != null ||
-                                !latestUiState.streamLoadPhase.isNullOrBlank()
+                                latestUiState.streamLoadPhase != null
                             if (!hasPlaybackStarted &&
                                 allowStartupSourceFallback &&
                                 !userSelectedSourceManually &&
                                 sourceSearchStillActive
                             ) {
                                 pendingStartupFailover = true
-                                pendingStartupFailoverMessage = playbackErrorMessageFor(context, error, hasPlaybackStarted)
+                                pendingStartupFailoverMessage = playbackErrorMessageFor(error, hasPlaybackStarted)
                                 if (!pendingStartupFailureRecorded) {
                                     pendingStartupFailureRecorded = true
                                     viewModel.onSelectedStreamPlaybackFailure()
@@ -1389,7 +1405,7 @@ fun PlayerScreen(
                             if (!playbackIssueReported) {
                                 playbackIssueReported = true
                                 viewModel.onSelectedStreamPlaybackFailure()
-                                viewModel.reportPlaybackError(playbackErrorMessageFor(context, error, hasPlaybackStarted))
+                                viewModel.reportPlaybackError(playbackErrorMessageFor(error, hasPlaybackStarted))
                             }
                         }
                     }
@@ -2619,9 +2635,9 @@ fun PlayerScreen(
                     viewModel.onSelectedStreamPlaybackFailure()
                     viewModel.reportPlaybackError(
                         if (autoAdvanceAttempts > 0 || startupSameSourceRetryCount > 0) {
-                            context.getString(R.string.player_fail_no_start_after_retries)
+                            PlayerMessage.Res(R.string.player_fail_no_start_after_retries)
                         } else {
-                            context.getString(R.string.player_fail_no_start_in_time)
+                            PlayerMessage.Res(R.string.player_fail_no_start_in_time)
                         }
                     )
                 }
@@ -2713,7 +2729,7 @@ fun PlayerScreen(
                         playbackIssueReported = true
                         viewModel.onSelectedStreamPlaybackFailure()
                         viewModel.reportPlaybackError(
-                            context.getString(R.string.player_fail_render_failed)
+                            PlayerMessage.Res(R.string.player_fail_render_failed)
                         )
                     }
                 }
@@ -3523,7 +3539,7 @@ fun PlayerScreen(
                                     )
                                 } else stringResource(phaseRes)
                             }
-                        ?: uiState.streamLoadPhase
+                        ?: uiState.streamLoadPhase?.localizedText()
                 )
             }
         }
@@ -3624,9 +3640,8 @@ fun PlayerScreen(
                     color = androidx.compose.ui.graphics.Color(0xFF7EC8F0)
                 )
                 Text(
-                    text = uiState.matchStatusText.ifBlank {
-                        stringResource(R.string.player_subtitle_searching_match)
-                    },
+                    text = uiState.matchStatus?.localizedText()
+                        ?: stringResource(R.string.player_subtitle_searching_match),
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                 )
@@ -3636,7 +3651,7 @@ fun PlayerScreen(
         // AI translation API error toast
         uiState.aiErrorToast?.let { msg ->
             Toast(
-                message = msg,
+                message = msg.localizedText(),
                 type = ToastType.ERROR,
                 isVisible = true,
                 durationMs = 5000,
@@ -3666,7 +3681,7 @@ fun PlayerScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = msg,
+                    text = msg.localizedText(),
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                 )
@@ -4584,7 +4599,7 @@ fun PlayerScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = uiState.error ?: stringResource(R.string.player_error_generic),
+                        text = uiState.error?.localizedText() ?: stringResource(R.string.player_error_generic),
                         style = ArflixTypography.body,
                         color = TextSecondary,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -6213,11 +6228,10 @@ private fun estimateInitialStartupTimeoutMs(
 }
 
 private fun playbackErrorMessageFor(
-    context: android.content.Context,
     error: androidx.media3.common.PlaybackException,
     hasPlaybackStarted: Boolean
-): String {
-    val reason = context.getString(
+): PlayerMessage {
+    val reason = PlayerMessage.Res(
         when (error.errorCode) {
             androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
             androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
@@ -6241,11 +6255,14 @@ private fun playbackErrorMessageFor(
         }
     )
 
-    return if (hasPlaybackStarted) {
-        context.getString(R.string.player_err_try_another, reason)
-    } else {
-        context.getString(R.string.player_err_startup_try_another, reason)
-    }
+    return PlayerMessage.Res(
+        if (hasPlaybackStarted) {
+            R.string.player_err_try_another
+        } else {
+            R.string.player_err_startup_try_another
+        },
+        listOf(reason)
+    )
 }
 
 /**

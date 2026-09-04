@@ -949,6 +949,38 @@
     <string name="player_skip_recap">Skip Recap</string>
     <string name="player_skip_ending">Skip Ending</string>
     <string name="player_skip">Skip</string>
+    <!-- Player: loading phases, playback errors and subtitle match results (PlayerViewModel) -->
+    <string name="player_phase_preparing_stream">Preparing stream</string>
+    <string name="player_phase_preparing_sources">Preparing sources</string>
+    <string name="player_phase_searching_sources">Searching %1$d/%2$d sources</string>
+    <string name="player_phase_found_sources">Found %1$d sources (%2$d/%3$d)</string>
+    <string name="player_error_magnet_unsupported">Selected source is P2P (magnet) and not supported. Choose an HTTP/debrid source.</string>
+    <string name="player_error_open_source_failed">Failed to open selected source. Try another one.</string>
+    <string name="player_error_no_streaming_addons">No streaming addons configured.\n\nGo to Settings → Addons to add a streaming addon, then come back and try again.</string>
+    <string name="player_error_no_streams_from_addons">No streams found for this content. The addons may not have sources for this title.</string>
+    <string name="player_error_no_streams_media_servers">No streams found for this content. The configured media servers may not have this title.</string>
+    <string name="player_error_no_streams_other_source">No streams found for this content. Try another source or check your configured sources.</string>
+    <string name="player_error_resolve_stream_failed">Failed to resolve stream. Try another source.</string>
+    <string name="player_error_p2p_needs_torrserver">P2P stream requires TorrServer. Install TorrServer and set its URL in Settings &gt; Addons.</string>
+    <string name="player_match_source_builtin">Built-in</string>
+    <string name="player_match_source_hearing">Hearing</string>
+    <string name="player_match_finding">Finding best subtitle…</string>
+    <string name="player_match_finding_source">Finding best subtitle (%1$s)…</string>
+    <string name="player_match_waiting_for_speech">Searching for a match (%1$s) — waiting for speech…</string>
+    <string name="player_match_collecting_reference">Searching for a match (%1$s) — (%2$d)</string>
+    <string name="player_match_scanning_subtitles">Searching for a match (%1$s) — scanning subtitles… (%2$d)</string>
+    <string name="player_match_embedded">Matched: embedded %1$s subtitle (in sync)</string>
+    <string name="player_match_remembered">Matched: %1$s (remembered)</string>
+    <string name="player_match_remembered_offset">Matched: %1$s (remembered) (auto-offset %2$s)</string>
+    <string name="player_match_exact_release_name">Matched: %1$s (exact release name)</string>
+    <string name="player_match_sync_unverified">Selected %1$s (sync unverified)</string>
+    <string name="player_match_scored">Matched: %1$s · %2$d%% (%3$s)</string>
+    <string name="player_match_scored_offset">Matched: %1$s · %2$d%% (%3$s) (auto-offset %4$s)</string>
+    <string name="player_match_none_keeping_ai">No well-synced subtitle found — keeping AI translation</string>
+    <string name="player_match_none_score_keeping_ai">No well-synced subtitle found (best %1$d%%) — keeping AI translation</string>
+    <string name="player_match_none_using_ai">No well-synced subtitle found — using AI translation</string>
+    <string name="player_match_none_language">No well-synced %1$s subtitle found</string>
+    <string name="player_match_none_language_score">No well-synced %1$s subtitle found (best %2$d%%)</string>
 
     <!-- Extracted from code: Live TV -->
     <string name="live_badge_live">LIVE</string>
