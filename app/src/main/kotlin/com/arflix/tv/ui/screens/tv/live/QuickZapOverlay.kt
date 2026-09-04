@@ -48,9 +48,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
@@ -58,6 +60,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvNowNext
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 
 /**
  * Helper to flat list categories with items.
@@ -127,6 +130,7 @@ fun QuickZapOverlay(
     var originalCategoryId by remember { mutableStateOf(selectedCategoryId) }
 
     val focusRequester = remember { FocusRequester() }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     LaunchedEffect(visible) {
         if (visible) {
@@ -167,8 +171,11 @@ fun QuickZapOverlay(
                 .focusable()
                 .onKeyEvent { ev ->
                     if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    // The category / channel columns mirror in RTL, so swap the
+                    // physical Left/Right keys to keep the logic below LTR.
+                    val logicalKey = ev.key.mirrorHorizontalForRtl(isRtl)
                     if (categoryListFocused) {
-                        when (ev.key) {
+                        when (logicalKey) {
                             Key.DirectionUp -> {
                                 if (categories.isNotEmpty()) {
                                     selectedCategoryIndex = (selectedCategoryIndex - 1 + categories.size) % categories.size
@@ -195,7 +202,7 @@ fun QuickZapOverlay(
                             else -> false
                         }
                     } else {
-                        when (ev.key) {
+                        when (logicalKey) {
                             Key.DirectionUp -> {
                                 if (channels.isNotEmpty()) {
                                     selectedChannelIndex = (selectedChannelIndex - 1 + channels.size) % channels.size

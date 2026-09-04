@@ -53,6 +53,24 @@ fun isArvioDpadNavigationKey(key: Key): Boolean {
         key == Key.DirectionDown
 }
 
+/**
+ * Mirrors a horizontal D-pad key when the layout direction is RTL.
+ *
+ * In an RTL locale the IPTV screen's visuals are mirrored by Compose, but its
+ * navigation code is written against an LTR mental model (Left = toward the
+ * sidebar / earlier, Right = deeper / later). Feeding the mirrored key into that
+ * code keeps focus movement pointing the same way the eye expects. Vertical and
+ * non-directional keys pass through untouched.
+ */
+fun Key.mirrorHorizontalForRtl(isRtl: Boolean): Key {
+    if (!isRtl) return this
+    return when (this) {
+        Key.DirectionLeft -> Key.DirectionRight
+        Key.DirectionRight -> Key.DirectionLeft
+        else -> this
+    }
+}
+
 @Stable
 class ArvioDpadRepeatGate(
     private val horizontalMinRepeatIntervalMs: Long,

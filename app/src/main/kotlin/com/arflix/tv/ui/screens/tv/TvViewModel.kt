@@ -1327,6 +1327,17 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    fun moveFavoriteChannelUp(channelId: String) = moveFavoriteChannel(channelId, -1)
+
+    fun moveFavoriteChannelDown(channelId: String) = moveFavoriteChannel(channelId, +1)
+
+    private fun moveFavoriteChannel(channelId: String, delta: Int) {
+        viewModelScope.launch {
+            iptvRepository.moveFavoriteChannel(channelId, delta)
+            scheduleIptvCloudSync()
+        }
+    }
+
     fun toggleHiddenGroup(groupName: String) {
         toggleHiddenGroup(null, groupName)
     }

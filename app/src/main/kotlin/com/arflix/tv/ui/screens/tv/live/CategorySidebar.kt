@@ -72,9 +72,11 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
@@ -83,6 +85,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -131,6 +134,7 @@ fun CategorySidebar(
     val selectedCategoryFocusRequester = remember { FocusRequester() }
     val firstCategoryFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     fun openCategoryMenu(category: LiveCategory, hidden: Boolean) {
         val groupName = category.playlistGroupName ?: return
@@ -267,13 +271,16 @@ fun CategorySidebar(
                 }
             }
             .onPreviewKeyEvent { ev ->
+                // RTL mirrors the sidebar to the right edge, so the physical
+                // Left/Right keys drive the opposite logical action here.
+                val logicalKey = ev.key.mirrorHorizontalForRtl(isRtl)
                 val menu = activeMenu
                 if (menu != null && activeMenuActions.isNotEmpty()) {
                     val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.Menu
                     if (ev.type != KeyEventType.KeyDown) {
                         return@onPreviewKeyEvent isSelect
                     }
-                    return@onPreviewKeyEvent when (ev.key) {
+                    return@onPreviewKeyEvent when (logicalKey) {
                         Key.DirectionUp -> {
                             activeMenu = menu.copy(focusedIndex = (menu.focusedIndex - 1).coerceAtLeast(0))
                             true
@@ -295,7 +302,7 @@ fun CategorySidebar(
                 }
                 if (ev.type != KeyEventType.KeyDown) {
                     false
-                } else when (ev.key) {
+                } else when (logicalKey) {
                     Key.DirectionLeft -> true
                     Key.DirectionRight -> {
                         onMoveRight()

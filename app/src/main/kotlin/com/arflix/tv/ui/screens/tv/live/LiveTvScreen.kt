@@ -65,7 +65,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -103,6 +105,7 @@ import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.components.topBarSelectedIndex
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import com.arflix.tv.util.LocalDeviceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -129,6 +132,13 @@ private enum class LiveTvFocusZone {
     CHANNEL_LIST,
     EPG,
 }
+
+/**
+ * Gap that ends a held-OK press storm. Measured repeat interval on device is ~33ms and
+ * remotes sit around 50-100ms, while a deliberate second press is several hundred ms
+ * away — so this cleanly separates "still holding" from "pressed again".
+ */
+private const val SelectRepeatBurstGapMs = 250L
 
 private const val GuideInitialWindowRows = 48
 private const val GuidePageRows = 48
@@ -166,10 +176,17 @@ private fun chooseStartupChannelId(
     favoriteChannelIds: List<String>,
     isFullyEnriched: Boolean,
 ): String? {
+    // Prefer the in-window match so the guide can also scroll to it.
     explicitInitialChannelId
         ?.takeIf { id -> id in filteredChannelIds }
         ?.let { return it }
-    if (explicitInitialChannelId != null && !isFullyEnriched) return null
+    // Still honour it when it is NOT in the window. A caller-supplied channel (Home's
+    // Favorite TV row, launcher deep links) is an instruction, not a hint, and on a large
+    // playlist it is routinely outside the current paged category window. Falling through
+    // from here tuned `filteredChannels.first()` — a completely unrelated channel — which
+    // is what made picking a favourite on Home open channel #1 instead. The screen
+    // hydrates an out-of-window channel by id from the store, so this is safe to return.
+    if (explicitInitialChannelId != null) return explicitInitialChannelId
 
     favoriteChannelIds
         .firstOrNull { id -> id in filteredChannelIds }
@@ -428,6 +445,9 @@ fun LiveTvScreen(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val configuration = LocalConfiguration.current
+    // Hebrew/Arabic mirror the layout; the D-pad handlers below are written for
+    // LTR, so physical Left/Right are swapped through mirrorHorizontalForRtl.
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val deviceType = LocalDeviceType.current
     val isTouchDevice = deviceType.isTouchDevice()
     val useTouchRail = isTouchDevice && configuration.smallestScreenWidthDp < 600
@@ -452,6 +472,13 @@ fun LiveTvScreen(
     var selectedProviderId by rememberSaveable { mutableStateOf("all") }
     val recents = remember { mutableStateOf<LinkedHashSet<String>>(LinkedHashSet()) }
     val favSet = remember(state.snapshot.favoriteChannels) { state.snapshot.favoriteChannels.toSet() }
+    // The ordered list, kept separately from favSet: a Set compares equal after a reorder,
+    // so anything keyed on favSet alone never notices "move up/down" and the favourites
+    // rail keeps its old order.
+    val favoriteOrderIds = state.snapshot.favoriteChannels
+    val favoriteRank = remember(favoriteOrderIds) {
+        favoriteOrderIds.withIndex().associate { (index, id) -> id to index }
+    }
     val hiddenGroupSet = remember(state.snapshot.hiddenGroups) { state.snapshot.hiddenGroups.toSet() }
     LaunchedEffect(state.tvSession.recentChannelIds, state.tvSession.lastChannelId) {
         val persistedRecents = state.tvSession.recentChannelIds
@@ -482,7 +509,7 @@ fun LiveTvScreen(
     LaunchedEffect(selectedProviderId, selectedCategoryId) {
         pagedLoadedLimit = GuideMaxWindowRows
     }
-    LaunchedEffect(state.snapshot.channels, selectedCategoryId, favSet, recents.value, hiddenGroupSet, state.snapshot.groupOrder, pagedLoadedLimit) {
+    LaunchedEffect(state.snapshot.channels, selectedCategoryId, favoriteOrderIds, recents.value, hiddenGroupSet, state.snapshot.groupOrder, pagedLoadedLimit) {
         val snapshot = state.snapshot.channels
         var pagedTotal = withContext(Dispatchers.IO) {
             if (viewModel.iptvRepository.pagedChannelsReady()) {
@@ -565,14 +592,17 @@ fun LiveTvScreen(
                 }
             }
             val previousFavoriteRows = if (selectedCategoryId == "fav") {
-                enrichedState.value.index.channelsFor("fav", favSet, recents.value)
+                enrichedState.value.index.channelsFor("fav", favoriteOrderIds, recents.value)
             } else {
                 emptyList()
             }
             val window = withContext(Dispatchers.IO) {
+                // pagedChannelsByIds returns SQLite row order, which has nothing to do with
+                // the user's favourites order — restore it here so "move up/down" is visible.
                 val indexedFavoriteChannels = viewModel.iptvRepository
                     .pagedChannelsByIds(favSet)
                     .filterNot { isAdultGroup(it.group, it.name) }
+                    .sortedBy { favoriteRank[it.id] ?: Int.MAX_VALUE }
                 val favoriteChannels = if (indexedFavoriteChannels.isNotEmpty() || previousFavoriteRows.isEmpty()) {
                     indexedFavoriteChannels
                 } else {
@@ -851,7 +881,10 @@ fun LiveTvScreen(
         visibleEnrichedState.value.index,
         visibleEnrichedState.value.tree,
         selectedCategoryId,
-        favSet,
+        // Ordered list, not favSet: channelsFor() below emits favourites in the order it
+        // is handed, but a Set key compares equal after a reorder, so this effect never
+        // re-ran and "move up/down" left the rail visually unchanged.
+        favoriteOrderIds,
         recentsFilterKey,
         pagedLoadedLimit,
         state.snapshot.sortOrder,
@@ -1080,6 +1113,25 @@ fun LiveTvScreen(
             indexedPlayingChannel != null -> indexedPlayingChannel
             retainedPlayingChannel?.id == playingChannelId -> retainedPlayingChannel
             else -> retainedPlayingChannel
+        }
+    }
+    // A channel handed to us by id (Home's Favorite TV row, launcher deep links) is
+    // usually outside the currently paged category window, so neither the category
+    // index nor filteredChannels can resolve it. Without the channel object we have no
+    // source to hand IptvRepository, playback falls back to the unresolved raw URL and
+    // tunes the wrong stream. Hydrate it straight from the SQLite channel store.
+    LaunchedEffect(playingChannelId, indexedPlayingChannel) {
+        val id = playingChannelId ?: return@LaunchedEffect
+        if (indexedPlayingChannel != null || retainedPlayingChannel?.id == id) return@LaunchedEffect
+        val hydrated = withContext(Dispatchers.IO) {
+            runCatching {
+                viewModel.iptvRepository.pagedChannelsByIds(listOf(id)).firstOrNull()
+            }.getOrNull()
+        } ?: return@LaunchedEffect
+        if (playingChannelId == id && retainedPlayingChannel?.id != id) {
+            retainedPlayingChannel = hydrated.enrichForFastStartup(
+                hydrated.providerChannelNumber?.trim()?.toIntOrNull() ?: 1
+            )
         }
     }
     val playingChannel = indexedPlayingChannel ?: retainedPlayingChannel?.takeIf { it.id == playingChannelId }
@@ -1444,7 +1496,10 @@ fun LiveTvScreen(
             val startupChannelId = chooseStartupChannelId(
                 filteredChannels = filteredChannels,
                 filteredChannelIds = filteredChannelIndexById.keys,
-                explicitInitialChannelId = initialChannelId?.takeIf { selectedProviderId == "all" || it in visibleEnrichedState.value.index.byId },
+                // Passed through as-is: selectedProviderId is rememberSaveable, so a
+                // provider filter left over from an earlier visit used to discard the
+                // channel the caller explicitly asked for and fall back to channel #1.
+                explicitInitialChannelId = initialChannelId,
                 sessionLastChannelId = state.tvSession.lastChannelId,
                 hasOpenedBefore = state.tvSession.lastOpenedAt > 0L,
                 favoriteChannelIds = state.snapshot.favoriteChannels,
@@ -1501,10 +1556,43 @@ fun LiveTvScreen(
     var focusCategoryRailSignal by remember { mutableIntStateOf(0) }
     // Full-screen playback mode — pressing OK on an EPG row expands the
     // mini-player to cover the whole screen. Back collapses back to the grid.
-    var isFullScreen by rememberSaveable { mutableStateOf(initialStreamUrl != null) }
+    //
+    // Being handed a specific channel (Home's Favorite TV row, launcher deep links)
+    // means "play this now", so open straight into fullscreen. This used to key off
+    // initialStreamUrl, which forced callers to pass a raw URL just to get autoplay.
+    var isFullScreen by rememberSaveable {
+        mutableStateOf(initialChannelId != null || initialStreamUrl != null)
+    }
+    // Set while we are still in that launched-to-play session. Backing out of it should
+    // return to whoever launched us (Home), not strand the user in the Live TV guide
+    // they never asked for. Cleared on the first exit so later fullscreen sessions
+    // collapse to the guide as normal.
+    var returnToCallerOnFullscreenExit by rememberSaveable {
+        mutableStateOf(initialChannelId != null || initialStreamUrl != null)
+    }
     var fullscreenGuideOpen by remember { mutableStateOf(false) }
     var quickZapOpen by remember { mutableStateOf(false) }
     var variantPickerChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
+    // Channel long-press menu (favourite, reorder favourites, quality variants).
+    var channelMenu by remember { mutableStateOf<ChannelMenuState?>(null) }
+    // True once the current OK hold has already opened the menu. Lives on the screen, not
+    // on ChannelRow: the row is a LazyColumn item and opening the menu rebuilds the list,
+    // so a latch stored per-row was recycled mid-hold — every later repeat re-fired the
+    // long press (menu flickering open/closed) and the release still read as a click
+    // (channel opened). Screen-level state survives the rebuild.
+    var selectGestureHandled by remember { mutableStateOf(false) }
+    // Holding OK does NOT stay one key press. After the first genuine auto-repeat burst
+    // (repeat=0,1,2 sharing a downTime) the platform starts emitting a stream of brand new
+    // press/release pairs — each with its own downTime and repeat=0, ~33ms apart — which
+    // are byte-for-byte identical to deliberate short clicks. Captured from a real 3s hold:
+    //   DOWN r=0 down=16034223 / DOWN r=1 / DOWN r=2 / UP        <- the actual press
+    //   DOWN r=0 down=16034724 / UP  <- picked a menu item
+    //   DOWN r=0 down=16034757 / UP  <- tuned the channel
+    // No repeatCount test can separate those from real presses, so gate on time instead:
+    // once a hold has been recognised, swallow select keys until the stream goes quiet.
+    // Nobody presses OK twice inside SelectRepeatBurstGapMs.
+    var selectBurstActive by remember { mutableStateOf(false) }
+    var lastSelectEventAtMs by remember { mutableLongStateOf(0L) }
     // A second selection on the currently playing programme offers Watch Live
     // and, only after a confident movie/series match, Stream Now.
     var programActionDialog by remember { mutableStateOf<ProgramActionData?>(null) }
@@ -1725,6 +1813,16 @@ fun LiveTvScreen(
     }
 
     fun exitFullScreenPlayback() {
+        // Launched straight into playback from elsewhere — hand control back to that
+        // caller instead of dropping the user into the guide. Every fullscreen Back
+        // path routes through here, so this covers the key handlers too.
+        if (returnToCallerOnFullscreenExit) {
+            returnToCallerOnFullscreenExit = false
+            fullscreenGuideOpen = false
+            isFullScreen = false
+            onBack()
+            return
+        }
         val returnFocusChannelId = playingChannelId ?: focusedChannelId
         fullscreenGuideOpen = false
         isFullScreen = false
@@ -1742,6 +1840,22 @@ fun LiveTvScreen(
         if (variantCountFor(channel, variantGroups) > 1) {
             variantPickerChannel = channel
         }
+    }
+
+    fun openChannelMenu(channel: EnrichedChannel, fromKeyHold: Boolean = false) {
+        noteGuideUserNavigation()
+        // A held OK keeps auto-repeating after this fires. Suppress every select key
+        // until the user actually lets go, otherwise those repeats land on the menu that
+        // just opened and immediately pick whatever is focused. Checking "is the menu
+        // open?" instead is a race: that guard reads channelMenuActions, a plain captured
+        // val that is only correct after recomposition, and repeats arrive sooner.
+        if (fromKeyHold) selectBurstActive = true
+        channelMenu = ChannelMenuState(
+            channelId = channel.id,
+            channelName = channel.name,
+            isFavorite = channel.id in favSet,
+            hasVariants = variantCountFor(channel, variantGroups) > 1,
+        )
     }
 
     fun playVariant(channel: EnrichedChannel) {
@@ -2547,6 +2661,30 @@ fun LiveTvScreen(
     }
 
     BackHandler(enabled = searchOpen) { searchOpen = false }
+    val channelMenuActions = channelMenu?.let { menu ->
+        buildChannelMenuActions(
+            isFavorite = menu.isFavorite,
+            hasVariants = menu.hasVariants,
+            onToggleFavorite = {
+                channelMenu = null
+                viewModel.toggleFavoriteChannel(menu.channelId)
+            },
+            onMoveUp = {
+                channelMenu = null
+                viewModel.moveFavoriteChannelUp(menu.channelId)
+            },
+            onMoveDown = {
+                channelMenu = null
+                viewModel.moveFavoriteChannelDown(menu.channelId)
+            },
+            onOpenVariants = {
+                channelMenu = null
+                visibleEnrichedState.value.index.byId[menu.channelId]?.let { openVariantPicker(it) }
+            },
+        )
+    }.orEmpty()
+
+    BackHandler(enabled = channelMenu != null) { channelMenu = null }
     BackHandler(enabled = !searchOpen && variantPickerChannel != null) { variantPickerChannel = null }
     BackHandler(enabled = !searchOpen && isFullScreen && fullscreenGuideOpen) {
         fullscreenGuideOpen = false
@@ -2580,6 +2718,97 @@ fun LiveTvScreen(
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
+                        // The channel menu is a non-focusable Popup, so the focused channel
+                        // row still receives keys. Handle it here at the outermost preview
+                        // node and swallow everything — including KeyUp — while it is open,
+                        // otherwise the row underneath navigates or opens the channel.
+                        val isSelectKey = event.key == Key.DirectionCenter || event.key == Key.Enter
+                        if (isSelectKey) {
+                            // Drop the synthetic press storm that a sustained hold turns into.
+                            // Cleared by the first select event that arrives after a real gap,
+                            // i.e. once the user has actually let go.
+                            val eventAtMs = event.nativeKeyEvent.eventTime
+                            val gapMs = eventAtMs - lastSelectEventAtMs
+                            lastSelectEventAtMs = eventAtMs
+                            if (selectBurstActive) {
+                                if (gapMs in 0..SelectRepeatBurstGapMs) {
+                                    return@onPreviewKeyEvent true
+                                }
+                                selectBurstActive = false
+                            }
+                        }
+                        val menu = channelMenu
+                        if (menu != null && channelMenuActions.isNotEmpty()) {
+                            if (event.type != KeyEventType.KeyDown) {
+                                return@onPreviewKeyEvent true
+                            }
+                            if (isSelectKey && event.nativeKeyEvent.repeatCount > 0) {
+                                return@onPreviewKeyEvent true
+                            }
+                            // Arm the burst guard so this action's own release — and any
+                            // synthetic presses behind it — cannot reach the row underneath.
+                            if (isSelectKey) selectBurstActive = true
+                            return@onPreviewKeyEvent when (event.key) {
+                                Key.DirectionUp -> {
+                                    channelMenu = menu.copy(
+                                        focusedIndex = (menu.focusedIndex - 1).coerceAtLeast(0)
+                                    )
+                                    true
+                                }
+                                Key.DirectionDown -> {
+                                    channelMenu = menu.copy(
+                                        focusedIndex = (menu.focusedIndex + 1)
+                                            .coerceAtMost(channelMenuActions.lastIndex)
+                                    )
+                                    true
+                                }
+                                Key.DirectionCenter, Key.Enter -> {
+                                    channelMenuActions
+                                        .getOrNull(menu.focusedIndex.coerceIn(0, channelMenuActions.lastIndex))
+                                        ?.onClick?.invoke()
+                                    true
+                                }
+                                Key.Back, Key.Escape -> {
+                                    channelMenu = null
+                                    true
+                                }
+                                else -> true
+                            }
+                        }
+                        // The whole OK gesture for a focused channel row is owned here.
+                        // ChannelRow cannot own it: it is a recyclable LazyColumn item, and
+                        // the list rebuilds the moment the menu opens, wiping any per-row
+                        // latch mid-hold. Press = tune, hold = menu, and every select key of
+                        // the gesture is consumed so nothing downstream sees a stray click.
+                        if (
+                            isSelectKey &&
+                            !searchOpen &&
+                            !isFullScreen &&
+                            channelMenu == null &&
+                            focusZone == LiveTvFocusZone.CHANNEL_LIST
+                        ) {
+                            val focusedChannel = focusedChannelId
+                                ?.let { id -> visibleEnrichedState.value.index.byId[id] }
+                            when {
+                                event.type == KeyEventType.KeyDown &&
+                                    event.nativeKeyEvent.repeatCount == 0 -> {
+                                    selectGestureHandled = false
+                                }
+                                event.type == KeyEventType.KeyDown && !selectGestureHandled -> {
+                                    // First auto-repeat of a held OK — that is the long press.
+                                    selectGestureHandled = true
+                                    focusedChannel?.let { openChannelMenu(it, fromKeyHold = true) }
+                                }
+                                event.type == KeyEventType.KeyUp -> {
+                                    val wasHold = selectGestureHandled
+                                    selectGestureHandled = false
+                                    if (!wasHold && focusedChannel != null) {
+                                        selectChannel(focusedChannel, displayedCurrentProgram(focusedChannel))
+                                    }
+                                }
+                            }
+                            return@onPreviewKeyEvent true
+                        }
                         if (!searchOpen && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                             digitForTvKeyCode(event.nativeKeyEvent.keyCode)?.let { digit ->
                                 return@onPreviewKeyEvent handleChannelNumberDigit(digit)
@@ -2591,7 +2820,7 @@ fun LiveTvScreen(
                         noteGuideUserNavigation()
                         when (focusZone) {
                             LiveTvFocusZone.TOPBAR -> {
-                                when (event.key) {
+                                when (event.key.mirrorHorizontalForRtl(isRtl)) {
                                     Key.DirectionLeft -> {
                                         if (topBarFocusIndex > 0) {
                                             topBarFocusIndex = (topBarFocusIndex - 1).coerceIn(0, maxTopBarIndex)
@@ -2746,10 +2975,9 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
-                        onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
+                        onChannelLongPress = { channel, fromKeyHold -> openChannelMenu(channel, fromKeyHold) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
-                        onOpenVariants = { channel -> openVariantPicker(channel) },
                         onMoveLeftFromChannels = { focusPlaylistSearch() },
                         onEnterEpg = { channel -> focusEpg(channel.id) },
                         onExitEpg = { channel -> focusChannelList(channel?.id ?: focusedChannelId ?: playingChannelId) },
@@ -2887,10 +3115,9 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
-                        onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
+                        onChannelLongPress = { channel, fromKeyHold -> openChannelMenu(channel, fromKeyHold) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
-                        onOpenVariants = { channel -> openVariantPicker(channel) },
                         onMoveLeftFromChannels = { focusPlaylistSearch() },
                         onEnterEpg = { channel -> focusEpg(channel.id) },
                         onExitEpg = { channel -> focusChannelList(channel?.id ?: focusedChannelId ?: playingChannelId) },
@@ -3301,6 +3528,22 @@ fun LiveTvScreen(
                 onDismiss = { variantPickerChannel = null },
                 onPick = { playVariant(it) },
             )
+        }
+
+        channelMenu?.let { menu ->
+            if (channelMenuActions.isNotEmpty()) {
+                ChannelContextMenu(
+                    state = menu,
+                    actions = channelMenuActions,
+                    onDismiss = { channelMenu = null },
+                    onFocusedIndexChange = { index ->
+                        channelMenu = menu.copy(
+                            focusedIndex = index.coerceIn(0, channelMenuActions.lastIndex)
+                        )
+                    },
+                    onAction = { index -> channelMenuActions.getOrNull(index)?.onClick?.invoke() },
+                )
+            }
         }
 
         ChannelNumberOverlay(

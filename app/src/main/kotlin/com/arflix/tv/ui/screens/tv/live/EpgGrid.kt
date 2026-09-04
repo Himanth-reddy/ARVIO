@@ -100,10 +100,10 @@ fun EpgGrid(
     onChannelSelect: (EnrichedChannel) -> Unit,
     onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = { channel, _ -> onChannelSelect(channel) },
     onChannelFocused: (EnrichedChannel) -> Unit = {},
-    onChannelFavoriteToggle: (String) -> Unit,
+    /** Long-press / MENU on a channel row — opens the channel menu. */
+    onChannelLongPress: (EnrichedChannel, Boolean) -> Unit = { _, _ -> },
     favorites: Set<String>,
     variantCountFor: (EnrichedChannel) -> Int = { 1 },
-    onOpenVariants: (EnrichedChannel) -> Unit = {},
     compact: Boolean = false,
     gridFocused: Boolean = false,
     onMoveLeftFromChannels: () -> Unit = {},
@@ -511,9 +511,8 @@ fun EpgGrid(
                                 },
                                 onMoveUp = { moveChannelFocus(-1) },
                                 onMoveDown = { moveChannelFocus(+1) },
-                                onFavoriteToggle = { onChannelFavoriteToggle(ch.id) },
+                                onLongPress = { fromKeyHold -> onChannelLongPress(ch, fromKeyHold) },
                                 variantCount = variantCountFor(ch),
-                                onOpenVariants = { onOpenVariants(ch) },
                                 rowHeight = rowHeight,
                                 forceFocused = gridFocused && locallyFocused,
                                 modifier = Modifier

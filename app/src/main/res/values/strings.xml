@@ -597,6 +597,13 @@
     <string name="settings_iptv_vod_search_desc">Include IPTV movies and shows when fetching streams</string>
     <string name="settings_epg_vod_actions">TV guide Stream Now</string>
     <string name="settings_epg_vod_actions_desc">Show streaming options on matched TV guide events</string>
+    <string name="live_menu_favorite_move_up">Move up</string>
+    <string name="live_menu_favorite_move_down">Move down</string>
+    <string name="live_menu_favorite_remove">Remove from favorites</string>
+    <string name="live_menu_favorite_add">Add to favorites</string>
+    <string name="live_menu_channel_variants">Quality variants</string>
+    <string name="settings_iptv_favorites_home">Favorite channels on Home</string>
+    <string name="settings_iptv_favorites_home_desc">Pin your starred IPTV channels to the top of the Home screen</string>
     <string name="settings_iptv_order_provider">Provider order</string>
     <string name="settings_iptv_order_number">Channel number</string>
     <string name="settings_iptv_order_name">Alphabetical (A-Z)</string>

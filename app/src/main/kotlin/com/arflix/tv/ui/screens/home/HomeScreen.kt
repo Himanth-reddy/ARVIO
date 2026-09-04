@@ -741,7 +741,13 @@ fun HomeScreen(
     // Use rememberSaveable to persist focus position across navigation (back from details page)
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     val fastScrollThresholdMs = 650L
-    val heroVideoIdleThresholdMs = 6_000L
+    // How long the D-pad must sit still before the hero starts a live IPTV preview.
+    // This gates only the IPTV branch of heroVideoUrl (collection MP4s skip it), so it is
+    // purely "how fast does hovering a Favorite TV card start playing". It was 6s, which
+    // read as the preview being broken rather than deliberate. 600ms still debounces
+    // scrubbing through a row — no stream is opened while the selector is actually moving —
+    // but starts as soon as the user settles on a card.
+    val heroVideoIdleThresholdMs = 600L
     val startupEffectsDelayMs = if (isMobile) 0L else 900L
     var startupEffectsSettled by remember { mutableStateOf(isMobile) }
     var suppressHeroVideoPlayback by remember { mutableStateOf(false) }
@@ -1203,7 +1209,7 @@ fun HomeScreen(
                     if (viewModel.isSportsHomeItem(item)) {
                         openSportsHomeItem(item)
                     } else if (viewModel.isIptvItem(item)) {
-                        onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
+                        onNavigateToTv(viewModel.getIptvChannelId(item), null)
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
                     } else {
@@ -1216,7 +1222,7 @@ fun HomeScreen(
                     if (viewModel.isSportsHomeItem(item)) {
                         openSportsHomeItem(item)
                     } else if (viewModel.isIptvItem(item)) {
-                        onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
+                        onNavigateToTv(viewModel.getIptvChannelId(item), null)
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
                     } else {
@@ -1243,7 +1249,6 @@ fun HomeScreen(
             onNavigateToSearch = onNavigateToSearch,
             onNavigateToWatchlist = onNavigateToWatchlist,
             onNavigateToTv = onNavigateToTv,
-            getIptvStreamUrl = { itemId -> viewModel.getIptvStreamUrl(itemId) },
             isSportsHomeItem = { item -> viewModel.isSportsHomeItem(item) },
             onSportsHomeItemClick = openSportsHomeItem,
             onNavigateToSettings = onNavigateToSettings,
@@ -1272,8 +1277,7 @@ fun HomeScreen(
                 onNavigateToDetails = navigateToDetailsWithCache,
                 onNavigateToTv = { channelId, streamUrl -> onNavigateToTv(channelId, streamUrl) },
                 isIptvItem = { item -> viewModel.isIptvItem(item) },
-                getIptvChannelId = { item -> viewModel.getIptvChannelId(item) },
-                getIptvStreamUrl = { itemId -> viewModel.getIptvStreamUrl(itemId) }
+                getIptvChannelId = { item -> viewModel.getIptvChannelId(item) }
             )
             } // end trailer-dim wrapper
         }
@@ -1328,7 +1332,7 @@ fun HomeScreen(
                         if (viewModel.isSportsHomeItem(item)) {
                             openSportsHomeItem(item)
                         } else if (viewModel.isIptvItem(item)) {
-                            onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
+                            onNavigateToTv(viewModel.getIptvChannelId(item), null)
                         } else {
                             navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                         }
@@ -1337,7 +1341,7 @@ fun HomeScreen(
                         if (viewModel.isSportsHomeItem(item)) {
                             openSportsHomeItem(item)
                         } else if (viewModel.isIptvItem(item)) {
-                            onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
+                            onNavigateToTv(viewModel.getIptvChannelId(item), null)
                         } else {
                             navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                         }
@@ -1827,8 +1831,7 @@ private fun HomeHeroLayer(
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onNavigateToTv: (channelId: String?, streamUrl: String?) -> Unit = { _, _ -> },
     isIptvItem: (MediaItem) -> Boolean = { false },
-    getIptvChannelId: (MediaItem) -> String? = { null },
-    getIptvStreamUrl: (Int) -> String? = { null }
+    getIptvChannelId: (MediaItem) -> String? = { null }
 ) {
     if (isMobile) {
         // Mobile hero is rendered inline inside MobileHomeRowsLayer's LazyColumn — no fixed overlay needed.
@@ -2355,7 +2358,6 @@ private fun HomeInputLayer(
     onNavigateToSearch: () -> Unit,
     onNavigateToWatchlist: () -> Unit,
     onNavigateToTv: (channelId: String?, streamUrl: String?) -> Unit,
-    getIptvStreamUrl: (itemId: Int) -> String?,
     isSportsHomeItem: (MediaItem) -> Boolean = { false },
     onSportsHomeItemClick: (MediaItem) -> Unit = {},
     onNavigateToSettings: () -> Unit,
@@ -2719,7 +2721,7 @@ private fun HomeInputLayer(
                                         val collectionId = item.status?.removePrefix("collection:")
                                             ?.takeIf { item.status?.startsWith("collection:") == true && it.isNotBlank() }
                                         if (iptvId != null) {
-                                            onNavigateToTv(iptvId, getIptvStreamUrl(item.id))
+                                            onNavigateToTv(iptvId, null)
                                         } else if (collectionId != null) {
                                             onNavigateToCollection(collectionId)
                                         } else {
@@ -2805,7 +2807,11 @@ private fun HomeInputLayer(
                 val iptvId = item.status?.removePrefix("iptv:")?.takeIf { item.status?.startsWith("iptv:") == true && it.isNotBlank() }
                 val collectionId = item.status?.removePrefix("collection:")?.takeIf { item.status?.startsWith("collection:") == true && it.isNotBlank() }
                 if (iptvId != null) {
-                    onNavigateToTv(iptvId, getIptvStreamUrl(item.id))
+                    // Deliberately no stream URL: the cached channel's raw streamUrl is
+                    // not playable for Xtream/Stalker sources until IptvRepository
+                    // resolves it. Passing it made Live TV skip resolution and play the
+                    // wrong source. The id alone lets Live TV resolve it properly.
+                    onNavigateToTv(iptvId, null)
                 } else if (collectionId != null) {
                     onNavigateToCollection(collectionId)
                 } else {
