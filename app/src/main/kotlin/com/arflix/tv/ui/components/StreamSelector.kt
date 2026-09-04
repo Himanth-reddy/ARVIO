@@ -284,7 +284,10 @@ fun StreamSelector(
         sourceAddonTabKeys(addonTabs)
     }
 
-    val presentations = remember(streams) { streams.map(::presentSource) }
+    val unknownSourceLabel = stringResource(R.string.stream_unknown_source)
+    val presentations = remember(streams, unknownSourceLabel) {
+        streams.map { presentSource(it, unknownSourceLabel) }
+    }
 
     // Source ordering follows user addon order first. Within each addon, show the
     // largest files first, then the highest resolution/release quality.
@@ -1169,6 +1172,7 @@ private fun sourceFilterMatches(presentation: SourcePresentation, selectedFilter
     }
 }
 
+@Composable
 private fun sourceStatusText(
     sourceCount: Int,
     completedAddons: Int,
@@ -1180,23 +1184,32 @@ private fun sourceStatusText(
     val remaining = (totalAddons - completedAddons).coerceAtLeast(0)
     val elapsed = if (elapsedSeconds > 0 && (isLoading || pluginScrapersLoading)) "${elapsedSeconds}s \u2022 " else ""
     return when {
-        isLoading && totalAddons > 0 && remaining > 0 ->
-            "${elapsed}$sourceCount found - still checking $remaining ${if (remaining == 1) "addon" else "addons"}"
-        isLoading -> "${elapsed}$sourceCount found - searching sources"
-        pluginScrapersLoading -> "${elapsed}$sourceCount found - searching for more sources"
-        totalAddons > 0 -> "$sourceCount found - $completedAddons/$totalAddons addons checked"
-        else -> "$sourceCount found"
+        isLoading && totalAddons > 0 && remaining > 0 -> stringResource(
+            if (remaining == 1) {
+                R.string.stream_status_still_checking_one
+            } else {
+                R.string.stream_status_still_checking_many
+            },
+            elapsed, sourceCount, remaining
+        )
+        isLoading -> stringResource(R.string.stream_status_searching, elapsed, sourceCount)
+        pluginScrapersLoading ->
+            stringResource(R.string.stream_status_searching_more, elapsed, sourceCount)
+        totalAddons > 0 -> stringResource(
+            R.string.stream_status_addons_checked, sourceCount, completedAddons, totalAddons
+        )
+        else -> stringResource(R.string.stream_status_found, sourceCount)
     }
 }
 
-private fun cleanSourceDisplayTitle(raw: String): String {
+private fun cleanSourceDisplayTitle(raw: String, unknownLabel: String): String {
     val oneLine = raw
         .replace('\n', ' ')
         .replace('\r', ' ')
         .replace(StreamRegexes.WHITESPACE, " ")
         .trim()
 
-    if (oneLine.length <= 92) return oneLine.ifBlank { "Unknown source" }
+    if (oneLine.length <= 92) return oneLine.ifBlank { unknownLabel }
 
     val withoutExtension = oneLine
         .replace(StreamRegexes.EXTENSION_REMOVAL, "")
@@ -1211,9 +1224,9 @@ private fun cleanSourceDisplayTitle(raw: String): String {
     return compact ?: oneLine.take(92).trimEnd('.', ' ', '-', '_')
 }
 
-private fun presentSource(stream: StreamSource): SourcePresentation {
+private fun presentSource(stream: StreamSource, unknownSourceLabel: String): SourcePresentation {
     val rawTitle = stream.behaviorHints?.filename?.takeIf { it.isNotBlank() } ?: stream.source
-    val title = cleanSourceDisplayTitle(rawTitle)
+    val title = cleanSourceDisplayTitle(rawTitle, unknownSourceLabel)
     val addonLabel = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
     val attributionLabels = sourceAttributionLabels(stream, addonLabel)
     val searchBlob = buildString {
@@ -1519,6 +1532,7 @@ private fun languageBadgeText(language: String?): String? {
     }
 }
 
+@Composable
 private fun bestMatchReason(presentation: SourcePresentation): String {
     return listOfNotNull(
         presentation.transportLabel?.let {
@@ -1527,7 +1541,7 @@ private fun bestMatchReason(presentation: SourcePresentation): String {
         presentation.resolutionLabel.takeIf { it.isNotBlank() }?.lowercase(),
         presentation.codecLabel?.lowercase(),
         presentation.audioLabel?.lowercase()
-    ).take(3).joinToString(" - ").ifBlank { "recommended source" }
+    ).take(3).joinToString(" - ").ifBlank { stringResource(R.string.stream_recommended_source) }
 }
 
 @Composable
