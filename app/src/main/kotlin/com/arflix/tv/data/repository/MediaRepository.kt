@@ -118,7 +118,10 @@ class MediaRepository @Inject constructor(
     @Volatile
     var contentLanguage: String = "en-US"
         set(value) {
-            field = value.ifBlank { "en-US" }.replace("iw", "he").replace('_', '-')
+            val normalized = value.ifBlank { "en-US" }.replace("iw", "he").replace('_', '-')
+            if (field == normalized) return
+            field = normalized
+            clearMediaCache()
         }
 
     // === IN-MEMORY CACHE FOR PERFORMANCE ===
@@ -2907,7 +2910,7 @@ class MediaRepository @Inject constructor(
      * Get movie details (cached)
      */
     suspend fun getMovieDetails(movieId: Int): MediaItem {
-        val cacheKey = "movie_${movieId}_${contentLanguage ?: "default"}"
+        val cacheKey = "movie_$movieId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
             if (movieId < 0 && cached.isHomeServer) return cached
             if (cacheKey in fullDetailsCacheKeys) {
@@ -2937,7 +2940,7 @@ class MediaRepository @Inject constructor(
      * Get TV show details (cached)
      */
     suspend fun getTvDetails(tvId: Int): MediaItem {
-        val cacheKey = "tv_${tvId}_${contentLanguage ?: "default"}"
+        val cacheKey = "tv_$tvId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
             if (tvId < 0 && cached.isHomeServer) return cached
             if (cacheKey in fullDetailsCacheKeys) {
@@ -2966,23 +2969,32 @@ class MediaRepository @Inject constructor(
     /**
      * Lightweight calls for LauncherContinueWatchingRepository to avoid heavy IMDb rating/caching tasks.
      */
-    suspend fun getLightweightMovieTitle(movieId: Int): String? {
+    suspend fun getLightweightMovieTitle(movieId: Int, language: String = contentLanguage): String? {
         return runCatching {
-            tmdbApi.getMovieDetails(movieId, apiKey, language = contentLanguage).title
+            tmdbApi.getMovieDetails(movieId, apiKey, language = language).title
         }.getOrNull()
     }
 
-    suspend fun getLightweightTvTitle(tvId: Int): String? {
+    suspend fun getLightweightTvTitle(tvId: Int, language: String = contentLanguage): String? {
         return runCatching {
             // TMDB uses 'name' for series instead of 'title'
-            tmdbApi.getTvDetails(tvId, apiKey, language = contentLanguage).name
+            tmdbApi.getTvDetails(tvId, apiKey, language = language).name
         }.getOrNull()
     }
 
-    suspend fun getLightweightEpisodeTitle(tvId: Int, seasonNumber: Int, episodeNumber: Int): String? {
+    suspend fun getLightweightEpisodeTitle(
+        tvId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        language: String = contentLanguage
+    ): String? {
         return runCatching {
-            val episodes = getSeasonEpisodes(tvId, seasonNumber)
-            episodes.firstOrNull { it.episodeNumber == episodeNumber }?.name
+            tmdbApi.getTvSeason(
+                tvId = tvId,
+                seasonNumber = seasonNumber,
+                apiKey = apiKey,
+                language = language
+            ).episodes.firstOrNull { it.episodeNumber == episodeNumber }?.name
         }.getOrNull()
     }
 

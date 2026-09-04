@@ -31,7 +31,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -157,7 +156,7 @@ class LauncherContinueWatchingRepository @Inject constructor(
 
        // Limit of 4 simultaneous calls to avoid saturating the network
         val semaphore = Semaphore(4)
-        val currentLang = Locale.getDefault().toLanguageTag()
+        val currentLang = mediaRepository.contentLanguage
 
         return coroutineScope {
             selectedItems.map { item ->
@@ -169,16 +168,21 @@ class LauncherContinueWatchingRepository @Inject constructor(
 
                         val localizedTitle = titleCache.get(titleKey) ?: runCatching {
                             val t = if (item.mediaType == MediaType.TV) {
-                                mediaRepository.getLightweightTvTitle(item.id)
+                                mediaRepository.getLightweightTvTitle(item.id, currentLang)
                             } else {
-                                mediaRepository.getLightweightMovieTitle(item.id)
+                                mediaRepository.getLightweightMovieTitle(item.id, currentLang)
                             }
                             t?.takeIf { it.isNotBlank() }?.also { titleCache.put(titleKey, it) }
                         }.getOrNull() ?: item.title
 
                         val resolvedEpisodeTitle = if (item.mediaType == MediaType.TV && item.season != null && item.episode != null) {
                             titleCache.get(epKey) ?: runCatching {
-                                val ep = mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
+                                val ep = mediaRepository.getLightweightEpisodeTitle(
+                                    item.id,
+                                    item.season,
+                                    item.episode,
+                                    currentLang
+                                )
                                 ep?.takeIf { it.isNotBlank() }?.also { titleCache.put(epKey, it) }
                             }.getOrNull()
                         } else {

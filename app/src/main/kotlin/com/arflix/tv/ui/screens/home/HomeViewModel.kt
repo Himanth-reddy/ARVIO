@@ -1147,7 +1147,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadContinueWatchingCache(): List<ContinueWatchingItem> = runCatching {
+    private fun loadContinueWatchingCache(): List<ContinueWatchingItem> = runCatching {
         val file = continueWatchingCacheFile()
         if (!file.exists() || file.length() > maxContinueWatchingCacheBytes) return emptyList()
         val json = file.readText()
@@ -1156,40 +1156,7 @@ class HomeViewModel @Inject constructor(
             .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
             .type
         val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type) ?: emptyList()
-        
-        // We retrieve the items from the cache
-        val items = parsed.filter { it.id > 0 && it.title.isNotBlank() }.take(Constants.MAX_CONTINUE_WATCHING)
-
-        // We translate them on the fly before sending them to the screen
-        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-        kotlinx.coroutines.coroutineScope {
-            items.map { item ->
-                async {
-                    semaphore.withPermit {
-                        val localizedTitle = runCatching {
-                            if (item.mediaType.name == "TV") {
-                                mediaRepository.getLightweightTvTitle(item.id)
-                            } else {
-                                mediaRepository.getLightweightMovieTitle(item.id)
-                            }
-                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
-
-                        val resolvedEpisodeTitle = if (item.mediaType.name == "TV" && item.season != null && item.episode != null) {
-                            runCatching {
-                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
-                            }.getOrNull()
-                        } else {
-                            null
-                        } ?: item.episodeTitle
-
-                        item.copy(
-                            title = localizedTitle,
-                            episodeTitle = resolvedEpisodeTitle
-                        )
-                    }
-                }
-            }.awaitAll()
-        }
+        parsed.filter { it.id > 0 && it.title.isNotBlank() }.take(Constants.MAX_CONTINUE_WATCHING)
     }.getOrDefault(emptyList())
 
     private fun loadCategoriesCache(): List<Category> {
@@ -2345,51 +2312,17 @@ class HomeViewModel @Inject constructor(
             }
             return
         }
-
-        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-        val translatedItems = kotlinx.coroutines.coroutineScope {
-            items.map { item ->
-                async {
-                    semaphore.withPermit {
-                        val localizedTitle = runCatching {
-                            if (item.mediaType == com.arflix.tv.data.model.MediaType.TV) {
-                                mediaRepository.getLightweightTvTitle(item.id)
-                            } else {
-                                mediaRepository.getLightweightMovieTitle(item.id)
-                            }
-                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
-
-                        val resolvedEpisodeTitle = if (item.mediaType == com.arflix.tv.data.model.MediaType.TV && item.season != null && item.episode != null) {
-                            runCatching {
-                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
-                            }.getOrNull()
-                        } else {
-                            null
-                        } ?: item.episodeTitle
-
-                        item.copy(
-                            title = localizedTitle,
-                            episodeTitle = resolvedEpisodeTitle
-                        )
-                    }
-                }
-            }.awaitAll()
-        }
-
         withContext(Dispatchers.IO) {
-            persistContinueWatchingCache(translatedItems)
+            persistContinueWatchingCache(items)
         }
-        
         val continueWatchingCategory = Category(
             id = "continue_watching",
             title = "Continue Watching",
-            items = translatedItems.map { it.toMediaItem() }
+            items = items.map { it.toMediaItem() }
         )
-        
         continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
         lastContinueWatchingItems = continueWatchingCategory.items
         lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
-        
         withContext(Dispatchers.Main) {
             val current = _uiState.value.categories.toMutableList()
             val cwIdx = current.indexOfFirst { it.id == "continue_watching" }
@@ -3082,41 +3015,10 @@ class HomeViewModel @Inject constructor(
                             persistContinueWatchingCache(freshContinueWatching)
                         }
                         val mergedContinueWatching = mergeContinueWatchingResumeData(freshContinueWatching)
-                        
-                        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-                        val translatedItems = kotlinx.coroutines.coroutineScope {
-                            mergedContinueWatching.map { item ->
-                                async {
-                                    semaphore.withPermit {
-                                        val localizedTitle = runCatching {
-                                            if (item.mediaType.name == "TV") {
-                                                mediaRepository.getLightweightTvTitle(item.id)
-                                            } else {
-                                                mediaRepository.getLightweightMovieTitle(item.id)
-                                            }
-                                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
-
-                                        val resolvedEpisodeTitle = if (item.mediaType.name == "TV" && item.season != null && item.episode != null) {
-                                            runCatching {
-                                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
-                                            }.getOrNull()
-                                        } else {
-                                            null
-                                        } ?: item.episodeTitle
-
-                                        item.copy(
-                                            title = localizedTitle,
-                                            episodeTitle = resolvedEpisodeTitle
-                                        ).toMediaItem()
-                                    }
-                                }
-                            }.awaitAll()
-                        }
-
                         val continueWatchingCategory = Category(
                             id = "continue_watching",
                             title = "Continue Watching",
-                            items = translatedItems
+                            items = mergedContinueWatching.map { it.toMediaItem() }
                         )
                         continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
                         lastContinueWatchingItems = continueWatchingCategory.items
@@ -4254,41 +4156,11 @@ class HomeViewModel @Inject constructor(
         }
 
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
-        val finalItems = applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
+        return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
             .filter { item ->
                 if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
-
-        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-        return kotlinx.coroutines.coroutineScope {
-            finalItems.map { item ->
-                async {
-                    semaphore.withPermit {
-                        val localizedTitle = runCatching {
-                            if (item.mediaType.name == "TV") {
-                                mediaRepository.getLightweightTvTitle(item.id)
-                            } else {
-                                mediaRepository.getLightweightMovieTitle(item.id)
-                            }
-                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
-
-                        val resolvedEpisodeTitle = if (item.mediaType.name == "TV" && item.season != null && item.episode != null) {
-                            runCatching {
-                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
-                            }.getOrNull()
-                        } else {
-                            null
-                        } ?: item.episodeTitle
-
-                        item.copy(
-                            title = localizedTitle,
-                            episodeTitle = resolvedEpisodeTitle
-                        )
-                    }
-                }
-            }.awaitAll()
-        }
     }
 
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
