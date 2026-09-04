@@ -59,6 +59,10 @@ import com.arflix.tv.util.LocalDeviceType
 
 import com.arflix.tv.domain.model.PluginRepository
 
+@Composable
+private fun PluginMessage.localizedText(): String =
+    stringResource(resourceId, *formatArgs.toTypedArray())
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun PluginScreen(
@@ -142,7 +146,7 @@ fun PluginScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             uiState.errorMessage?.let { msg ->
-                Text(msg, color = Color.Red, style = ArflixTypography.body)
+                Text(msg.localizedText(), color = Color.Red, style = ArflixTypography.body)
             }
 
             MobileSettingsCategory(title = stringResource(R.string.plugin_screen_add_repo)) {
@@ -189,7 +193,7 @@ fun PluginScreen(
                             icon = Icons.Default.Extension,
                             title = scraper.name,
                             subtitle = scraper.id,
-                            value = if (scraper.enabled) "On" else "Off",
+                            value = if (scraper.enabled) stringResource(R.string.on) else stringResource(R.string.off),
                             isFocused = false,
                             showDivider = idx < scrapers.lastIndex,
                             onClick = { viewModel.onEvent(PluginUiEvent.ToggleScraper(scraper.id, !scraper.enabled)) }
@@ -201,8 +205,8 @@ fun PluginScreen(
             MobileSettingsCategory(title = "") {
                 MobileSettingsRow(
                     icon = Icons.Default.Delete,
-                    title = "Reset Plugins & Extensions",
-                    subtitle = "Deletes all repositories, scrapers, and local data",
+                    title = stringResource(R.string.plugin_screen_reset_title),
+                    subtitle = stringResource(R.string.plugin_screen_reset_desc),
                     value = "",
                     isFocused = false,
                     showDivider = false,
@@ -233,7 +237,7 @@ fun PluginScreen(
                 }
         ) {
             uiState.errorMessage?.let { msg ->
-                Text(msg, color = Color.Red, style = ArflixTypography.body)
+                Text(msg.localizedText(), color = Color.Red, style = ArflixTypography.body)
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
@@ -359,7 +363,7 @@ fun PluginScreen(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "Reset Plugins & Extensions",
+                    text = stringResource(R.string.plugin_screen_reset_title),
                     style = ArflixTypography.button,
                     color = Color.Red
                 )
@@ -381,8 +385,8 @@ fun PluginScreen(
 
     if (showResetDialog) {
         WarningDialog(
-            title = "Warning",
-            message = "Are you sure you want to delete all plugins, scrapers, and local code data? This action cannot be undone.",
+            title = stringResource(R.string.plugin_screen_reset_warning_title),
+            message = stringResource(R.string.plugin_screen_reset_warning_message),
             cancelText = stringResource(R.string.cancel),
             confirmText = stringResource(R.string.delete),
             onConfirm = {
@@ -397,7 +401,7 @@ fun PluginScreen(
     repoToDelete?.let { repo ->
         WarningDialog(
             title = stringResource(R.string.delete),
-            message = "Are you sure you want to remove '${repo.name}'?",
+            message = stringResource(R.string.plugin_screen_remove_repo_message, repo.name),
             cancelText = stringResource(R.string.cancel),
             confirmText = stringResource(R.string.delete),
             onConfirm = {

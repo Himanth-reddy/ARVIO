@@ -1201,6 +1201,30 @@ class HomeViewModel @Inject constructor(
     private val dismissedContinueWatchingAt = Collections.synchronizedMap(mutableMapOf<String, Long>())
     private val CONTINUE_WATCHING_REFRESH_MS = 45_000L
     private val WATCHED_BADGES_REFRESH_MS = 90_000L
+
+    /**
+     * How old the catalog rows may get before returning to Home re-fetches them.
+     *
+     * Home is no longer rebuilt on every return (its back-stack entry — and so this ViewModel —
+     * now survives navigation to Watchlist/TV/Search), which is what made returning instant. The
+     * rebuild used to double as the refresh, so without a check here the rows would keep whatever
+     * they loaded for as long as the process lives. Continue Watching has its own, much shorter
+     * refresh above; this covers the slow-moving catalog rows.
+     *
+     * Most of a refresh is served from the HTTP disk cache, and TMDB's own `max-age` decides what
+     * genuinely goes to the network (trending ~8 min, show metadata several hours).
+     */
+    private val HOME_DATA_STALE_AFTER_MS = 6 * 60 * 60 * 1000L
+
+    /**
+     * Elapsed-realtime mark of the last SUCCESSFUL [loadHomeData]; 0 until one completes.
+     * A load that failed must not mark Home fresh, or one transient network error would
+     * suppress the resume refresh for the whole TTL.
+     */
+    private var lastHomeDataLoadAtMs = 0L
+
+    /** True once [loadHomeData] has been started at least once, successfully or not. */
+    private var homeDataLoadAttempted = false
     private var lastWatchedBadgesRefreshMs: Long = 0L
     private val HOME_PLACEHOLDER_ITEM_COUNT = 8
 
@@ -1815,18 +1839,44 @@ class HomeViewModel @Inject constructor(
             try {
                 applyContentLanguageFromPrefs()
                 val cachedCategories = loadCategoriesCache()
-                if (cachedCategories.isNotEmpty() && _uiState.value.categories.isEmpty()) {
-                    val heroItem = chooseInitialHero(cachedCategories)
-                    val heroKey = heroItem?.let { "${it.mediaType}_${it.id}" }
-                    val heroLogo = heroKey?.let { getCachedLogo(it) }
+                // Gate on "no real BASE rows yet", not "no categories at all": Continue Watching
+                // is restored from its own cache by a coroutine launched alongside this one, and
+                // whichever finishes first used to decide the outcome. When CW won, it put a row
+                // into `categories`, the isEmpty() guard failed, and every cached base row was
+                // dropped — leaving the screen empty until the network load finished ~5s later.
+                // That race is what made the slow home load intermittent.
+                if (cachedCategories.isNotEmpty() && !hasRealBaseCategories()) {
+                    val cachedHero = chooseInitialHero(cachedCategories)
+                    val cachedHeroKey = cachedHero?.let { "${it.mediaType}_${it.id}" }
+                    val cachedHeroLogo = cachedHeroKey?.let { getCachedLogo(it) }
                     withContext(Dispatchers.Main) {
-                        if (_uiState.value.categories.isEmpty()) {
+                        if (!hasRealBaseCategories()) {
+                            // A Continue Watching row already on screen is fresher than the one in
+                            // this cache — keep it, and take only the base rows from disk.
+                            val liveCw = _uiState.value.categories
+                                .firstOrNull { it.id == "continue_watching" }
+                            val merged = if (liveCw != null) {
+                                listOf(liveCw) + cachedCategories.filterNot { it.id == "continue_watching" }
+                            } else {
+                                cachedCategories
+                            }
+                            // Don't stomp a hero the Continue Watching path already set — and take
+                            // the logo from whichever hero wins, so a live hero can never be shown
+                            // with the cached hero's logo.
+                            val liveHero = _uiState.value.heroItem
+                            val finalHero = liveHero ?: cachedHero
+                            val finalLogo = if (liveHero != null) {
+                                _uiState.value.heroLogoUrl
+                                    ?: getCachedLogo("${liveHero.mediaType}_${liveHero.id}")
+                            } else {
+                                cachedHeroLogo
+                            }
                             _uiState.value = _uiState.value.copy(
                                 isLoading = false,
                                 isInitialLoad = false,
-                                categories = cachedCategories,
-                                heroItem = heroItem,
-                                heroLogoUrl = heroLogo,
+                                categories = merged,
+                                heroItem = finalHero,
+                                heroLogoUrl = finalLogo,
                                 error = null
                             )
                         }
@@ -2335,8 +2385,26 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * True when a base (non-Continue-Watching, non-collection) row already holds real content.
+     * Mirrors the test [loadHomeData] uses to decide whether the skeleton is still needed.
+     */
+    private fun hasRealBaseCategories(): Boolean =
+        _uiState.value.categories.any { category ->
+            category.id != "continue_watching" &&
+                !category.id.startsWith("collection_row_") &&
+                category.items.any { !it.isPlaceholder }
+        }
+
+    private fun markHomeDataLoadSuccessful(requestId: Long) {
+        if (requestId == loadHomeRequestId) {
+            lastHomeDataLoadAtMs = SystemClock.elapsedRealtime()
+        }
+    }
+
     private fun loadHomeData() {
         loadHomeJob?.cancel()
+        homeDataLoadAttempted = true
         val requestId = ++loadHomeRequestId
         loadHomeJob = viewModelScope.launch loadHome@{
             // Skip delay - preloading now happens on profile focus for instant display
@@ -2471,10 +2539,12 @@ class HomeViewModel @Inject constructor(
                     runCatching { buildFavoriteTvCategory() }.getOrNull()
                 }
 
+                var loadedFreshCatalogRows = false
                 var categories = withContext(networkDispatcher) {
                     val baseCategories = runCatching {
                         mediaRepository.getHomeCategories()
                     }.getOrElse { emptyList() }
+                    loadedFreshCatalogRows = baseCategories.any { hasRealItems(it) }
 
                     val baseById = LinkedHashMap<String, Category>().apply {
                         currentBaseCategories.forEach { put(it.id, it) }
@@ -2572,6 +2642,7 @@ class HomeViewModel @Inject constructor(
                         }
                     }
                     val mdblistCategories = mdblistInitial.awaitAll().filterNotNull()
+                    loadedFreshCatalogRows = loadedFreshCatalogRows || mdblistCategories.any { hasRealItems(it) }
                     // Create placeholder categories for deferred ones (will load on scroll)
                     val deferredCategories = deferredBatch.map { cfg -> Category(id = cfg.id, title = cfg.title, items = emptyList()) }
                     // Merge both lists maintaining the saved catalog order
@@ -2598,13 +2669,14 @@ class HomeViewModel @Inject constructor(
  null }
                                     }
                                 }.awaitAll().filterNotNull()
-                                if (results.isNotEmpty()) {
+                                if (results.isNotEmpty() && requestId == loadHomeRequestId) {
                                     val current = _uiState.value.categories.toMutableList()
                                     for (cat in results) {
                                         val idx = current.indexOfFirst { it.id == cat.id }
                                         if (idx >= 0) current[idx] = cat else current.add(cat)
                                     }
                                     _uiState.value = _uiState.value.copy(categories = current)
+                                    markHomeDataLoadSuccessful(requestId)
                                 }
                             }
                         }
@@ -2648,6 +2720,7 @@ class HomeViewModel @Inject constructor(
                             }
                         }
                     }.awaitAll().filterNotNull()
+                    loadedFreshCatalogRows = loadedFreshCatalogRows || freshCustomCategories.any { hasRealItems(it) }
 
                     // Fall back to previously cached data for any custom catalog
                     // that failed to load in this round
@@ -2942,6 +3015,11 @@ class HomeViewModel @Inject constructor(
                     categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
                     error = null
                 )
+                // Cached fallback rows keep Home usable, but only freshly fetched rows
+                // suppress the next resume retry.
+                if (loadedFreshCatalogRows) {
+                    markHomeDataLoadSuccessful(requestId)
+                }
                 heroItem?.let { item ->
                     if (isStartupSettling()) {
                         scheduleStartupHeroHydration(item)
@@ -3238,6 +3316,7 @@ class HomeViewModel @Inject constructor(
                     withContext(Dispatchers.Main.immediate) {
                         if (requestId == loadHomeRequestId) {
                             updateMobileCategoryRow(cfg.id, category.withTop10CapIfNeeded(), hasMore = page.hasMore)
+                            markHomeDataLoadSuccessful(requestId)
                             persistCategoriesCache(_uiState.value.categories)
                         }
                     }
@@ -3262,6 +3341,7 @@ class HomeViewModel @Inject constructor(
                             withContext(Dispatchers.Main.immediate) {
                                 if (requestId == loadHomeRequestId) {
                                     updateMobileCategoryRow(cfg.id, category, hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id))
+                                    markHomeDataLoadSuccessful(requestId)
                                     persistCategoriesCache(_uiState.value.categories)
                                 }
                             }
@@ -3743,6 +3823,31 @@ class HomeViewModel @Inject constructor(
             if (lastFocusChangeTime != requestedAt) return@launch
             preloadBackdropImages(urls)
         }
+    }
+
+    /**
+     * Called when Home resumes. Re-loads the catalog rows only once they are older than
+     * [HOME_DATA_STALE_AFTER_MS], so ordinary navigation back from Watchlist/TV/Search stays
+     * instant while a long-lived session still picks up new content.
+     *
+     * Startup owns the first load, so this stays out of its way until one has been started. It
+     * also retries when no load has ever succeeded: [lastHomeDataLoadAtMs] is set only once rows
+     * are published, so a failed load heals on the next resume instead of pinning Home to the
+     * cached rows for the whole TTL.
+     */
+    fun refreshHomeDataIfStale() {
+        if (!homeDataLoadAttempted) return
+        if (loadHomeJob?.isActive == true) return
+        val lastLoadAtMs = lastHomeDataLoadAtMs
+        if (lastLoadAtMs == 0L) {
+            android.util.Log.i("HomeViewModel", "no home load has succeeded yet — retrying on resume")
+            loadHomeData()
+            return
+        }
+        val ageMs = SystemClock.elapsedRealtime() - lastLoadAtMs
+        if (ageMs < HOME_DATA_STALE_AFTER_MS) return
+        android.util.Log.i("HomeViewModel", "home data ${ageMs / 60_000}min old — refreshing on resume")
+        loadHomeData()
     }
 
     fun refresh() {

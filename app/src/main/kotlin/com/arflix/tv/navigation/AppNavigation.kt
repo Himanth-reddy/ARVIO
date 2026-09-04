@@ -145,14 +145,22 @@ fun AppNavigation(
     }
 
     val navigateHome: () -> Unit = {
-        // Navigate to Home clearing the entire back stack above it.
-        // Uses navigate() instead of popBackStack() because popBackStack can
-        // silently fail if Home is not found, and restoreState on other
-        // navigateTopLevel calls can bring back stale Details pages.
-        navController.navigate(Screen.Home.route) {
-            popUpTo(Screen.Home.route) { inclusive = true; saveState = false }
-            launchSingleTop = true
-            restoreState = false
+        // Pop back to the EXISTING Home entry rather than replacing it.
+        //
+        // navigateTopLevel uses popUpTo(Home) with inclusive = false, so Home is still on the back
+        // stack while the user is on Watchlist/TV/Search. Re-navigating with inclusive = true
+        // destroyed that entry, and with it the HomeViewModel that hiltViewModel() scopes to it —
+        // so every return to Home rebuilt the whole screen from scratch (~550 requests, ~5s).
+        //
+        // popBackStack also clears everything stacked above Home, which is what the previous
+        // comment here wanted (no stale Details pages); the fallback covers the case it worried
+        // about, Home not being on the stack at all.
+        if (!navController.popBackStack(Screen.Home.route, inclusive = false)) {
+            navController.navigate(Screen.Home.route) {
+                popUpTo(Screen.Home.route) { inclusive = true; saveState = false }
+                launchSingleTop = true
+                restoreState = false
+            }
         }
     }
 

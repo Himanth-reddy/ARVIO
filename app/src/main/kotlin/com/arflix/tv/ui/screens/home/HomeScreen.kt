@@ -668,6 +668,9 @@ fun HomeScreen(
                 // Keep the profile-to-Home transition local-first. A forced remote
                 // refresh here cancelled the cache fast path on every app launch.
                 viewModel.refreshContinueWatchingOnly(force = false)
+                // Catalog rows: no-op unless they have gone stale (6h). Home now survives
+                // navigation, so nothing else would re-fetch them in a long session.
+                viewModel.refreshHomeDataIfStale()
                 // Pull the full cloud state (addons, catalogs, settings) on resume.
                 // This catches any changes pushed by another device while this one
                 // was backgrounded — the WebSocket may have been killed by Android,

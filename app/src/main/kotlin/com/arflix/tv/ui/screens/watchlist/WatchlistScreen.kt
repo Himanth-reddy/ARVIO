@@ -65,6 +65,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -150,12 +151,15 @@ private fun WatchlistSourceItem.trackerProviderLabel(): String? {
     }
 }
 
-private fun WatchlistSourceItem.asSidebarLibrary(providerLabel: String): HomeServerCatalogCandidate {
+private fun WatchlistSourceItem.asSidebarLibrary(
+    providerLabel: String,
+    localizedTitle: String = title
+): HomeServerCatalogCandidate {
     return HomeServerCatalogCandidate(
-        title = title,
+        title = localizedTitle,
         sourceRef = id,
         serverName = providerLabel,
-        collectionName = title,
+        collectionName = localizedTitle,
         collectionType = "mixed",
         serverKind = HomeServerKind.UNKNOWN,
         connectionId = "tracker:${providerLabel.lowercase()}"
@@ -216,15 +220,17 @@ fun WatchlistScreen(
             .mapNotNull { source -> source.trackerProviderLabel()?.let { label -> label to source } }
             .groupBy(keySelector = { it.first }, valueTransform = { it.second })
     }
-    val providers = remember(libraryState.providers, trackerGroups) {
+    val myWatchlistLabel = stringResource(R.string.watchlist_my_watchlist)
+    val unknownServerLabel = stringResource(R.string.watchlist_provider_home_server)
+    val providers = remember(libraryState.providers, trackerGroups, myWatchlistLabel, unknownServerLabel) {
         buildList {
-            add(LibraryProviderOption(id = WATCHLIST_PROVIDER_ID, label = "My Watchlist"))
+            add(LibraryProviderOption(id = WATCHLIST_PROVIDER_ID, label = myWatchlistLabel))
             libraryState.providers.forEach { kind ->
                 val label = when (kind) {
                     HomeServerKind.PLEX -> "Plex"
                     HomeServerKind.JELLYFIN -> "Jellyfin"
                     HomeServerKind.EMBY -> "Emby"
-                    HomeServerKind.UNKNOWN -> "Server"
+                    HomeServerKind.UNKNOWN -> unknownServerLabel
                 }
                 add(LibraryProviderOption(id = "provider:home:${kind.name}", label = label, homeServerKind = kind))
             }
@@ -245,17 +251,23 @@ fun WatchlistScreen(
     val selectedProviderIndex = providers.indexOfFirst { it.id == activeProvider.id }.coerceAtLeast(0)
     val isHomeServerMode = activeProvider.isHomeServer
     val isTrackerMode = activeProvider.isTracker
+    val localizedContext = LocalContext.current
     val providerLibraries = remember(
         libraryState.libraries,
         activeProvider.id,
-        activeProvider.trackerSources
+        activeProvider.trackerSources,
+        localizedContext
     ) {
         when {
             activeProvider.isHomeServer -> libraryState.libraries.filter {
                 it.serverKind == activeProvider.homeServerKind
             }
-            activeProvider.isTracker -> activeProvider.trackerSources.map {
-                it.asSidebarLibrary(activeProvider.label)
+            activeProvider.isTracker -> activeProvider.trackerSources.map { source ->
+                val localizedTitle = (source as? WatchlistSourceItem.TrackerList)
+                    ?.titleRes
+                    ?.let(localizedContext::getString)
+                    ?: source.title
+                source.asSidebarLibrary(activeProvider.label, localizedTitle)
             }
             else -> emptyList()
         }
