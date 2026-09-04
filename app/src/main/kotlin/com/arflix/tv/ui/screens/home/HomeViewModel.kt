@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.home
 import android.app.ActivityManager
 import android.content.Context
 import com.arflix.tv.util.settingsDataStore
+import com.arflix.tv.util.IPTV_FAVORITES_ON_HOME
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -895,39 +896,119 @@ class HomeViewModel @Inject constructor(
         )
     }
 
-    private suspend fun buildFavoriteTvCategory(): Category? {
+    /**
+     * Outcome of building the Favorite TV row.
+     *
+     * "Could not build it" and "the user has no favorites" are NOT the same thing.
+     * [IptvRepository.invalidateCache] wipes the in-memory channel list whenever the
+     * playlist config signature or active profile changes, and the disk fallback can
+     * miss while a refresh is re-parsing, so a perfectly normal refresh pass can find
+     * zero channels. Collapsing that into `null` made the caller delete a row that was
+     * already on screen — the row appeared on load and then vanished a moment later.
+     */
+    private sealed interface FavoriteTvOutcome {
+        data class Available(val category: Category) : FavoriteTvOutcome
+
+        /** Authoritatively empty — the row should be dropped. */
+        data object Empty : FavoriteTvOutcome
+
+        /** IPTV cache not hydrated on this pass — leave the displayed row alone. */
+        data object Unavailable : FavoriteTvOutcome
+    }
+
+    private suspend fun buildFavoriteTvOutcome(): FavoriteTvOutcome {
+        // Switched off in Settings > IPTV. Reported as Empty (not Unavailable) so the
+        // row is actively removed, and so the progressive additive passes — which append
+        // the row without consulting savedCatalogs — cannot resurrect it.
+        if (!isIptvFavoritesOnHomeEnabled()) return FavoriteTvOutcome.Empty
         // Use non-blocking memory read first; fall back to disk snapshot read
         val snapshot = iptvRepository.getMemoryCachedSnapshot()
             ?: iptvRepository.getCachedSnapshotOrNull()
-            ?: return null
-        val favoriteIds = snapshot.favoriteChannels.toHashSet()
-        if (favoriteIds.isEmpty()) return null
+            ?: return FavoriteTvOutcome.Unavailable
+        // favoriteChannels is read straight from DataStore, so an empty set is
+        // authoritative even when the channel cache is stone cold.
+        val favoriteIds = snapshot.favoriteChannels.filter { it.isNotBlank() }
+        if (favoriteIds.isEmpty()) return FavoriteTvOutcome.Empty
+
+        // snapshot.channels is only the currently-paged window — on a large playlist
+        // that is a couple hundred rows out of tens of thousands, and a starred channel
+        // is very unlikely to be in it. Filtering it (the old behaviour) therefore found
+        // nothing and the row silently never appeared. Resolve the in-memory page first,
+        // then fetch whatever is left straight from the SQLite channel store by id.
+        val byId = HashMap<String, com.arflix.tv.data.model.IptvChannel>(favoriteIds.size)
+        val favoriteIdSet = favoriteIds.toHashSet()
+        snapshot.channels.forEach { channel ->
+            if (channel.id in favoriteIdSet) byId[channel.id] = channel
+        }
+        val missing = favoriteIds.filterNot { byId.containsKey(it) }
+        if (missing.isNotEmpty()) {
+            iptvRepository.pagedChannelsByIds(missing).forEach { byId[it.id] = it }
+        }
+
+        if (byId.isEmpty()) {
+            // Nothing resolved. Only call that authoritative once the channel data is
+            // actually loaded; otherwise this is a cold cache and the row must stay put.
+            val storeReady = snapshot.channels.isNotEmpty() ||
+                runCatching { iptvRepository.pagedChannelsReady() }.getOrDefault(false)
+            return if (storeReady) FavoriteTvOutcome.Empty else FavoriteTvOutcome.Unavailable
+        }
 
         // Re-derive now/next from cached programs so "Now" shifts when a program ends.
         // This is free (no network) — just recalculates which program is live.
-        val favoriteChannelIds = snapshot.channels
-            .filter { favoriteIds.contains(it.id) }
-            .map { it.id }
-            .toSet()
-        if (favoriteChannelIds.isEmpty()) return null
-        iptvRepository.reDeriveCachedNowNext(favoriteChannelIds)
-        // Re-read snapshot after re-derive to get updated nowNext
-        val freshSnapshot = iptvRepository.getMemoryCachedSnapshot() ?: snapshot
+        iptvRepository.reDeriveCachedNowNext(byId.keys.toSet())
+        val nowNext = (iptvRepository.getMemoryCachedSnapshot() ?: snapshot).nowNext
 
-        // Iterate channels in their original list order (matching TV page order)
-        val items = freshSnapshot.channels
-            .filter { favoriteIds.contains(it.id) }
-            .mapNotNull { channel ->
-                val epg = freshSnapshot.nowNext[channel.id]
-                iptvChannelToMediaItem(channel, epg)
-            }
-        if (items.isEmpty()) return null
+        // Keep the user's own favourite ordering — the paged store has no meaningful
+        // list order to inherit, and this matches how the Live TV favourites category
+        // is ordered.
+        val items = favoriteIds.mapNotNull { id ->
+            val channel = byId[id] ?: return@mapNotNull null
+            iptvChannelToMediaItem(channel, nowNext[id])
+        }
+        if (items.isEmpty()) return FavoriteTvOutcome.Empty
 
-        return Category(
-            id = FAVORITE_TV_CATEGORY_ID,
-            title = "Favorite TV",
-            items = items
+        return FavoriteTvOutcome.Available(
+            Category(
+                id = FAVORITE_TV_CATEGORY_ID,
+                title = "Favorite TV",
+                items = items
+            )
         )
+    }
+
+    /** Additive callers only: they insert the row when present and never remove it. */
+    private suspend fun buildFavoriteTvCategory(): Category? =
+        (buildFavoriteTvOutcome() as? FavoriteTvOutcome.Available)?.category
+
+    /** Settings > IPTV > "Show IPTV favorites on home". Defaults to on. */
+    private suspend fun isIptvFavoritesOnHomeEnabled(): Boolean = runCatching {
+        val prefs = context.settingsDataStore.data.first()
+        prefs[profileManager.profileBooleanKey(IPTV_FAVORITES_ON_HOME)] ?: true
+    }.getOrDefault(true)
+
+    /**
+     * Places the Favorite TV row according to that preference.
+     *
+     * Every home ordering site resolves rows by walking `savedCatalogs`, so doing this
+     * once here covers all of them instead of special-casing each. On this profile the
+     * catalog sat at index 67 of 71 — below ~60 collection tiles — which put the row
+     * near the bottom of the screen and made it look like it was never built.
+     */
+    private fun applyIptvFavoritesPlacement(
+        savedCatalogs: List<CatalogConfig>,
+        enabled: Boolean
+    ): List<CatalogConfig> {
+        val favIdx = savedCatalogs.indexOfFirst { it.id == FAVORITE_TV_CATEGORY_ID }
+        if (favIdx < 0) return savedCatalogs
+        // Dropping the config keeps the ordering resolvers from emitting the row at all;
+        // buildFavoriteTvOutcome() independently returns Empty so the additive passes,
+        // which never look at savedCatalogs, stay in agreement.
+        if (!enabled) return savedCatalogs.filterNot { it.id == FAVORITE_TV_CATEGORY_ID }
+        if (favIdx == 0) return savedCatalogs
+        return buildList(savedCatalogs.size) {
+            add(savedCatalogs[favIdx])
+            savedCatalogs.forEachIndexed { idx, cfg -> if (idx != favIdx) add(cfg) }
+        }
     }
 
     private fun isCustomCatalogConfig(cfg: CatalogConfig): Boolean {
@@ -1256,6 +1337,7 @@ class HomeViewModel @Inject constructor(
     private var loadHomeRequestId: Long = 0L
     private var activeRuntimeProfileId: String? = null
     private var observedContentLanguage: String? = null
+    private var observedIptvFavoritesOnHome: Boolean? = null
     private val HERO_DEBOUNCE_MS = 80L // Short debounce; focus idle is handled in HomeScreen
     private val startupCreatedAtMs = SystemClock.elapsedRealtime()
     private val startupSettleMs = if (isLowRamDevice) 5_000L else 4_000L
@@ -1459,6 +1541,7 @@ class HomeViewModel @Inject constructor(
         iptvRepository.invalidateCache()
         _uiState.value = HomeUiState(syncStatus = _uiState.value.syncStatus)
         activeRuntimeProfileId = profileId
+        observedIptvFavoritesOnHome = null
     }
 
     private fun hasCachedLogo(key: String): Boolean = synchronized(logoCacheLock) {
@@ -1686,6 +1769,10 @@ class HomeViewModel @Inject constructor(
                     val normalizedLanguage = mediaRepository.contentLanguage
                     val langChanged = observedContentLanguage?.let { it != normalizedLanguage } ?: false
                     observedContentLanguage = normalizedLanguage
+                    val iptvFavoritesPlacementChanged = observedIptvFavoritesOnHome
+                        ?.let { it != preferences.iptvFavoritesOnHome }
+                        ?: false
+                    observedIptvFavoritesOnHome = preferences.iptvFavoritesOnHome
 
                     _uiState.value = previousState.copy(
                         trailerAutoPlay = preferences.trailerAutoPlay,
@@ -1699,6 +1786,8 @@ class HomeViewModel @Inject constructor(
 
                     if (langChanged) {
                         invalidateContentLanguageCaches()
+                        loadHomeData()
+                    } else if (iptvFavoritesPlacementChanged) {
                         loadHomeData()
                     } else if (autoplayJustEnabled) {
                         _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
@@ -2459,7 +2548,7 @@ class HomeViewModel @Inject constructor(
                 }
 
                 val cachedContinueWatching = preloadStartupContinueWatchingItems()
-                val savedCatalogs = withContext(networkDispatcher) {
+                val rawSavedCatalogs = withContext(networkDispatcher) {
                     try {
                         streamRepository.removeCustomAddonsByUrl(
                             CollectionTemplateManifest.autoInstalledAddonUrls() +
@@ -2492,6 +2581,8 @@ class HomeViewModel @Inject constructor(
                         }
                     }
                 }
+                val iptvFavoritesOnHome = isIptvFavoritesOnHomeEnabled()
+                val savedCatalogs = applyIptvFavoritesPlacement(rawSavedCatalogs, iptvFavoritesOnHome)
                 currentSavedCatalogs = savedCatalogs
                 savedCatalogById.clear()
                 savedCatalogs.forEach { savedCatalogById[it.id] = it }
@@ -2535,8 +2626,9 @@ class HomeViewModel @Inject constructor(
                     it.id != "continue_watching" && !it.id.startsWith("collection_row_")
                 }
                 // Build Favorite TV category from IPTV cache (runs on IO)
-                val favoriteTvCategory = withContext(Dispatchers.IO) {
-                    runCatching { buildFavoriteTvCategory() }.getOrNull()
+                val favoriteTvOutcome = withContext(Dispatchers.IO) {
+                    runCatching { buildFavoriteTvOutcome() }
+                        .getOrDefault(FavoriteTvOutcome.Unavailable)
                 }
 
                 var loadedFreshCatalogRows = false
@@ -2552,10 +2644,14 @@ class HomeViewModel @Inject constructor(
                         _sportsHomeRows.value.forEach { put(it.id, it) }
                         // Inject Favorite TV so catalog ordering picks it up, or remove
                         // stale skeleton/placeholder if no favorites exist for this profile.
-                        if (favoriteTvCategory != null) {
-                            put(FAVORITE_TV_CATEGORY_ID, favoriteTvCategory)
-                        } else {
-                            remove(FAVORITE_TV_CATEGORY_ID)
+                        // Unavailable means the IPTV cache simply was not hydrated on this
+                        // pass: keep whatever currentBaseCategories already seeded above so
+                        // a transient cache miss cannot delete a row that is on screen.
+                        when (favoriteTvOutcome) {
+                            is FavoriteTvOutcome.Available ->
+                                put(FAVORITE_TV_CATEGORY_ID, favoriteTvOutcome.category)
+                            FavoriteTvOutcome.Empty -> remove(FAVORITE_TV_CATEGORY_ID)
+                            FavoriteTvOutcome.Unavailable -> Unit
                         }
                     }
 
