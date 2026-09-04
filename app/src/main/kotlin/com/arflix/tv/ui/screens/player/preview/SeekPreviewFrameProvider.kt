@@ -30,9 +30,9 @@ import okhttp3.Request
 
 private const val TAG = "SeekPreview"
 private const val PREVIEW_INTERVAL_MS = 10_000L
-private const val PREVIEW_WIDTH_PX = 320
-private const val PREVIEW_MAX_HEIGHT_PX = 180
-private const val DISK_CACHE_LIMIT_BYTES = 96L * 1024L * 1024L
+private const val PREVIEW_WIDTH_PX = 480
+private const val PREVIEW_MAX_HEIGHT_PX = 270
+private const val DISK_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
 private const val RANGE_CHUNK_BYTES = 512 * 1024
 private const val RANGE_MEMORY_LIMIT_BYTES = 4 * 1024 * 1024
 private const val MEDIA3_FRAME_TIMEOUT_MS = 2_500L
@@ -154,7 +154,7 @@ class SeekPreviewFrameProvider(
     }
     private val dispatcher = executor.asCoroutineDispatcher()
     private val memoryCache = object : LruCache<String, Bitmap>(
-        if (memoryClassMb <= 256) 3 * 1024 * 1024 else 8 * 1024 * 1024
+        if (memoryClassMb <= 256) 6 * 1024 * 1024 else 16 * 1024 * 1024
     ) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
@@ -477,7 +477,7 @@ class SeekPreviewFrameProvider(
         val temporary = File(cacheRoot, "$key.tmp")
         runCatching {
             temporary.outputStream().buffered().use { output ->
-                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output))
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
             }
             if (!temporary.renameTo(target)) {
                 temporary.copyTo(target, overwrite = true)

@@ -1280,6 +1280,12 @@
     <string name="live_menu_move_down">Move down</string>
     <string name="live_menu_hide_category">Hide category</string>
     <string name="live_menu_unhide_category">Unhide category</string>
+    <string name="live_menu_lock_category">Lock with profile PIN</string>
+    <string name="live_menu_unlock_category">Remove PIN lock</string>
+    <string name="live_group_enter_pin">Enter PIN to open this group</string>
+    <string name="live_group_pin_incorrect">Incorrect PIN</string>
+    <string name="live_group_pin_required_title">Profile PIN required</string>
+    <string name="live_group_pin_required_message">Set a PIN on this profile before locking TV groups.</string>
     <string name="ratings">Episode Ratings</string>
 
     <!-- Discord Rich Presence -->

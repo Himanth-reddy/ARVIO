@@ -2656,7 +2656,7 @@ class SettingsViewModel @Inject constructor(
             // Auto-triggered refreshes (force=false) keep their soft TTL
             // behavior.
             if (force) {
-                runCatching { iptvRepository.purgeAllIptvSourceCaches() }
+                runCatching { iptvRepository.purgeAllIptvSourceCaches(preserveLiveSnapshot = true) }
             }
             runCatching {
                 val refreshPolicy = settingsIptvRefreshPolicy(force)

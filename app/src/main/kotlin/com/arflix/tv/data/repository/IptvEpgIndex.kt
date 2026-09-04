@@ -19,6 +19,13 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     null,
     DATABASE_VERSION
 ) {
+    init {
+        // Keep the last complete guide readable while a refreshed guide is staged.
+        // Without WAL, a 50k-channel import monopolises SQLite's only connection
+        // and every visible guide query waits behind the writer.
+        setWriteAheadLoggingEnabled(true)
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -34,31 +41,68 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             """.trimIndent()
         )
         db.execSQL(
-            "CREATE INDEX idx_epg_programs_window ON epg_programs(source_key, channel_id, start_ms, end_ms)"
-        )
-        db.execSQL(
             """
             CREATE TABLE epg_sources (
                 source_key TEXT PRIMARY KEY NOT NULL,
-                updated_ms INTEGER NOT NULL
+                updated_ms INTEGER NOT NULL,
+                channel_count INTEGER NOT NULL DEFAULT -1,
+                program_count INTEGER NOT NULL DEFAULT -1
             )
             """.trimIndent()
         )
     }
 
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        // The composite guide key is several columns wide. A modest page cache
+        // prevents a 50k-channel refresh from repeatedly paging the B-tree from
+        // disk, without consuming enough RAM to compete with the TV UI.
+        db.execSQL("PRAGMA cache_size=-16384")
+    }
+
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion == 2 && newVersion >= 3) {
+            // Preserve the user's already parsed guide. Counts are intentionally
+            // unknown until the next normal refresh; startup must never scan the
+            // complete programme table merely to decide whether to refresh it.
+            db.execSQL("ALTER TABLE epg_sources ADD COLUMN channel_count INTEGER NOT NULL DEFAULT -1")
+            db.execSQL("ALTER TABLE epg_sources ADD COLUMN program_count INTEGER NOT NULL DEFAULT -1")
+        }
+        if (oldVersion in 2..3 && newVersion >= 4) {
+            // Existing guides keep their redundant index until the next background
+            // refresh. Dropping a large index here would block the first TV-page
+            // query after an app update for several seconds.
+            return
+        }
+        if (oldVersion == 2 && newVersion == 3) return
         db.execSQL("DROP TABLE IF EXISTS epg_programs")
         db.execSQL("DROP TABLE IF EXISTS epg_sources")
         onCreate(db)
     }
 
-    fun replaceAll(sourceKey: String, nowNext: Map<String, IptvNowNext>, updatedAtMs: Long) {
+    fun replaceAll(
+        sourceKey: String,
+        nowNext: Map<String, IptvNowNext>,
+        updatedAtMs: Long,
+        shouldAbort: () -> Boolean = { false }
+    ) {
         if (sourceKey.isBlank() || nowNext.isEmpty()) return
+        abortIfRequested(shouldAbort)
 
-        writableDatabase.runInTransaction {
+        val db = writableDatabase
+        // The primary-key auto-index already has the same source/channel/start
+        // prefix used by guide-window queries. Remove the legacy duplicate on this
+        // background refresh instead of delaying the first visible guide query.
+        db.execSQL("DROP INDEX IF EXISTS idx_epg_programs_window")
+        db.runInTransaction {
+            abortIfRequested(shouldAbort)
             delete("epg_programs", "source_key = ?", arrayOf(sourceKey))
-            insertNowNextRows(sourceKey, nowNext)
-            upsertSource(sourceKey, updatedAtMs)
+            val stats = insertNowNextRows(sourceKey, nowNext, shouldAbort)
+            abortIfRequested(shouldAbort)
+            upsertSource(sourceKey, updatedAtMs, stats.channelCount, stats.programCount)
+        }
+        if (!shouldAbort()) {
+            db.checkpointWalAfterBulkWrite()
         }
     }
 
@@ -76,7 +120,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     delete("epg_programs", "source_key = ? AND channel_id IN ($placeholders)", args)
                 }
             insertNowNextRows(sourceKey, nowNext)
-            upsertSource(sourceKey, updatedAtMs)
+            touchSource(sourceKey, updatedAtMs)
         }
     }
 
@@ -151,22 +195,24 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
 
     fun countChannelsWithPrograms(sourceKey: String): Int {
         if (sourceKey.isBlank()) return 0
-        return readableDatabase.rawQuery(
-            "SELECT COUNT(DISTINCT channel_id) FROM epg_programs WHERE source_key = ?",
-            arrayOf(sourceKey)
-        ).use { cursor ->
-            if (cursor.moveToFirst()) cursor.getInt(0) else 0
-        }
+        return sourceStat(sourceKey, "channel_count")
     }
 
     fun countPrograms(sourceKey: String): Int {
         if (sourceKey.isBlank()) return 0
-        return readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM epg_programs WHERE source_key = ?",
+        return sourceStat(sourceKey, "program_count")
+    }
+
+    private fun sourceStat(sourceKey: String, column: String): Int {
+        val value = readableDatabase.rawQuery(
+            "SELECT $column FROM epg_sources WHERE source_key = ? LIMIT 1",
             arrayOf(sourceKey)
         ).use { cursor ->
-            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+            if (cursor.moveToFirst()) cursor.getInt(0) else -1
         }
+        // A migrated v2 index uses -1 until its next refresh. Returning quickly
+        // is more important than a synchronous full-table COUNT on TV startup.
+        return value.coerceAtLeast(0)
     }
 
     fun deleteSource(sourceKey: String) {
@@ -247,17 +293,66 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    private fun SQLiteDatabase.insertNowNextRows(sourceKey: String, nowNext: Map<String, IptvNowNext>) {
-        val statement = compileStatement(
-            """
-            INSERT OR REPLACE INTO epg_programs
-            (source_key, channel_id, start_ms, end_ms, title, description)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """.trimIndent()
-        )
+    private data class PendingProgramRow(
+        val channelId: String,
+        val startMs: Long,
+        val endMs: Long,
+        val title: String,
+        val description: String?
+    )
+
+    private data class InsertStats(val channelCount: Int, val programCount: Int)
+
+    private fun SQLiteDatabase.insertNowNextRows(
+        sourceKey: String,
+        nowNext: Map<String, IptvNowNext>,
+        shouldAbort: () -> Boolean = { false }
+    ): InsertStats {
+        val pending = ArrayList<PendingProgramRow>(MAX_INSERT_ROWS)
+        val statements = HashMap<Int, android.database.sqlite.SQLiteStatement>(2)
+        var insertedChannels = 0
+        var insertedPrograms = 0
+
+        fun flushPending() {
+            if (pending.isEmpty()) return
+            abortIfRequested(shouldAbort)
+            val rowCount = pending.size
+            val statement = statements.getOrPut(rowCount) {
+                val values = List(rowCount) { "(?, ?, ?, ?, ?, ?)" }.joinToString(",")
+                compileStatement(
+                    """
+                    INSERT OR IGNORE INTO epg_programs
+                    (source_key, channel_id, start_ms, end_ms, title, description)
+                    VALUES $values
+                    """.trimIndent()
+                )
+            }
+            statement.clearBindings()
+            var bindIndex = 1
+            pending.forEach { row ->
+                statement.bindString(bindIndex++, sourceKey)
+                statement.bindString(bindIndex++, row.channelId)
+                statement.bindLong(bindIndex++, row.startMs)
+                statement.bindLong(bindIndex++, row.endMs)
+                statement.bindString(bindIndex++, row.title)
+                if (row.description.isNullOrBlank()) {
+                    statement.bindNull(bindIndex++)
+                } else {
+                    statement.bindString(bindIndex++, row.description)
+                }
+            }
+            // execute() avoids retrieving a row id for a result that is never used.
+            statement.execute()
+            pending.clear()
+        }
+
         try {
             val seenPrograms = HashSet<ProgramDedupKey>(128)
-            nowNext.forEach { (channelId, item) ->
+            // The primary key starts with source_key/channel_id. ConcurrentHashMap
+            // iteration is effectively random and turned a 150k-row refresh into
+            // thousands of random B-tree page reads on low-memory TVs. Inserting in
+            // key order keeps the write sequential and is dramatically cheaper.
+            nowNext.entries.sortedBy { it.key }.forEach { (channelId, item) ->
                 val normalizedId = channelId.trim()
                 if (normalizedId.isBlank()) return@forEach
                 seenPrograms.clear()
@@ -269,18 +364,16 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     if (!seenPrograms.add(key)) return
 
                     val description = program.description?.trim()?.take(MAX_DESCRIPTION_CHARS)
-                    statement.clearBindings()
-                    statement.bindString(1, sourceKey)
-                    statement.bindString(2, normalizedId)
-                    statement.bindLong(3, program.startUtcMillis)
-                    statement.bindLong(4, program.endUtcMillis)
-                    statement.bindString(5, titleTrimmed)
-                    if (description.isNullOrBlank()) {
-                        statement.bindNull(6)
-                    } else {
-                        statement.bindString(6, description)
+                    pending += PendingProgramRow(
+                        channelId = normalizedId,
+                        startMs = program.startUtcMillis,
+                        endMs = program.endUtcMillis,
+                        title = titleTrimmed,
+                        description = description
+                    )
+                    if (pending.size == MAX_INSERT_ROWS) {
+                        flushPending()
                     }
-                    statement.executeInsert()
                 }
 
                 item.now?.let(::insertProgram)
@@ -288,19 +381,57 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                 item.later?.let(::insertProgram)
                 item.upcoming.forEach(::insertProgram)
                 item.recent.forEach(::insertProgram)
+                if (seenPrograms.isNotEmpty()) {
+                    insertedChannels++
+                    insertedPrograms += seenPrograms.size
+                }
             }
+            flushPending()
         } finally {
-            statement.close()
+            statements.values.forEach { it.close() }
+        }
+        return InsertStats(insertedChannels, insertedPrograms)
+    }
+
+    private fun abortIfRequested(shouldAbort: () -> Boolean) {
+        if (shouldAbort()) {
+            throw kotlinx.coroutines.CancellationException(
+                "EPG index update deferred while Live TV is interactive"
+            )
         }
     }
 
-    private fun SQLiteDatabase.upsertSource(sourceKey: String, updatedAtMs: Long) {
+    private fun SQLiteDatabase.upsertSource(
+        sourceKey: String,
+        updatedAtMs: Long,
+        channelCount: Int,
+        programCount: Int
+    ) {
         compileStatement(
-            "INSERT OR REPLACE INTO epg_sources(source_key, updated_ms) VALUES (?, ?)"
+            """
+            INSERT OR REPLACE INTO epg_sources
+            (source_key, updated_ms, channel_count, program_count)
+            VALUES (?, ?, ?, ?)
+            """.trimIndent()
         ).use { statement ->
             statement.bindString(1, sourceKey)
             statement.bindLong(2, updatedAtMs)
+            statement.bindLong(3, channelCount.toLong())
+            statement.bindLong(4, programCount.toLong())
             statement.executeInsert()
+        }
+    }
+
+    private fun SQLiteDatabase.touchSource(sourceKey: String, updatedAtMs: Long) {
+        val updated = compileStatement(
+            "UPDATE epg_sources SET updated_ms = ? WHERE source_key = ?"
+        ).use { statement ->
+            statement.bindLong(1, updatedAtMs)
+            statement.bindString(2, sourceKey)
+            statement.executeUpdateDelete()
+        }
+        if (updated == 0) {
+            upsertSource(sourceKey, updatedAtMs, channelCount = -1, programCount = -1)
         }
     }
 
@@ -354,15 +485,34 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    private fun SQLiteDatabase.checkpointWalAfterBulkWrite() {
+        runCatching {
+            rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    System.err.println(
+                        "[IPTV-Timing] EPG WAL checkpoint busy=${cursor.getInt(0)} " +
+                            "log=${cursor.getInt(1)} checkpointed=${cursor.getInt(2)}"
+                    )
+                }
+            }
+        }.onFailure { error ->
+            System.err.println("[IPTV-Timing] EPG WAL checkpoint deferred: ${error.message}")
+        }
+    }
+
 
     private companion object {
         const val DATABASE_NAME = "arvio_iptv_epg_index.db"
-        // v2: drops the guide table on upgrade. A previous build's full-guide backfill
+        // v2 dropped the guide table on upgrade. A previous build's full-guide backfill
         // bloated it with up to 336 programmes/channel; loading 360 such channels into
         // memory churned the heap and crashed the Live TV page. Recreating it clears
         // that, and the reduced caps below keep per-channel memory bounded.
-        const val DATABASE_VERSION = 2
+        // v3 persists coverage statistics so startup never scans the whole table.
+        // v4 removes the duplicate programme-window index to speed up bulk imports.
+        const val DATABASE_VERSION = 4
         const val MAX_SQL_ARGS = 900
+        const val INSERT_BINDINGS_PER_ROW = 6
+        const val MAX_INSERT_ROWS = MAX_SQL_ARGS / INSERT_BINDINGS_PER_ROW
         const val MAX_DESCRIPTION_CHARS = 200
         // ±48h of guide needs only ~24-48 programmes each way. Keeping 96+240 held far
         // more in memory than the grid ever shows.

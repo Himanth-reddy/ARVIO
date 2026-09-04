@@ -7,16 +7,10 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
-import android.graphics.Bitmap
 import com.arflix.tv.util.findActivity
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.view.PixelCopy
-import android.view.SurfaceView
-import android.view.TextureView
 import com.arflix.tv.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -173,14 +167,11 @@ import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.suspendCancellableCoroutine
 import androidx.compose.runtime.rememberCoroutineScope
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -248,6 +239,8 @@ private const val CONSTRAINED_SEEK_COMMIT_DELAY_MS = 60L
 private const val QUICK_SEEK_DISMISS_DELAY_MS = 2_200L
 private const val SEEK_PREVIEW_DEBOUNCE_MS = 16L
 private const val SEEK_PREVIEW_TIMEOUT_MS = 4_500L
+private const val QUICK_SEEK_PREVIEW_THRESHOLD_MS = 20_000L
+private const val QUICK_SEEK_PREVIEW_COMMIT_GRACE_MS = 850L
 
 private fun isSafePlaybackHeader(name: String, value: String): Boolean {
     return name.isNotBlank() &&
@@ -413,6 +406,7 @@ fun PlayerScreen(
     var showSkipOverlay by remember { mutableStateOf(false) }
     var lastSkipTime by remember { mutableLongStateOf(0L) }
     var skipPreviewPosition by remember { mutableLongStateOf(0L) }
+    var quickSeekOriginPosition by remember { mutableLongStateOf(0L) }
     var quickSeekCommitJob by remember { mutableStateOf<Job?>(null) }
     var isControlScrubbing by remember { mutableStateOf(false) }
     var scrubPreviewPosition by remember { mutableLongStateOf(0L) }
@@ -449,10 +443,6 @@ fun PlayerScreen(
     var trackbarFocused by remember { mutableStateOf(false) }
     var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
     var controlsSeekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
-    var latestRenderedSeekPreview by remember { mutableStateOf<SeekPreviewFrame?>(null) }
-    var playerViewForSeekPreview by remember {
-        mutableStateOf<FullViewportSubtitlePlayerView?>(null)
-    }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
     // a 10-second countdown lets the user stop watching or immediately Continue. On timeout we
     // advance to the next episode. Gated on the existing autoPlayNext profile setting —
@@ -686,9 +676,6 @@ fun PlayerScreen(
     // Guard against accessing a released ExoPlayer from long-running coroutines (can crash on some devices).
     // AtomicBoolean gives cross-thread visibility; Compose state drives recomposition.
     val playerReleasedAtomic = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
-    val lastRenderedVideoFrameUs = remember {
-        java.util.concurrent.atomic.AtomicLong(C.TIME_UNSET)
-    }
     var playerReleased by remember { mutableStateOf(false) }
 
     // Picture-in-Picture state
@@ -1150,9 +1137,6 @@ fun PlayerScreen(
             .build().apply {
                 // Ensure volume is at maximum
                 volume = 1.0f
-                setVideoFrameMetadataListener { presentationTimeUs, _, _, _ ->
-                    lastRenderedVideoFrameUs.set(presentationTimeUs)
-                }
 
                 // Add error listener to try next stream on codec errors
                 addListener(object : Player.Listener {
@@ -1538,8 +1522,6 @@ fun PlayerScreen(
     ) {
         seekPreviewFrame = null
         controlsSeekPreviewFrame = null
-        latestRenderedSeekPreview = null
-        lastRenderedVideoFrameUs.set(C.TIME_UNSET)
         val url = uiState.selectedStreamUrl
         val selected = uiState.selectedStream
         val headers = selected
@@ -1582,73 +1564,39 @@ fun PlayerScreen(
 
     val resolveSeekPreviewFrame: suspend (Long) -> SeekPreviewFrame? = { previewBucket ->
         seekPreviewProvider.memoryFrameAt(previewBucket)
+            ?.takeIf { it.positionMs == previewBucket }
             ?: seekPreviewProvider.cachedFrameAt(previewBucket)
-            ?: supervisorScope {
-                val results = Channel<SeekPreviewFrame?>(capacity = 2)
-                val jobs = mutableListOf<Job>()
-                jobs += launch {
-                    val renderedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                        val targetUs = previewBucket * 1_000L
-                        while (
-                            lastRenderedVideoFrameUs.get() == C.TIME_UNSET ||
-                            abs(lastRenderedVideoFrameUs.get() - targetUs) > 5_500_000L
-                        ) {
-                            if (playerReleased) return@withTimeoutOrNull null
-                            delay(16L)
-                        }
-                        delay(16L)
-                        playerViewForSeekPreview?.let { playerView ->
-                            captureRenderedSeekPreview(playerView)
-                        }
-                    }?.let { renderedBitmap ->
-                        seekPreviewProvider.rememberRenderedFrame(
-                            positionMs = previewBucket,
-                            bitmap = renderedBitmap,
-                        )
-                    }
-                    results.send(renderedFrame)
-                }
-
-                if (allowSecondarySeekPreviewDecoder) {
-                    jobs += launch {
-                        val extractedFrame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                            seekPreviewProvider.frameAt(previewBucket)
-                        }
-                        results.send(extractedFrame)
-                    }
-                }
-
-                var winner: SeekPreviewFrame? = null
-                for (ignored in jobs.indices) {
-                    val candidate = results.receive()
-                    if (candidate != null) {
-                        winner = candidate
-                        break
-                    }
-                }
-                jobs.forEach { it.cancel() }
-                results.close()
-                winner
+                ?.takeIf { it.positionMs == previewBucket }
+            ?: if (allowSecondarySeekPreviewDecoder) {
+                withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+                    seekPreviewProvider.frameAt(previewBucket)
+                }?.takeIf { it.positionMs == previewBucket }
+            } else {
+                null
             }
     }
 
+    val showQuickSeekPreview = showSkipOverlay &&
+        abs(skipPreviewPosition - quickSeekOriginPosition) >= QUICK_SEEK_PREVIEW_THRESHOLD_MS
     LaunchedEffect(
-        showSkipOverlay,
+        showQuickSeekPreview,
         quickSeekPreviewBucket,
         uiState.selectedStreamUrl,
         uiState.streamSelectionNonce,
         hasPlaybackStarted,
         isCasting,
     ) {
-        if (!showSkipOverlay || !hasPlaybackStarted || isCasting || duration <= 0L) {
+        if (!showQuickSeekPreview || !hasPlaybackStarted || isCasting || duration <= 0L) {
             seekPreviewFrame = null
             return@LaunchedEffect
         }
+        seekPreviewFrame = seekPreviewProvider.memoryFrameAt(quickSeekPreviewBucket)
+            ?.takeIf { it.positionMs == quickSeekPreviewBucket }
         delay(SEEK_PREVIEW_DEBOUNCE_MS)
-        // Capable devices race source extraction against the frame rendered by the active player.
-        // Constrained 4K/DV televisions keep using only the active decoder.
         val frame = resolveSeekPreviewFrame(quickSeekPreviewBucket)
-        if (frame != null) seekPreviewFrame = frame
+        if (frame != null && frame.positionMs == quickSeekPreviewBucket) {
+            seekPreviewFrame = frame
+        }
     }
 
     val controlsPreviewPosition = if (isControlScrubbing) scrubPreviewPosition else currentPosition
@@ -1674,116 +1622,21 @@ fun PlayerScreen(
             controlsSeekPreviewFrame = null
             return@LaunchedEffect
         }
-        if (controlsSeekPreviewFrame == null) {
-            controlsSeekPreviewFrame = latestRenderedSeekPreview
-        }
+        controlsSeekPreviewFrame = seekPreviewProvider.memoryFrameAt(controlsPreviewBucket)
+            ?.takeIf { it.positionMs == controlsPreviewBucket }
         delay(SEEK_PREVIEW_DEBOUNCE_MS)
-        resolveSeekPreviewFrame(controlsPreviewBucket)?.let { frame ->
-            controlsSeekPreviewFrame = frame
-        }
+        resolveSeekPreviewFrame(controlsPreviewBucket)
+            ?.takeIf { it.positionMs == controlsPreviewBucket }
+            ?.let { frame ->
+                controlsSeekPreviewFrame = frame
+            }
     }
 
-    // Cache one already-rendered frame per ten-second bucket. This costs no extra video decoder and
-    // makes backwards navigation immediate even on memory-constrained televisions.
-    LaunchedEffect(
-        hasPlaybackStarted,
-        uiState.selectedStreamUrl,
-        uiState.streamSelectionNonce,
-        duration,
-        isCasting,
-    ) {
-        if (!hasPlaybackStarted || duration <= 0L || isLiveStream || isCasting) return@LaunchedEffect
-        var lastCapturedBucket = Long.MIN_VALUE
-        while (!playerReleased) {
-            if (isBuffering || showSkipOverlay) {
-                delay(120L)
-                continue
-            }
-            val renderedUs = lastRenderedVideoFrameUs.get()
-            if (renderedUs == C.TIME_UNSET) {
-                delay(40L)
-                continue
-            }
-            val renderedPositionMs = (renderedUs / 1_000L).coerceIn(0L, duration)
-            val bucket = quantizeSeekPreviewPosition(renderedPositionMs, duration)
-            if (bucket == lastCapturedBucket) {
-                delay(250L)
-                continue
-            }
-            lastCapturedBucket = bucket
-            val cachedFrame = seekPreviewProvider.cachedFrameAt(bucket)
-            if (cachedFrame != null) {
-                latestRenderedSeekPreview = cachedFrame
-                delay(250L)
-                continue
-            }
-            playerViewForSeekPreview?.let { playerView ->
-                captureRenderedSeekPreview(playerView)?.let { bitmap ->
-                    latestRenderedSeekPreview =
-                        seekPreviewProvider.rememberRenderedFrame(bucket, bitmap)
-                }
-            }
-            delay(250L)
-        }
-    }
-
-    val playbackPreviewBucket = quantizeSeekPreviewPosition(currentPosition, duration)
-
-    // Devices with decoder headroom also prepare nearby buckets. On low-memory TVs
-    // this is deliberately disabled so preview work can never compete with primary playback.
-    LaunchedEffect(
-        playbackPreviewBucket,
-        uiState.selectedStreamUrl,
-        uiState.streamSelectionNonce,
-        hasPlaybackStarted,
-    ) {
-        if (
-            !hasPlaybackStarted ||
-            duration <= 0L ||
-            isLiveStream ||
-            isCasting
-        ) return@LaunchedEffect
-
-        val nearbyPositions = listOf(10_000L, -10_000L, 20_000L)
-            .map { offset -> (playbackPreviewBucket + offset).coerceIn(0L, duration) }
-            .filter { position -> position != playbackPreviewBucket }
-            .distinct()
-        val missingPositions = nearbyPositions.filter { position ->
-            seekPreviewProvider.cachedFrameAt(position) == null
-        }
-        if (!allowSecondarySeekPreviewDecoder || isBuffering || missingPositions.isEmpty()) {
-            return@LaunchedEffect
-        }
-
-        // Prepare the next D-pad target first, as soon as the first video frame is visible.
-        val firstForwardPosition = (playbackPreviewBucket + 10_000L).coerceIn(0L, duration)
-        if (firstForwardPosition in missingPositions) {
-            withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                seekPreviewProvider.frameAt(firstForwardPosition)
-            }
-        }
-
-        var bufferAheadMs = 0L
-        var bufferChecks = 0
-        while (bufferChecks < 8 && isPlaying && bufferAheadMs < 12_000L) {
-            delay(250L)
-            if (!playerReleased && !isBuffering) {
-                bufferAheadMs =
-                    (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
-            }
-            bufferChecks += 1
-        }
-        if (playerReleased || isBuffering || (isPlaying && bufferAheadMs < 12_000L)) {
-            return@LaunchedEffect
-        }
-        missingPositions.forEach { position ->
-            if (position == firstForwardPosition) return@forEach
-            if (seekPreviewProvider.memoryFrameAt(position) != null) return@forEach
-            withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                seekPreviewProvider.frameAt(position)
-            }
-        }
-    }
+    // Preview decoding is intentionally demand-driven. Background extraction on the same
+    // single-threaded retriever used to queue several nearby frames ahead of the frame selected
+    // by the user, so the video seek completed before its thumbnail. Rendered-screen captures
+    // also labelled the current image as a future position and produced cropped/incorrect cards.
+    // Exact memory and disk hits remain instant; a cold arbitrary source request starts first.
 
     DisposableEffect(lifecycleOwner, exoPlayer) {
         val observer = LifecycleEventObserver { _, event ->
@@ -1854,6 +1707,7 @@ fun PlayerScreen(
         }
         showSkipOverlay = false
         skipPreviewPosition = 0L
+        quickSeekOriginPosition = 0L
         seekPreviewFrame = null
     }
 
@@ -1868,40 +1722,48 @@ fun PlayerScreen(
         val continuing = showSkipOverlay && now - lastSkipTime < QUICK_SEEK_DISMISS_DELAY_MS
         if (!continuing) {
             val originPosition = exoPlayer.currentPosition.coerceIn(0L, duration)
+            quickSeekOriginPosition = originPosition
             skipPreviewPosition = originPosition
-            seekPreviewFrame = latestRenderedSeekPreview
-            if (seekPreviewFrame == null) {
-                coroutineScope.launch {
-                    val fallback = seekPreviewProvider.cachedFrameAt(originPosition)
-                        ?: playerViewForSeekPreview?.let { playerView ->
-                            captureRenderedSeekPreview(playerView)?.let { bitmap ->
-                                seekPreviewProvider.rememberRenderedFrame(originPosition, bitmap)
-                            }
-                        }
-                    if (showSkipOverlay && seekPreviewFrame == null) {
-                        seekPreviewFrame = fallback
-                    }
-                }
-            }
+            seekPreviewFrame = null
         }
         val targetPosition = (skipPreviewPosition + deltaMs).coerceIn(0L, duration)
         skipPreviewPosition = targetPosition
-        seekPreviewProvider.memoryFrameAt(targetPosition)?.let { warmedFrame ->
-            seekPreviewFrame = warmedFrame
+        val targetBucket = quantizeSeekPreviewPosition(targetPosition, duration)
+        val wantsPreview = abs(targetPosition - quickSeekOriginPosition) >=
+            QUICK_SEEK_PREVIEW_THRESHOLD_MS
+        seekPreviewFrame = if (wantsPreview) {
+            seekPreviewProvider.memoryFrameAt(targetBucket)
+                ?.takeIf { it.positionMs == targetBucket }
+        } else {
+            null
         }
         lastSkipTime = now
         showSkipOverlay = true
 
         quickSeekCommitJob?.cancel()
         quickSeekCommitJob = coroutineScope.launch {
-            delay(
-                if (allowSecondarySeekPreviewDecoder) {
-                    QUICK_SEEK_COMMIT_DELAY_MS
-                } else {
-                    CONSTRAINED_SEEK_COMMIT_DELAY_MS
+            if (wantsPreview && allowSecondarySeekPreviewDecoder) {
+                val deadline = System.currentTimeMillis() + QUICK_SEEK_PREVIEW_COMMIT_GRACE_MS
+                while (
+                    showSkipOverlay &&
+                    skipPreviewPosition == targetPosition &&
+                    seekPreviewFrame?.positionMs != targetBucket &&
+                    System.currentTimeMillis() < deadline
+                ) {
+                    delay(16L)
                 }
-            )
-            if (!playerReleased) exoPlayer.seekTo(skipPreviewPosition)
+            } else {
+                delay(
+                    if (allowSecondarySeekPreviewDecoder) {
+                        QUICK_SEEK_COMMIT_DELAY_MS
+                    } else {
+                        CONSTRAINED_SEEK_COMMIT_DELAY_MS
+                    }
+                )
+            }
+            if (!playerReleased && skipPreviewPosition == targetPosition) {
+                exoPlayer.seekTo(targetPosition)
+            }
             quickSeekCommitJob = null
         }
     }
@@ -1921,9 +1783,9 @@ fun PlayerScreen(
         val unclamped = (basePosition + deltaMs).coerceAtLeast(0L)
         val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
         scrubPreviewPosition = targetPosition
-        seekPreviewProvider.memoryFrameAt(targetPosition)?.let { warmedFrame ->
-            controlsSeekPreviewFrame = warmedFrame
-        }
+        val targetBucket = quantizeSeekPreviewPosition(targetPosition, duration)
+        controlsSeekPreviewFrame = seekPreviewProvider.memoryFrameAt(targetBucket)
+            ?.takeIf { it.positionMs == targetBucket }
         isControlScrubbing = true
         controlsSeekJob?.cancel()
         controlsSeekJob = coroutineScope.launch {
@@ -3576,10 +3438,9 @@ fun PlayerScreen(
                                 inPictureInPicture = isInPipMode,
                             )
                         }
-                    }.also { playerViewForSeekPreview = it }
+                    }
                 },
                 update = { playerView ->
-                    playerViewForSeekPreview = playerView
                     playerView.keepScreenOn = true
                     playerView.player = exoPlayer
                     playerView.resizeMode = playerResizeMode
@@ -4239,7 +4100,9 @@ fun PlayerScreen(
                                     trackbarFocused = state.isFocused
                                     if (state.isFocused && !isControlScrubbing) {
                                         scrubPreviewPosition = currentPosition
-                                        controlsSeekPreviewFrame = latestRenderedSeekPreview
+                                        val bucket = quantizeSeekPreviewPosition(currentPosition, duration)
+                                        controlsSeekPreviewFrame = seekPreviewProvider.memoryFrameAt(bucket)
+                                            ?.takeIf { it.positionMs == bucket }
                                     }
                                     if (!state.isFocused && isControlScrubbing) commitControlsSeekNow()
                                 }
@@ -4659,29 +4522,6 @@ fun PlayerScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            text = formatTime(previewPosition),
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                            ),
-                            color = Color.White,
-                        )
-                        Text(
-                            text = formatTime(duration),
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                            ),
-                            color = Color.White.copy(alpha = 0.75f),
-                        )
-                    }
                 }
             }
         }
@@ -6599,67 +6439,6 @@ private class PlaybackCookieJar : CookieJar {
     }
 }
 
-private suspend fun captureRenderedSeekPreview(
-    playerView: FullViewportSubtitlePlayerView,
-): Bitmap? = withContext(Dispatchers.Main.immediate) {
-    val surface = playerView.videoSurfaceView ?: return@withContext null
-    if (surface.width <= 0 || surface.height <= 0) return@withContext null
-
-    val videoSize = playerView.player?.videoSize
-    val displayAspectRatio = seekPreviewDisplayAspectRatio(
-        videoWidth = videoSize?.width ?: 0,
-        videoHeight = videoSize?.height ?: 0,
-        pixelWidthHeightRatio = videoSize?.pixelWidthHeightRatio ?: 1f,
-        unappliedRotationDegrees = videoSize?.unappliedRotationDegrees ?: 0,
-        fallbackWidth = surface.width,
-        fallbackHeight = surface.height,
-    )
-    val (previewWidth, previewHeight) = fitSeekPreviewAspectRatio(
-        aspectRatio = displayAspectRatio,
-        maxWidth = 416,
-        maxHeight = 234,
-    )
-    val output = Bitmap.createBitmap(previewWidth, previewHeight, Bitmap.Config.ARGB_8888)
-    when (surface) {
-        is TextureView -> {
-            runCatching { surface.getBitmap(output) }
-                .getOrNull()
-                ?.let { output }
-                ?: run {
-                    output.recycle()
-                    null
-                }
-        }
-        is SurfaceView -> {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !surface.holder.surface.isValid) {
-                output.recycle()
-                return@withContext null
-            }
-            suspendCancellableCoroutine { continuation ->
-                PixelCopy.request(
-                    surface,
-                    output,
-                    { result ->
-                        if (!continuation.isActive) {
-                            output.recycle()
-                        } else if (result == PixelCopy.SUCCESS) {
-                            continuation.resume(output)
-                        } else {
-                            output.recycle()
-                            continuation.resume(null)
-                        }
-                    },
-                    Handler(Looper.getMainLooper()),
-                )
-            }
-        }
-        else -> {
-            output.recycle()
-            null
-        }
-    }
-}
-
 @Composable
 private fun SeekPreviewCard(
     frame: SeekPreviewFrame,
@@ -6706,7 +6485,7 @@ private fun buildSeekPreviewCacheIdentity(
     stream: StreamSource?,
 ): String = buildString {
     // Bump when preview rendering changes so malformed frames from older builds are not reused.
-    append("v3|")
+    append("v4|")
     append(mediaType.name).append('|').append(mediaId)
     append('|').append(seasonNumber ?: 0).append('|').append(episodeNumber ?: 0)
     if (stream != null) {
