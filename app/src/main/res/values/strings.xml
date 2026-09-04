@@ -880,6 +880,12 @@
     <string name="details_cd_season_options">Show season options</string>
     <string name="home_top10_movies_today">Top 10 Movies Today</string>
     <string name="home_top10_shows_today">Top 10 Shows Today</string>
+    <string name="home_favorite_tv">Favorite TV</string>
+    <string name="home_sports">Sports</string>
+    <string name="home_popular_live_sports">Popular Live Sports</string>
+    <string name="home_just_added">Just Added</string>
+    <string name="home_top_movies_week">Top Movies This Week</string>
+    <string name="home_new_kdramas">New in K-Dramas</string>
     <string name="home_please_check_connection">Please check your connection</string>
     <string name="home_sports_addon_required">Add a sports live TV addon first</string>
     <string name="home_sports_opening">Opening live event...</string>
