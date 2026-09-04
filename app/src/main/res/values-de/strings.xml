@@ -773,6 +773,12 @@
     <string name="live_menu_move_down">Nach unten</string>
     <string name="live_menu_hide_category">Kategorie ausblenden</string>
     <string name="live_menu_unhide_category">Kategorie einblenden</string>
+    <string name="live_menu_lock_category">Mit Profil-PIN sperren</string>
+    <string name="live_menu_unlock_category">PIN-Sperre entfernen</string>
+    <string name="live_group_enter_pin">PIN eingeben, um diese Gruppe zu öffnen</string>
+    <string name="live_group_pin_incorrect">Falsche PIN</string>
+    <string name="live_group_pin_required_title">Profil-PIN erforderlich</string>
+    <string name="live_group_pin_required_message">Lege für dieses Profil eine PIN fest, bevor du TV-Gruppen sperrst.</string>
     <!-- Updates, errors, profile, auth, plugins, streams and misc (de) -->
     <string name="now_playing">JETZT LÄUFT</string>
     <string name="topbar_tv">TV</string>
@@ -1045,6 +1051,12 @@
     <string name="details_cd_season_options">Staffel-Optionen anzeigen</string>
     <string name="home_top10_movies_today">Top 10 Filme heute</string>
     <string name="home_top10_shows_today">Top 10 Serien heute</string>
+    <string name="home_favorite_tv">Lieblingssender</string>
+    <string name="home_sports">Sport</string>
+    <string name="home_popular_live_sports">Beliebter Live-Sport</string>
+    <string name="home_just_added">Neu hinzugefügt</string>
+    <string name="home_top_movies_week">Top-Filme diese Woche</string>
+    <string name="home_new_kdramas">Neu bei K-Dramas</string>
     <string name="home_please_check_connection">Bitte überprüfe deine Verbindung</string>
     <string name="home_sports_addon_required">Füge zuerst ein Sport-Live-TV-Addon hinzu</string>
     <string name="home_sports_opening">Live-Event wird geöffnet…</string>
