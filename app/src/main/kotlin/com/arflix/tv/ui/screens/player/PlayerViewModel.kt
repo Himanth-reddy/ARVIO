@@ -165,6 +165,7 @@ data class PlayerUiState(
     val subtitleStyle: String = "Bold",
     val subtitleFont: String = SubtitleFontOption.DefaultPreference,
     val subtitleStylized: Boolean = true,
+    val subtitleOffset: String = "Bottom",
     val subtitleVerticalPct: Int = 2,
     val filterSubtitlesByLanguage: Boolean = false,
     val subtitleRemoveHearingImpaired: Boolean = false,
@@ -624,7 +625,7 @@ class PlayerViewModel @Inject constructor(
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber,
             streamProgress = null,
-            streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) "Searching for streams…" else "Preparing stream",
+            streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
             sourceSearchActive = false,
             error = null,
             isSetupError = false
@@ -707,7 +708,7 @@ class PlayerViewModel @Inject constructor(
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
-                streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) "Searching for streams…" else "Preparing stream",
+                streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
                 title = cachedItem?.title ?: currentItemTitle,
                 backdropUrl = cachedItem?.backdrop?.takeIf { it.isNotBlank() }
                     ?: cachedItem?.image?.takeIf { it.isNotBlank() },
@@ -3029,7 +3030,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun setSubtitleSizePct(pct: Int) {
-        val clamped = pct.coerceIn(50, 200)
+        val clamped = pct.coerceIn(50, 250)
         val name = when {
             clamped <= 80 -> "Small"
             clamped >= 130 -> "Extra Large"
@@ -4343,7 +4344,7 @@ class PlayerViewModel @Inject constructor(
             selectedStream = null,
             selectedStreamUrl = null,
             streamProgress = 0f,
-            streamLoadPhase = "Searching for streams…"
+            streamLoadPhase = null
         )
         loadMedia(
             mediaType = currentMediaType,

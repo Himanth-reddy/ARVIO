@@ -120,5 +120,4 @@ class SeekPreviewFrameProviderTest {
         assertEquals(30_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 28_000L, duration))
         assertEquals(10_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 12_000L, duration))
     }
-    }
 }

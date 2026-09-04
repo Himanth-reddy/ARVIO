@@ -1238,7 +1238,7 @@ private fun SubtitleSettingsContent(
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                                onClick = { onUpdateSubtitleSize((subtitleSizePct - 10).coerceAtLeast(50)) }
+                                onClick = { onUpdateSubtitleSize((subtitleSizePct - 10).coerceIn(50, 250)) }
                             )
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
@@ -1259,7 +1259,7 @@ private fun SubtitleSettingsContent(
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                                onClick = { onUpdateSubtitleSize((subtitleSizePct + 10).coerceAtMost(250)) }
+                                onClick = { onUpdateSubtitleSize((subtitleSizePct + 10).coerceIn(50, 250)) }
                             )
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
@@ -2322,37 +2322,7 @@ private fun formatBytes(bytes: Long): String {
     }
 }
 
-internal fun formatLanguageDisplayName(code: String?): String {
-    if (code.isNullOrBlank()) return "Unknown"
-    val normalizedCode = code.lowercase().trim()
-    return when {
-        normalizedCode in listOf("en", "eng", "english") -> "English"
-        normalizedCode in listOf("es", "spa", "spanish") -> "Spanish"
-        normalizedCode in listOf("fr", "fra", "fre", "french") -> "French"
-        normalizedCode in listOf("de", "ger", "deu", "german") -> "German"
-        normalizedCode in listOf("it", "ita", "italian") -> "Italian"
-        normalizedCode in listOf("pt", "por", "portuguese") -> "Portuguese"
-        normalizedCode in listOf("pt-br", "pob") -> "Portuguese (Brazil)"
-        normalizedCode in listOf("ja", "jpn", "japanese") -> "Japanese"
-        normalizedCode in listOf("ko", "kor", "korean") -> "Korean"
-        normalizedCode in listOf("zh", "chi", "zho", "chinese") -> "Chinese"
-        normalizedCode in listOf("hi", "hin", "hindi") -> "Hindi"
-        normalizedCode in listOf("ru", "rus", "russian") -> "Russian"
-        normalizedCode in listOf("ar", "ara", "arabic") -> "Arabic"
-        normalizedCode in listOf("nl", "nld", "dut", "dutch") -> "Dutch"
-        normalizedCode in listOf("pl", "pol", "polish") -> "Polish"
-        normalizedCode in listOf("tr", "tur", "turkish") -> "Turkish"
-        normalizedCode in listOf("sv", "swe", "swedish") -> "Swedish"
-        normalizedCode in listOf("no", "nor", "norwegian") -> "Norwegian"
-        normalizedCode in listOf("da", "dan", "danish") -> "Danish"
-        normalizedCode in listOf("fi", "fin", "finnish") -> "Finnish"
-        normalizedCode in listOf("th", "tha", "thai") -> "Thai"
-        normalizedCode in listOf("vi", "vie", "vietnamese") -> "Vietnamese"
-        normalizedCode in listOf("id", "ind", "indonesian") -> "Indonesian"
-        normalizedCode in listOf("und", "unknown") -> "Unknown"
-        else -> code.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
-    }
-}
+internal fun formatLanguageDisplayName(code: String?): String = getFullLanguageName(code)
 
 internal fun formatAudioCodecDisplayName(codec: String?): String? {
     if (codec.isNullOrBlank()) return null
@@ -2528,7 +2498,7 @@ fun MobileSubtitleRepositionOverlay(
         // already renders and moves them live at this exact position.
         // If no real subtitles are on screen, render the sample subtitle preview.
         if (!hasActiveSubtitles) {
-            val computedSizeSp = (24f * (subtitleSizePct.coerceIn(50, 300) / 100f)).sp
+            val computedSizeSp = (24f * (subtitleSizePct.coerceIn(50, 250) / 100f)).sp
 
             Box(
                 modifier = Modifier

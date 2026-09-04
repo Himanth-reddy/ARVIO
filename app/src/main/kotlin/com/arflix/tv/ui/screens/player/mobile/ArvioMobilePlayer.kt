@@ -79,6 +79,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,6 +104,7 @@ import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.ui.screens.player.AudioTrackInfo
 import com.arflix.tv.ui.screens.player.PlayerUiState
+import com.arflix.tv.ui.screens.player.localizedText
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import com.arflix.tv.ui.theme.ArflixTypography
 import kotlinx.coroutines.delay
@@ -292,8 +294,11 @@ fun ArvioMobilePlayer(
     var brightnessIndicatorTrigger by remember { mutableIntStateOf(0) }
     var volumeIndicatorTrigger by remember { mutableIntStateOf(0) }
 
+    val currentVolumeBoostDb by rememberUpdatedState(uiState.volumeBoostDb)
+    val currentOnVolumeBoostChange by rememberUpdatedState(onVolumeBoostChange)
+
     // Hardware Physical Volume Buttons Observer (only triggers on actual STREAM_MUSIC volume delta)
-    DisposableEffect(context, audioManager, maxVolume, uiState.volumeBoostDb) {
+    DisposableEffect(context, audioManager, maxVolume) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
@@ -302,12 +307,13 @@ fun ArvioMobilePlayer(
                         val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: return
                         if (lastKnownStreamVolume != -1 && current != lastKnownStreamVolume) {
                             lastKnownStreamVolume = current
-                            if (current < maxVolume && uiState.volumeBoostDb > 0) {
-                                onVolumeBoostChange(0)
+                            val boost = currentVolumeBoostDb
+                            if (current < maxVolume && boost > 0) {
+                                currentOnVolumeBoostChange(0)
                             }
                             val hardwarePct = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
-                            volumeLevel = if (uiState.volumeBoostDb > 0 && current >= maxVolume) {
-                                1.0f + (uiState.volumeBoostDb.toFloat() / 15f).coerceIn(0f, 1f)
+                            volumeLevel = if (boost > 0 && current >= maxVolume) {
+                                1.0f + (boost.toFloat() / 15f).coerceIn(0f, 1f)
                             } else {
                                 hardwarePct
                             }
@@ -324,12 +330,13 @@ fun ArvioMobilePlayer(
                 val current = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: return
                 if (lastKnownStreamVolume != -1 && current != lastKnownStreamVolume) {
                     lastKnownStreamVolume = current
-                    if (current < maxVolume && uiState.volumeBoostDb > 0) {
-                        onVolumeBoostChange(0)
+                    val boost = currentVolumeBoostDb
+                    if (current < maxVolume && boost > 0) {
+                        currentOnVolumeBoostChange(0)
                     }
                     val hardwarePct = (current.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
-                    volumeLevel = if (uiState.volumeBoostDb > 0 && current >= maxVolume) {
-                        1.0f + (uiState.volumeBoostDb.toFloat() / 15f).coerceIn(0f, 1f)
+                    volumeLevel = if (boost > 0 && current >= maxVolume) {
+                        1.0f + (boost.toFloat() / 15f).coerceIn(0f, 1f)
                     } else {
                         hardwarePct
                     }
@@ -1142,7 +1149,7 @@ fun ArvioMobilePlayer(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = uiState.error.orEmpty().ifBlank {
+                        text = uiState.error?.localizedText().orEmpty().ifBlank {
                             if (!hasStreams) {
                                 "No playable streams found for this content. Try reloading streams or checking addon settings."
                             } else {

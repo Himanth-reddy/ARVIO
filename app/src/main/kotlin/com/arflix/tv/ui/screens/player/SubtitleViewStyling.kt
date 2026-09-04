@@ -52,7 +52,7 @@ internal fun SubtitleView.applySubtitleAppearance(
     val pipScale = if (inPictureInPicture) 0.4f else 1f
     setFixedTextSize(
         TypedValue.COMPLEX_UNIT_SP,
-        baseSizeSp * (sizePercent.coerceIn(50, 300) / 100f) * pipScale,
+        baseSizeSp * (sizePercent.coerceIn(50, 250) / 100f) * pipScale,
     )
     setBottomPaddingFraction((verticalPercent / 100f).coerceIn(0.01f, 0.88f))
     val applyEmbeddedStyles = shouldPreserveEmbeddedSubtitleStyles(

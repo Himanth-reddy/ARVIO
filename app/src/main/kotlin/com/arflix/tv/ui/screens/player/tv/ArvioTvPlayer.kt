@@ -33,6 +33,7 @@ import com.arflix.tv.ui.components.NextEpisodeOverlay
 import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.screens.player.AudioTrackInfo
 import com.arflix.tv.ui.screens.player.PlayerUiState
+import com.arflix.tv.ui.screens.player.localizedText
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -229,7 +230,7 @@ fun ArvioTvPlayer(
                             Key.DirectionRight -> {
                                 when (subtitleSettingsRow) {
                                     0 -> { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L); onUpdateSubtitleDelay(subtitleSyncOffsetMs) }
-                                    1 -> { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300); onUpdateSubtitleSize(subtitleSizePct) }
+                                    1 -> { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(250); onUpdateSubtitleSize(subtitleSizePct) }
                                     2 -> { subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50); onUpdateSubtitleVerticalPosition(subtitleVerticalPct) }
                                 }
                                 true
@@ -243,7 +244,7 @@ fun ArvioTvPlayer(
                                 }
                                 true
                             }
-                            else -> true
+                            else -> false
                         }
                     }
 
@@ -317,7 +318,7 @@ fun ArvioTvPlayer(
                                 }
                                 true
                             }
-                            else -> true
+                            else -> false
                         }
                     }
 
@@ -627,7 +628,7 @@ fun ArvioTvPlayer(
         // TV Playback Error Modal
         TvErrorOverlay(
             isVisible = uiState.error != null,
-            errorMessage = uiState.error,
+            errorMessage = uiState.error?.localizedText(),
             isSetupError = uiState.isSetupError,
             focusIndex = errorModalFocusIndex,
             onRetry = onRetryPlayback,

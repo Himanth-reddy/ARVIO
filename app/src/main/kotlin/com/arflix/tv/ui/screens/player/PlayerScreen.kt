@@ -223,8 +223,6 @@ import com.arflix.tv.R
 import com.arflix.tv.cast.CastManager
 import com.arflix.tv.cast.CastManagerEntryPoint
 import dagger.hilt.android.EntryPointAccessors
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.PictureInPicture
@@ -251,6 +249,7 @@ import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
 import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
 import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewAspectRatio
+import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewDimensions
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPositionWithHysteresis
 import com.arflix.tv.ui.screens.player.preview.seekPreviewDisplayAspectRatio
@@ -301,7 +300,7 @@ private fun Map<String, String>.safePlaybackHeaders(): Map<String, String> {
  * label inside a match status) are resolved first so they are localized too.
  */
 @Composable
-private fun PlayerMessage.localizedText(): String = when (this) {
+internal fun PlayerMessage.localizedText(): String = when (this) {
     is PlayerMessage.Raw -> text
     is PlayerMessage.Res -> {
         val args = mutableListOf<Any>()
@@ -1685,9 +1684,6 @@ fun PlayerScreen(
         val unclamped = (basePosition + deltaMs).coerceAtLeast(0L)
         val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
         scrubPreviewPosition = targetPosition
-        val targetBucket = quantizeSeekPreviewPosition(targetPosition, duration)
-        controlsSeekPreviewFrame = seekPreviewProvider.memoryFrameAt(targetBucket)
-            ?.takeIf { it.positionMs == targetBucket }
         isControlScrubbing = true
         controlsSeekJob?.cancel()
         controlsSeekJob = coroutineScope.launch {
@@ -3933,8 +3929,9 @@ fun PlayerScreen(
                 },
                 subtitleSizePct = subtitleSizePct,
                 onUpdateSubtitleSize = { sizePct ->
-                    subtitleSizePct = sizePct
-                    viewModel.setSubtitleSizePct(sizePct)
+                    val clamped = sizePct.coerceIn(50, 250)
+                    subtitleSizePct = clamped
+                    viewModel.setSubtitleSizePct(clamped)
                 },
                 subtitleVerticalPct = subtitleVerticalPct,
                 hasActiveSubtitleCues = hasActiveSubtitleCues,
@@ -4054,8 +4051,9 @@ fun PlayerScreen(
                 onCancelNextEpisodePrompt = cancelNextEpisodePrompt,
                 onUpdateSubtitleDelay = { delayMs: Long -> subtitleSyncOffsetMs = delayMs },
                 onUpdateSubtitleSize = { sizePct: Int ->
-                    subtitleSizePct = sizePct
-                    viewModel.setSubtitleSizePct(sizePct)
+                    val clamped = sizePct.coerceIn(50, 250)
+                    subtitleSizePct = clamped
+                    viewModel.setSubtitleSizePct(clamped)
                 },
                 onUpdateSubtitleVerticalPosition = { posPct: Int ->
                     subtitleVerticalPct = posPct
@@ -5819,7 +5817,6 @@ private fun classifyPlaybackFailure(
             else -> R.string.player_err_playback
         }
     )
-}
 }
 
 private fun parseSizeToBytes(sizeStr: String): Long {
