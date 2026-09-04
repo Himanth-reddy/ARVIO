@@ -594,7 +594,16 @@ fun MobilePlayerBottomSection(
             var trackWidthPx by remember { mutableIntStateOf(0) }
             val progressFraction = if (durationMs > 0) (displayPos.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
             val bufferedFraction = if (durationMs > 0) (bufferedPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
-            val thumbScale by animateFloatAsState(if (isScrubbing) 1.35f else 1f, label = "thumbScale")
+            val trackHeight by animateDpAsState(
+                targetValue = if (isScrubbing) 5.5.dp else 3.5.dp,
+                animationSpec = tween(150),
+                label = "trackHeight"
+            )
+            val thumbScale by animateFloatAsState(
+                targetValue = if (isScrubbing) 1.25f else 1f,
+                animationSpec = tween(150),
+                label = "thumbScale"
+            )
 
             Box(
                 modifier = Modifier
@@ -633,8 +642,8 @@ fun MobilePlayerBottomSection(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.5.dp)
-                        .clip(RoundedCornerShape(2.dp))
+                        .height(trackHeight)
+                        .clip(RoundedCornerShape(3.dp))
                         .background(MobilePlayerTokens.TrackBg)
                 )
 
@@ -643,8 +652,8 @@ fun MobilePlayerBottomSection(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(bufferedFraction)
-                            .height(3.5.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .height(trackHeight)
+                            .clip(RoundedCornerShape(3.dp))
                             .background(MobilePlayerTokens.TrackBuffered)
                     )
                 }
@@ -654,15 +663,15 @@ fun MobilePlayerBottomSection(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(progressFraction)
-                            .height(3.5.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .height(trackHeight)
+                            .clip(RoundedCornerShape(3.dp))
                             .background(MobilePlayerTokens.TrackFill)
                     )
                 }
 
-                // Thumb circle - properly positioned with offset, remaining a full circle from start (0%) to end (100%)
+                // Thumb: Style A - Stroke-Rounded Ring Thumb matching Hugeicons
                 val density = LocalDensity.current
-                val thumbSizeDp = 12.dp * thumbScale
+                val thumbSizeDp = 14.dp * thumbScale
                 val thumbSizePx = with(density) { thumbSizeDp.toPx() }
                 val thumbOffsetPx = if (trackWidthPx > thumbSizePx) {
                     (progressFraction * (trackWidthPx - thumbSizePx)).coerceIn(0f, trackWidthPx - thumbSizePx)
@@ -671,10 +680,19 @@ fun MobilePlayerBottomSection(
                 Box(
                     modifier = Modifier
                         .offset { IntOffset(thumbOffsetPx.roundToInt(), 0) }
-                        .shadow(2.dp, CircleShape)
+                        .shadow(if (isScrubbing) 6.dp else 2.dp, CircleShape)
                         .size(thumbSizeDp)
-                        .background(Color.White, CircleShape)
-                )
+                        .border(width = 2.dp, color = Color.White, shape = CircleShape)
+                        .background(Color(0xEE121316), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Center optical pip
+                    Box(
+                        modifier = Modifier
+                            .size(if (isScrubbing) 4.5.dp else 3.5.dp)
+                            .background(Color.White, CircleShape)
+                    )
+                }
 
                 // Floating seek thumbnail preview card
                 val previewCardWidth = 150.dp

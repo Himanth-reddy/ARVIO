@@ -1,34 +1,33 @@
 package com.arflix.tv.ui.screens.player.mobile
 
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BrightnessAuto
-import androidx.compose.material.icons.filled.BrightnessHigh
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,61 +35,95 @@ import androidx.compose.ui.zIndex
 
 /**
  * Vertical edge HUD indicator for Brightness (Left) and Volume (Right).
+ * Styled as a frosted glass capsule with stroke-rounded Hugeicons and animated level fill.
  */
 @Composable
 fun MobileEdgeIndicator(
     visible: Boolean,
-    icon: ImageVector,
     levelPct: Float, // 0.0f .. 1.0f
     isLeft: Boolean,
+    modifier: Modifier = Modifier,
+    @DrawableRes iconRes: Int? = null,
+    icon: ImageVector? = null,
     isAuto: Boolean = false,
-    modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(180)),
-        exit = fadeOut(tween(180)),
+        enter = fadeIn(tween(160)),
+        exit = fadeOut(tween(220)),
         modifier = modifier
     ) {
-        Column(
-            modifier = Modifier.zIndex(9f),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                imageVector = if (isAuto) Icons.Filled.BrightnessAuto else icon,
-                contentDescription = null,
-                tint = MobilePlayerTokens.InkPrimary,
-                modifier = Modifier.size(20.dp)
-            )
+        val capsuleShape = RoundedCornerShape(18.dp)
+        val trackShape = RoundedCornerShape(3.dp)
 
-            // Vertical slider bar
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .height(120.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.25f)),
-                contentAlignment = Alignment.BottomCenter
+        Box(
+            modifier = Modifier
+                .zIndex(9f)
+                .shadow(12.dp, capsuleShape, clip = false)
+                .width(36.dp)
+                .height(156.dp)
+                .background(Color(0xB3121316), capsuleShape)
+                .border(1.dp, Color.White.copy(alpha = 0.16f), capsuleShape)
+                .padding(vertical = 10.dp, horizontal = 5.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier.fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
+                // Top: Icon
+                Box(
+                    modifier = Modifier.size(20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (iconRes != null) {
+                        Icon(
+                            painter = painterResource(iconRes),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else if (icon != null) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Center: Vertical slider track
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(if (isAuto) 0f else levelPct.coerceIn(0f, 1f))
-                        .background(MobilePlayerTokens.InkPrimary, RoundedCornerShape(2.dp))
+                        .weight(1f)
+                        .width(6.dp)
+                        .clip(trackShape)
+                        .background(Color.White.copy(alpha = 0.20f)),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(if (isAuto) 0f else levelPct.coerceIn(0f, 1f))
+                            .background(Color.White, trackShape)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Bottom: Percentage or "Auto" text
+                Text(
+                    text = if (isAuto) "Auto" else "${(levelPct * 100).toInt()}",
+                    color = Color.White,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
                 )
             }
-
-            // Percentage or "Auto" value label
-            Text(
-                text = if (isAuto) "Auto" else "${(levelPct * 100).toInt()}",
-                color = MobilePlayerTokens.InkPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                style = androidx.compose.ui.text.TextStyle(
-                    shadow = MobilePlayerTokens.TextShadow
-                )
-            )
         }
     }
 }

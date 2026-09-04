@@ -62,9 +62,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.arflix.tv.ui.screens.player.common.PlayerSystemBarsEffect
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.BrightnessAuto
-import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.ui.res.painterResource
@@ -923,9 +920,10 @@ fun ArvioMobilePlayer(
         }
 
         // ── Edge Swipe Indicators (Volume on Left, Brightness on Right) ──
+        val volumeIconRes = if (volumeLevel <= 0.01f) R.drawable.ic_huge_volume_mute else R.drawable.ic_huge_speaker
         MobileEdgeIndicator(
             visible = showVolumeIndicator,
-            icon = Icons.AutoMirrored.Filled.VolumeUp,
+            iconRes = volumeIconRes,
             levelPct = volumeLevel,
             isLeft = true,
             modifier = Modifier
@@ -933,9 +931,10 @@ fun ArvioMobilePlayer(
                 .padding(start = maxHorizontalPadding)
         )
         val isAutoBrightness = brightnessLevel <= 0.005f
+        val brightnessIconRes = if (isAutoBrightness) R.drawable.ic_huge_sun_dim else R.drawable.ic_huge_sun
         MobileEdgeIndicator(
             visible = showBrightnessIndicator,
-            icon = if (isAutoBrightness) Icons.Filled.BrightnessAuto else Icons.Default.BrightnessHigh,
+            iconRes = brightnessIconRes,
             levelPct = brightnessLevel,
             isLeft = false,
             isAuto = isAutoBrightness,
