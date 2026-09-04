@@ -1337,6 +1337,7 @@ class HomeViewModel @Inject constructor(
     private var loadHomeRequestId: Long = 0L
     private var activeRuntimeProfileId: String? = null
     private var observedContentLanguage: String? = null
+    private var observedIptvFavoritesOnHome: Boolean? = null
     private val HERO_DEBOUNCE_MS = 80L // Short debounce; focus idle is handled in HomeScreen
     private val startupCreatedAtMs = SystemClock.elapsedRealtime()
     private val startupSettleMs = if (isLowRamDevice) 5_000L else 4_000L
@@ -1540,6 +1541,7 @@ class HomeViewModel @Inject constructor(
         iptvRepository.invalidateCache()
         _uiState.value = HomeUiState(syncStatus = _uiState.value.syncStatus)
         activeRuntimeProfileId = profileId
+        observedIptvFavoritesOnHome = null
     }
 
     private fun hasCachedLogo(key: String): Boolean = synchronized(logoCacheLock) {
@@ -1767,6 +1769,10 @@ class HomeViewModel @Inject constructor(
                     val normalizedLanguage = mediaRepository.contentLanguage
                     val langChanged = observedContentLanguage?.let { it != normalizedLanguage } ?: false
                     observedContentLanguage = normalizedLanguage
+                    val iptvFavoritesPlacementChanged = observedIptvFavoritesOnHome
+                        ?.let { it != preferences.iptvFavoritesOnHome }
+                        ?: false
+                    observedIptvFavoritesOnHome = preferences.iptvFavoritesOnHome
 
                     _uiState.value = previousState.copy(
                         trailerAutoPlay = preferences.trailerAutoPlay,
@@ -1780,6 +1786,8 @@ class HomeViewModel @Inject constructor(
 
                     if (langChanged) {
                         invalidateContentLanguageCaches()
+                        loadHomeData()
+                    } else if (iptvFavoritesPlacementChanged) {
                         loadHomeData()
                     } else if (autoplayJustEnabled) {
                         _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
