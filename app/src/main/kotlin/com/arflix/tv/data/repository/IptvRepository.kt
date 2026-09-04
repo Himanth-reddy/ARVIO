@@ -58,6 +58,7 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.text.Normalizer
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -156,6 +157,103 @@ internal fun normalizeIptvSortOrder(value: String?): String = when (value?.trim(
     "number" -> "number"
     "name" -> "name"
     else -> "provider"
+}
+
+/**
+ * Title normalization for Xtream VOD/series lookups.
+ *
+ * Lives at top level so it can be unit-tested without an Android `Context`,
+ * mirroring `HomeServerMatcher.normalizeTitle` in `HomeServerRepository.kt`.
+ */
+internal object IptvTitleNormalizer {
+    val BRACKET_CONTENT_REGEX = Regex("""\[[^\]]*]""")
+    val PAREN_CONTENT_REGEX = Regex("""\([^\)]*\)""")
+    val MULTI_SPACE_REGEX = Regex("\\s+")
+    private val YEAR_PAREN_REGEX = Regex("""\((19|20)\d{2}\)""")
+    private val SEASON_TOKEN_REGEX = Regex("""\b(s|season)\s*\d{1,2}\b""", RegexOption.IGNORE_CASE)
+    private val EPISODE_TOKEN_REGEX = Regex("""\b(e|ep|episode)\s*\d{1,3}\b""", RegexOption.IGNORE_CASE)
+    private val RELEASE_TAG_REGEX = Regex(
+        """\b(2160p|1080p|720p|480p|4k|uhd|fhd|hdr|dv|dovi|hevc|x265|x264|h264|remux|bluray|bdrip|webrip|web[- ]?dl|proper|repack|multi|dubbed|dual[- ]?audio)\b""",
+        RegexOption.IGNORE_CASE
+    )
+    private val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
+    private val DIACRITICS_REGEX = Regex("\\p{Mn}+")
+
+    fun normalize(value: String): String {
+        if (value.isBlank()) return ""
+        val stripped = value
+            .replace(BRACKET_CONTENT_REGEX, " ")
+            .replace(PAREN_CONTENT_REGEX, " ")
+            .replace(YEAR_PAREN_REGEX, " ")
+            .replace(SEASON_TOKEN_REGEX, " ")
+            .replace(EPISODE_TOKEN_REGEX, " ")
+            .replace(RELEASE_TAG_REGEX, " ")
+        return foldLetters(stripped)
+            .lowercase(Locale.US)
+            .replace(NON_ALPHA_NUM_REGEX, " ")
+            .trim()
+            .replace(MULTI_SPACE_REGEX, " ")
+    }
+
+    /**
+     * Maps non-ASCII letters onto their ASCII base. Without this the `[^a-z0-9]+`
+     * filter below turns them into a space and splits the word in two — "Doğu"
+     * became "do u" instead of "dogu", so the title never matched again.
+     *
+     * Two steps are needed: [nonDecomposableReplacement] first, because Unicode has
+     * no canonical decomposition for letters such as "ß" or the Turkish dotless "ı"
+     * (NFD leaves them untouched), then NFD plus removal of the combining marks it
+     * splits off for the rest.
+     */
+    fun foldLetters(value: String): String {
+        if (value.all { it.code < 0x80 }) return value
+        val mapped = StringBuilder(value.length + 8)
+        value.forEach { character ->
+            val replacement = nonDecomposableReplacement(character)
+            if (replacement != null) mapped.append(replacement) else mapped.append(character)
+        }
+        return Normalizer.normalize(mapped, Normalizer.Form.NFD).replace(DIACRITICS_REGEX, "")
+    }
+
+    /**
+     * Catalog-side alias for German umlaut transcriptions: providers write "Für"
+     * either transliterated ("Fur", which [normalize] already produces) or
+     * transcribed ("Fuer"). Collapsing "ue"/"oe"/"ae" onto the transliterated form
+     * gives such entries a second index key, so both provider spellings are found.
+     *
+     * Only ever used to *add* keys on the catalog side — applying it to a query
+     * would also rewrite plain-ASCII words ("blue" -> "blu") and change their
+     * scoring.
+     */
+    fun foldUmlautTranscription(value: String): String {
+        if (!value.contains("ue") && !value.contains("oe") && !value.contains("ae")) return value
+        return value
+            .replace("ue", "u")
+            .replace("oe", "o")
+            .replace("ae", "a")
+    }
+
+    private fun nonDecomposableReplacement(character: Char): String? = when (character) {
+        'ß' -> "ss"
+        'ẞ' -> "SS"
+        'ı' -> "i"
+        'İ' -> "I"
+        'ø' -> "o"
+        'Ø' -> "O"
+        'æ' -> "ae"
+        'Æ' -> "AE"
+        'œ' -> "oe"
+        'Œ' -> "OE"
+        'đ' -> "d"
+        'Đ' -> "D"
+        'ð' -> "d"
+        'Ð' -> "D"
+        'ł' -> "l"
+        'Ł' -> "L"
+        'þ' -> "th"
+        'Þ' -> "TH"
+        else -> null
+    }
 }
 
 data class IptvConfig(
@@ -3836,6 +3934,7 @@ class IptvRepository @Inject constructor(
     )
 
     private data class ResolverPersistedCatalog(
+        val formatVersion: Int = 0,
         val createdAtMs: Long = 0L,
         val entries: List<ResolverSeriesEntry> = emptyList()
     )
@@ -3884,12 +3983,41 @@ class IptvRepository @Inject constructor(
         private val seriesInfoLock = Any()
 
         private fun catalogPrefKey(providerKey: String): String = "catalog_${providerKey.hashCode()}"
+
         private val resolvedPrefKey = "resolved_episode_map"
         // v2: stores List<Int> per binding key instead of single Int.
         // Bumping the key avoids parsing failures against the legacy single-id format.
         private val seriesBindingPrefKey = "series_binding_map_v2"
         private fun seriesInfoPrefKey(providerKey: String, seriesId: Int): String =
             "series_info_${(providerKey + "|" + seriesId).hashCode()}"
+
+        /**
+         * Entries are stored with their *pre-computed* normalized name, canonical
+         * key and tokens. Whenever the normalization changes, those fields become
+         * incompatible with freshly normalized queries and every title lookup
+         * silently misses until the 24h TTL expires — longer still, because an
+         * empty network response deliberately keeps the stale catalog alive.
+         * Bumping this version discards such entries instead. Legacy JSON has no
+         * field and therefore deserializes to 0.
+         */
+        private val catalogFormatVersion = 1
+
+        private fun readPersistedCatalog(providerKey: String): ResolverPersistedCatalog? {
+            val raw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
+            if (raw.isNullOrBlank()) return null
+            val persisted = runCatching {
+                gson.fromJson(raw, ResolverPersistedCatalog::class.java)
+            }.getOrNull() ?: return null
+            if (persisted.formatVersion != catalogFormatVersion) {
+                System.err.println(
+                    "[VOD-Resolver] loadCatalog: discarding catalog written in format " +
+                        "${persisted.formatVersion} (current $catalogFormatVersion)"
+                )
+                runCatching { prefs.edit().remove(catalogPrefKey(providerKey)).apply() }
+                return null
+            }
+            return persisted.takeIf { it.entries.isNotEmpty() }
+        }
 
         suspend fun refreshCatalog(
             providerKey: String,
@@ -4221,14 +4349,11 @@ class IptvRepository @Inject constructor(
             if (!allowNetwork) {
                 if (inMem != null) return inMem
                 // Try SharedPreferences for stale data
-                val persistedRaw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
-                if (!persistedRaw.isNullOrBlank()) {
-                    val persisted = runCatching { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) }.getOrNull()
-                    if (persisted != null && persisted.entries.isNotEmpty()) {
-                        val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
-                        catalogMemory[providerKey] = built
-                        return built
-                    }
+                val persisted = readPersistedCatalog(providerKey)
+                if (persisted != null) {
+                    val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
+                    catalogMemory[providerKey] = built
+                    return built
                 }
                 return ResolverCatalogIndex(now, emptyList(), emptyMap(), emptyMap(), emptyMap(), emptyMap())
             }
@@ -4249,17 +4374,14 @@ class IptvRepository @Inject constructor(
                 // Try SharedPreferences persisted catalog
                 var stalePersisted: ResolverPersistedCatalog? = null
                 if (!forceRefresh) {
-                    val persistedRaw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
-                    if (!persistedRaw.isNullOrBlank()) {
-                        val persisted = runCatching { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) }.getOrNull()
-                        if (persisted != null && persisted.entries.isNotEmpty()) {
-                            stalePersisted = persisted
-                            if (lockNow - persisted.createdAtMs < catalogTtlMs) {
-                                System.err.println("[VOD-Resolver] loadCatalog: building from persisted prefs (${persisted.entries.size} entries)")
-                                val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
-                                catalogMemory[providerKey] = built
-                                return@withLock built
-                            }
+                    val persisted = readPersistedCatalog(providerKey)
+                    if (persisted != null) {
+                        stalePersisted = persisted
+                        if (lockNow - persisted.createdAtMs < catalogTtlMs) {
+                            System.err.println("[VOD-Resolver] loadCatalog: building from persisted prefs (${persisted.entries.size} entries)")
+                            val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
+                            catalogMemory[providerKey] = built
+                            return@withLock built
                         }
                     }
                 }
@@ -4306,11 +4428,28 @@ class IptvRepository @Inject constructor(
                 // Persist to SharedPreferences in background — don't block resolution
                 if (entries.isNotEmpty() && entries.size <= 50_000) {
                     runCatching {
-                        prefs.edit().putString(catalogPrefKey(providerKey), gson.toJson(ResolverPersistedCatalog(lockNow, entries))).apply()
+                        val payload = ResolverPersistedCatalog(
+                            formatVersion = catalogFormatVersion,
+                            createdAtMs = lockNow,
+                            entries = entries
+                        )
+                        prefs.edit().putString(catalogPrefKey(providerKey), gson.toJson(payload)).apply()
                     }
                 }
                 built
             } }
+        }
+
+        /**
+         * The canonical key plus — when the entry carries a transcribed umlaut —
+         * the transliterated alias, so "Fuer alle Faelle" is also reachable under
+         * the key a query for "Für alle Fälle" produces.
+         */
+        private fun canonicalTitleKeysFor(entry: ResolverSeriesEntry): List<String> {
+            val primary = entry.canonicalTitleKey
+            if (primary.isBlank()) return emptyList()
+            val alias = toCanonicalTitleKeyFromTokens(umlautAliasTokens(entry.titleTokens))
+            return if (alias.isBlank() || alias == primary) listOf(primary) else listOf(primary, alias)
         }
 
         private fun buildCatalogIndex(createdAtMs: Long, entries: List<ResolverSeriesEntry>): ResolverCatalogIndex {
@@ -4321,7 +4460,9 @@ class IptvRepository @Inject constructor(
                 entry.copy(
                     normalizedName = normalizedName,
                     canonicalTitleKey = canonicalTitleKey,
-                    titleTokens = titleTokens
+                    // Alias tokens are index-only: they widen what a query can find
+                    // without changing the persisted entry or any query key.
+                    titleTokens = withUmlautAliasTokens(titleTokens)
                 )
             }
             // IMPORTANT: Normalize keys so lookup matches correctly
@@ -4333,7 +4474,8 @@ class IptvRepository @Inject constructor(
                 .groupBy { normalizeImdbId(it.imdb)!! }
             val canonicalTitleMap = normalizedEntries
                 .filter { it.canonicalTitleKey.isNotBlank() }
-                .groupBy { it.canonicalTitleKey }
+                .flatMap { entry -> canonicalTitleKeysFor(entry).map { key -> key to entry } }
+                .groupBy({ it.first }, { it.second })
             val tokenMap = buildMap<String, List<ResolverSeriesEntry>> {
                 val temp = LinkedHashMap<String, MutableList<ResolverSeriesEntry>>()
                 normalizedEntries.forEach { entry ->
@@ -5640,19 +5782,18 @@ class IptvRepository @Inject constructor(
         }.getOrNull()
     }
 
-    private fun normalizeLookupText(value: String): String {
-        if (value.isBlank()) return ""
-        return value
-            .replace(BRACKET_CONTENT_REGEX, " ")
-            .replace(PAREN_CONTENT_REGEX, " ")
-            .replace(YEAR_PAREN_REGEX, " ")
-            .replace(SEASON_TOKEN_REGEX, " ")
-            .replace(EPISODE_TOKEN_REGEX, " ")
-            .replace(RELEASE_TAG_REGEX, " ")
-            .lowercase(Locale.US)
-            .replace(NON_ALPHA_NUM_REGEX, " ")
-            .trim()
-            .replace(MULTI_SPACE_REGEX, " ")
+    private fun normalizeLookupText(value: String): String = IptvTitleNormalizer.normalize(value)
+
+    /**
+     * Alias tokens for catalog entries — see [IptvTitleNormalizer.foldUmlautTranscription].
+     * Returns the input unchanged when no token carries a transcribed umlaut.
+     */
+    private fun umlautAliasTokens(tokens: Set<String>): Set<String> =
+        tokens.mapTo(LinkedHashSet<String>()) { IptvTitleNormalizer.foldUmlautTranscription(it) }
+
+    private fun withUmlautAliasTokens(tokens: Set<String>): Set<String> {
+        val alias = umlautAliasTokens(tokens)
+        return if (alias == tokens) tokens else tokens + alias
     }
 
     private val titleTokenNoise = setOf(
@@ -5754,6 +5895,13 @@ class IptvRepository @Inject constructor(
 
     private fun scoreNameMatch(providerName: String, normalizedInput: String): Int {
         val normalizedProvider = normalizeLookupText(providerName)
+        val direct = scoreNormalizedNameMatch(normalizedProvider, normalizedInput)
+        val alias = IptvTitleNormalizer.foldUmlautTranscription(normalizedProvider)
+        if (alias == normalizedProvider) return direct
+        return maxOf(direct, scoreNormalizedNameMatch(alias, normalizedInput))
+    }
+
+    private fun scoreNormalizedNameMatch(normalizedProvider: String, normalizedInput: String): Int {
         if (normalizedProvider.isBlank() || normalizedInput.isBlank()) return 0
         if (normalizedProvider == normalizedInput) return 120
         if (normalizedProvider.contains(normalizedInput)) return 90
@@ -5782,6 +5930,13 @@ class IptvRepository @Inject constructor(
 
     private fun looseSeriesTitleScore(providerName: String, normalizedInput: String): Int {
         val normalizedProvider = normalizeLookupText(providerName)
+        val direct = looseSeriesTitleScoreNormalized(normalizedProvider, normalizedInput)
+        val alias = IptvTitleNormalizer.foldUmlautTranscription(normalizedProvider)
+        if (alias == normalizedProvider) return direct
+        return maxOf(direct, looseSeriesTitleScoreNormalized(alias, normalizedInput))
+    }
+
+    private fun looseSeriesTitleScoreNormalized(normalizedProvider: String, normalizedInput: String): Int {
         if (normalizedProvider.isBlank() || normalizedInput.isBlank()) return 0
         val providerWords = normalizedProvider.split(' ').filter { it.length >= 3 }.toSet()
         val inputWords = normalizedInput.split(' ').filter { it.length >= 3 }.toSet()
@@ -9152,7 +9307,13 @@ class IptvRepository @Inject constructor(
                     if (canonical.isNotBlank()) {
                         canonicalTitleMap.getOrPut(canonical) { mutableListOf() }.add(idx)
                     }
-                    tokens.forEach { token ->
+                    // Index-only alias for transcribed umlauts ("Fuer" -> "fur"), so a
+                    // query for the properly spelled title reaches this entry too.
+                    val aliasCanonical = toCanonicalTitleKeyFromTokens(umlautAliasTokens(tokens))
+                    if (aliasCanonical.isNotBlank() && aliasCanonical != canonical) {
+                        canonicalTitleMap.getOrPut(aliasCanonical) { mutableListOf() }.add(idx)
+                    }
+                    withUmlautAliasTokens(tokens).forEach { token ->
                         tokenMap.getOrPut(token) { mutableListOf() }.add(idx)
                     }
                 }
@@ -9404,17 +9565,11 @@ class IptvRepository @Inject constructor(
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
         const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-        val BRACKET_CONTENT_REGEX = Regex("""\[[^\]]*]""")
-        val PAREN_CONTENT_REGEX = Regex("""\([^\)]*\)""")
-        val YEAR_PAREN_REGEX = Regex("""\((19|20)\d{2}\)""")
-        val SEASON_TOKEN_REGEX = Regex("""\b(s|season)\s*\d{1,2}\b""", RegexOption.IGNORE_CASE)
-        val EPISODE_TOKEN_REGEX = Regex("""\b(e|ep|episode)\s*\d{1,3}\b""", RegexOption.IGNORE_CASE)
-        val RELEASE_TAG_REGEX = Regex(
-            """\b(2160p|1080p|720p|480p|4k|uhd|fhd|hdr|dv|dovi|hevc|x265|x264|h264|remux|bluray|bdrip|webrip|web[- ]?dl|proper|repack|multi|dubbed|dual[- ]?audio)\b""",
-            RegexOption.IGNORE_CASE
-        )
-        val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
-        val MULTI_SPACE_REGEX = Regex("\\s+")
+        // Title-cleanup regexes live in IptvTitleNormalizer so the whole
+        // normalization stays testable without an Android Context.
+        val BRACKET_CONTENT_REGEX = IptvTitleNormalizer.BRACKET_CONTENT_REGEX
+        val PAREN_CONTENT_REGEX = IptvTitleNormalizer.PAREN_CONTENT_REGEX
+        val MULTI_SPACE_REGEX = IptvTitleNormalizer.MULTI_SPACE_REGEX
         val HTTP_URL_REGEX = Regex("""https?://[^\s,;|"]+""", RegexOption.IGNORE_CASE)
         val SEASON_KEY_REGEX = Regex("""\d{1,2}""")
         val FLEXIBLE_INT_REGEX = Regex("""\d{1,4}""")
