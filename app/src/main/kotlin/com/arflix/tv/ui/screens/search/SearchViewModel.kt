@@ -132,6 +132,9 @@ class SearchViewModel @Inject constructor(
 
                 val categories = withContext(Dispatchers.IO) {
                     coroutineScope {
+                        // Row titles stay English: they are part of the Category id used
+                        // as the row's focus key. SearchScreen localizes them for display
+                        // only (localizedDiscoverRowTitle).
                         // Row 1: Trending - popular with minimum votes to filter garbage
                         val row1 = async { buildRow("Trending", type, genre, "popularity.desc", 50, lang, isAnime, 1, releaseDateLte = today) }
                         // Row 2: Popular This Year - recent + popular, no obscure stuff

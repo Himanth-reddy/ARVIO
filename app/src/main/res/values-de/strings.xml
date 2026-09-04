@@ -672,6 +672,8 @@
     <string name="settings_iptv_channel_order_description">Wähle, wie Kanäle innerhalb jeder Gruppe angeordnet werden</string>
     <string name="settings_iptv_vod_search">IPTV-VOD-Streams</string>
     <string name="settings_iptv_vod_search_desc">IPTV-Filme und -Serien beim Abrufen von Streams einbeziehen</string>
+    <string name="settings_iptv_favorites_home">Lieblingssender auf der Startseite</string>
+    <string name="settings_iptv_favorites_home_desc">Deine markierten IPTV-Kanäle oben auf der Startseite anheften</string>
     <string name="settings_iptv_order_provider">Anbieter-Reihenfolge</string>
     <string name="settings_iptv_order_number">Kanalnummer</string>
     <string name="settings_iptv_order_name">Alphabetisch (A–Z)</string>
@@ -790,6 +792,23 @@
     <string name="collections_decade_80s">Filme der 80er</string>
     <string name="collections_decade_70s">Filme der 70er</string>
     <string name="collections_decade_60s">Filme der 60er</string>
+
+    <!-- TMDB genre names (display-only; the numeric TMDB genre id stays the key) -->
+    <string name="tmdb_genre_crime">Krimi</string>
+    <string name="tmdb_genre_history">Historie</string>
+    <string name="tmdb_genre_music">Musik</string>
+    <string name="tmdb_genre_mystery">Mystery</string>
+    <string name="tmdb_genre_tv_movie">Fernsehfilm</string>
+    <string name="tmdb_genre_war">Krieg</string>
+    <string name="tmdb_genre_western">Western</string>
+    <string name="tmdb_genre_action_adventure">Action &amp; Abenteuer</string>
+    <string name="tmdb_genre_kids">Kinder</string>
+    <string name="tmdb_genre_news">Nachrichten</string>
+    <string name="tmdb_genre_reality">Reality</string>
+    <string name="tmdb_genre_sci_fi_fantasy">Sci-Fi &amp; Fantasy</string>
+    <string name="tmdb_genre_soap">Seifenoper</string>
+    <string name="tmdb_genre_talk">Talk</string>
+    <string name="tmdb_genre_war_politics">Krieg &amp; Politik</string>
     <string name="iptv_connecting_stalker">Mit Stalker-Portal verbinden…</string>
     <string name="iptv_loaded_api">%1$d Live-Kanäle über Anbieter-API geladen</string>
     <string name="iptv_loaded_channels">%1$d Kanäle geladen</string>
@@ -806,6 +825,11 @@
     <string name="live_menu_unhide_category">Kategorie einblenden</string>
     <string name="live_menu_lock_category">Mit Profil-PIN sperren</string>
     <string name="live_menu_unlock_category">PIN-Sperre entfernen</string>
+    <string name="live_menu_favorite_move_up">Nach oben</string>
+    <string name="live_menu_favorite_move_down">Nach unten</string>
+    <string name="live_menu_favorite_remove">Aus Favoriten entfernen</string>
+    <string name="live_menu_favorite_add">Zu Favoriten hinzufügen</string>
+    <string name="live_menu_channel_variants">Qualitätsvarianten</string>
     <string name="live_group_enter_pin">PIN eingeben, um diese Gruppe zu öffnen</string>
     <string name="live_group_pin_incorrect">Falsche PIN</string>
     <string name="live_group_pin_required_title">Profil-PIN erforderlich</string>
@@ -1097,6 +1121,13 @@
     <string name="home_cd_rank">Platz #%1$d</string>
     <string name="search_filter_all">Alle</string>
     <string name="search_filter_anime">Anime</string>
+    <string name="home_no_description">Keine Beschreibung verfügbar.</string>
+    <string name="home_still_loading_catalogue">Dein Katalog wird noch geladen …</string>
+    <string name="search_row_trending">Angesagt</string>
+    <string name="search_row_popular_this_year">Beliebt dieses Jahr</string>
+    <string name="search_row_top_rated">Bestbewertet</string>
+    <string name="search_row_new_releases">Neuerscheinungen</string>
+    <string name="search_row_hidden_gems">Geheimtipps</string>
     <string name="epg_watch_live">Live ansehen</string>
     <string name="epg_search_sources">Jetzt streamen</string>
     <string name="person_section_biography">Biografie</string>
