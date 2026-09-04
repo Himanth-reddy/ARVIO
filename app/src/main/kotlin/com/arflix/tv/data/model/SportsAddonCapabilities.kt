@@ -34,6 +34,10 @@ object SportsAddonCapabilities {
 
     private val explicitVodTypes = setOf("movie", "film", "series", "show", "anime")
 
+    // Internal sources that contain "iptv" in their ID but serve on-demand media.
+    // Keep this exact so third-party IPTV/live add-ons remain classified as live.
+    private val explicitVodStreamAddonIds = setOf("iptv_xtream_vod")
+
     fun isSportsHomeStatus(status: String?): Boolean {
         val value = status ?: return false
         return value.startsWith(SPORTS_STATUS_PREFIX) ||
@@ -146,6 +150,7 @@ object SportsAddonCapabilities {
 
     fun isLiveStreamAddonId(addonId: String?): Boolean {
         val id = addonId?.trim()?.lowercase(Locale.US) ?: return false
+        if (id in explicitVodStreamAddonIds) return false
         if (id.contains("cinemeta") || id.contains("tmdb") || id.contains("torrentio")) return false
         return id.contains("livetv") || id.contains("live_tv") ||
             id.contains("live-tv") || id.contains("live_stream") ||

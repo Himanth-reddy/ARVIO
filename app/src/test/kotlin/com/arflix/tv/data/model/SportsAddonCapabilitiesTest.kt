@@ -178,6 +178,45 @@ class SportsAddonCapabilitiesTest {
     }
 
     @Test
+    fun `xtream iptv vod movies and episodes keep continue watching enabled`() {
+        assertFalse(SportsAddonCapabilities.isLiveStreamAddonId("iptv_xtream_vod"))
+        assertFalse(
+            SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                mediaType = MediaType.MOVIE,
+                id = 123,
+                streamAddonId = "iptv_xtream_vod"
+            )
+        )
+        assertFalse(
+            SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                mediaType = MediaType.TV,
+                id = 456,
+                streamAddonId = "iptv_xtream_vod"
+            )
+        )
+    }
+
+    @Test
+    fun `regular iptv and explicit live playback remain excluded from continue watching`() {
+        assertTrue(SportsAddonCapabilities.isLiveStreamAddonId("my_iptv_provider"))
+        assertTrue(
+            SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                mediaType = MediaType.TV,
+                id = 123,
+                streamAddonId = "my_iptv_provider"
+            )
+        )
+        assertTrue(
+            SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                mediaType = MediaType.TV,
+                id = 123,
+                streamAddonId = "iptv_xtream_vod",
+                isLiveStream = true
+            )
+        )
+    }
+
+    @Test
     fun `sports statuses are recognized as home sports items`() {
         assertTrue(SportsAddonCapabilities.isSportsHomeStatus("sports:football"))
         assertTrue(SportsAddonCapabilities.isSportsHomeStatus("sports_event:addon|sports|event"))
