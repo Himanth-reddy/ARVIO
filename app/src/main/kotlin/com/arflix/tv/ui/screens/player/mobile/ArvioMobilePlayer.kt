@@ -66,11 +66,9 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.ui.res.painterResource
+import com.arflix.tv.R
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -700,7 +698,7 @@ fun ArvioMobilePlayer(
                     .padding(20.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Replay10,
+                    painter = painterResource(R.drawable.ic_huge_replay_10),
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(36.dp)
@@ -731,7 +729,7 @@ fun ArvioMobilePlayer(
                     .padding(20.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Forward10,
+                    painter = painterResource(R.drawable.ic_huge_forward_10),
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(36.dp)
@@ -1002,7 +1000,7 @@ fun ArvioMobilePlayer(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.LockOpen,
+                    painter = painterResource(R.drawable.ic_huge_lock_open),
                     contentDescription = "Unlock",
                     tint = MobilePlayerTokens.InkPrimary,
                     modifier = Modifier.size(26.dp)

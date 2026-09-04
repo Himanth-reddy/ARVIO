@@ -34,24 +34,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cast
-import androidx.compose.material.icons.filled.CastConnected
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PictureInPicture
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Subtitles
-import androidx.compose.material.icons.outlined.Forward10
-import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.Replay10
-import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.annotation.DrawableRes
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.res.painterResource
+import com.arflix.tv.R
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -124,12 +110,12 @@ fun MobilePlayerTopBar(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             MobileIconButton(
-                icon = Icons.Default.Close,
+                iconRes = R.drawable.ic_huge_cancel,
                 contentDescription = "Close",
                 onClick = onClose
             )
             MobileIconButton(
-                icon = Icons.Outlined.Lock,
+                iconRes = R.drawable.ic_huge_lock,
                 contentDescription = "Lock Controls",
                 onClick = onLock
             )
@@ -142,21 +128,21 @@ fun MobilePlayerTopBar(
         ) {
             if (showPipButton) {
                 MobileIconButton(
-                    icon = Icons.Default.PictureInPicture,
+                    iconRes = R.drawable.ic_huge_pip,
                     contentDescription = "Picture in Picture",
                     onClick = onPip
                 )
             }
             if (showCastButton) {
                 MobileIconButton(
-                    icon = if (isCasting) Icons.Default.CastConnected else Icons.Default.Cast,
+                    iconRes = if (isCasting) R.drawable.ic_huge_cast_connected else R.drawable.ic_huge_cast,
                     contentDescription = "Cast",
                     tint = if (isCasting) Color(0xFF66D9FF) else MobilePlayerTokens.InkPrimary,
                     onClick = onCast
                 )
             }
             MobileIconButton(
-                icon = Icons.Default.MoreHoriz,
+                iconRes = R.drawable.ic_huge_more_horizontal,
                 contentDescription = "More Settings",
                 onClick = onOpenMoreSettings
             )
@@ -196,10 +182,10 @@ fun MobilePlayerCenterControls(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Outlined.Replay10,
+                painter = painterResource(R.drawable.ic_huge_replay_10),
                 contentDescription = "Rewind 10 seconds",
                 tint = MobilePlayerTokens.InkPrimary,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(34.dp)
             )
         }
 
@@ -226,10 +212,10 @@ fun MobilePlayerCenterControls(
                 )
             } else {
                 Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    painter = painterResource(if (isPlaying) R.drawable.ic_huge_pause else R.drawable.ic_huge_play),
                     contentDescription = if (isPlaying) "Pause" else "Play",
                     tint = MobilePlayerTokens.InkPrimary,
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(if (isPlaying) 38.dp else 42.dp)
                 )
             }
         }
@@ -249,10 +235,10 @@ fun MobilePlayerCenterControls(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Outlined.Forward10,
+                painter = painterResource(R.drawable.ic_huge_forward_10),
                 contentDescription = "Forward 10 seconds",
                 tint = MobilePlayerTokens.InkPrimary,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(34.dp)
             )
         }
     }
@@ -422,7 +408,7 @@ private fun UpNextPromptCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.PlayArrow,
+                        painter = painterResource(R.drawable.ic_huge_play),
                         contentDescription = null,
                         tint = MobilePlayerTokens.InkPrimary,
                         modifier = Modifier.size(16.dp)
@@ -566,16 +552,16 @@ fun MobilePlayerBottomSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 MobileIconButton(
-                    icon = Icons.Outlined.Layers,
+                    iconRes = R.drawable.ic_huge_layers,
                     contentDescription = "Sources",
-                    size = 19.dp,
+                    size = 20.dp,
                     onClick = onOpenSources
                 )
                 if (isEpisodeListAvailable) {
                     MobileIconButton(
-                        icon = Icons.Outlined.Menu,
+                        iconRes = R.drawable.ic_huge_playlist,
                         contentDescription = "Episodes",
-                        size = 19.dp,
+                        size = 20.dp,
                         onClick = onOpenEpisodes
                     )
                 }
@@ -773,7 +759,7 @@ fun MobilePlayerBottomSection(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Headphones,
+                    painter = painterResource(R.drawable.ic_huge_headphones),
                     contentDescription = null,
                     tint = MobilePlayerTokens.InkSecondary,
                     modifier = Modifier.size(15.dp)
@@ -808,6 +794,12 @@ fun MobilePlayerBottomSection(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_huge_subtitles),
+                    contentDescription = null,
+                    tint = MobilePlayerTokens.InkSecondary,
+                    modifier = Modifier.size(15.dp)
+                )
                 Text(
                     text = if (currentSubtitleTrack.isBlank() || currentSubtitleTrack.equals("Off", ignoreCase = true)) "Subtitles Off" else "Subtitles: $currentSubtitleTrack",
                     color = MobilePlayerTokens.InkSecondary,
@@ -838,6 +830,12 @@ fun MobilePlayerBottomSection(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_huge_speedometer),
+                    contentDescription = null,
+                    tint = MobilePlayerTokens.InkSecondary,
+                    modifier = Modifier.size(15.dp)
+                )
                 val speedLabel = if (currentPlaybackSpeed == 1f) "1x" else "${currentPlaybackSpeed}x"
                 Text(
                     text = "$speedLabel Speed",
@@ -857,7 +855,65 @@ fun MobilePlayerBottomSection(
  */
 @Composable
 fun MobileIconButton(
-    icon: ImageVector,
+    @DrawableRes iconRes: Int,
+    contentDescription: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 22.dp,
+    tint: Color = MobilePlayerTokens.InkPrimary
+) {
+    MobileIconButton(
+        painter = painterResource(iconRes),
+        contentDescription = contentDescription,
+        onClick = onClick,
+        modifier = modifier,
+        size = size,
+        tint = tint
+    )
+}
+
+@Composable
+fun MobileIconButton(
+    painter: Painter,
+    contentDescription: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 22.dp,
+    tint: Color = MobilePlayerTokens.InkPrimary
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.88f else 1f,
+        animationSpec = tween(durationMillis = 100),
+        label = "icon_btn_scale"
+    )
+
+    Box(
+        modifier = modifier
+            .size(38.dp)
+            .scale(scale)
+            .clip(CircleShape)
+            .background(if (isPressed) Color.White.copy(alpha = 0.16f) else Color.Transparent)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painter,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(size)
+        )
+    }
+}
+
+@Composable
+fun MobileIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
