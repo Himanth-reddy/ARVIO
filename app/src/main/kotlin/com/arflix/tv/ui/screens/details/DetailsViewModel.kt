@@ -342,6 +342,7 @@ class DetailsViewModel @Inject constructor(
             year = primary.year.ifBlank { fallback.year },
             releaseDate = primary.releaseDate ?: fallback.releaseDate,
             rating = primary.rating.ifBlank { fallback.rating },
+            contentRating = primary.contentRating ?: fallback.contentRating,
             duration = primary.duration.ifBlank { fallback.duration },
             imdbRating = if (isBlankRating(primary.imdbRating)) fallback.imdbRating else primary.imdbRating,
             tmdbRating = if (isBlankRating(primary.tmdbRating)) fallback.tmdbRating else primary.tmdbRating,
