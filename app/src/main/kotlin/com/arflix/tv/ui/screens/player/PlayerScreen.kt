@@ -3482,7 +3482,7 @@ fun PlayerScreen(
         }
 
         // Loading screen overlay - keep visible until player is fully started.
-        if (!isTouchDevice && (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted)) {
+        if (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
