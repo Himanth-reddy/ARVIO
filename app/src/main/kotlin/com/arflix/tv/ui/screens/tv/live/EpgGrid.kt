@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.tv.live
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
@@ -19,15 +20,17 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +38,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +48,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -120,6 +127,7 @@ fun EpgGrid(
     onRequestNextChannels: () -> Unit = {},
     onVisibleChannelRange: (Int, Int) -> Unit = { _, _ -> },
     channelColumnWidthOverride: Dp? = null,
+    playbackQuality: LivePlaybackQuality? = null,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -178,7 +186,16 @@ fun EpgGrid(
     // Shared horizontal scroll state between header and body rows.
     val hScroll = rememberScrollState()
     // A single LazyListState handles vertical scrolling for both channels and EPG.
-    val channelListState = rememberLazyListState()
+    val positions = rememberSaveable(saver = GuideListStatesSaver) { LinkedHashMap<String, LazyListState>() }
+    val channelListState = remember(scrollResetKey) {
+        val state = positions.remove(scrollResetKey) ?: LazyListState()
+        positions[scrollResetKey] = state
+        while (positions.size > 16) positions.remove(positions.keys.first())
+        state
+    }
+    // A pending category briefly has no rows. Measuring the saved state against
+    // an empty list would clamp its scroll position to zero before data arrives.
+    val emptyChannelListState = remember { LazyListState() }
     var didPositionInitialSelection by remember(scrollResetKey) { mutableStateOf(false) }
     var activeChannelFocusId by remember(scrollResetKey) { mutableStateOf(selectedChannelId) }
     var activeChannelFocusIndex by remember(scrollResetKey) { mutableIntStateOf(0) }
@@ -187,7 +204,9 @@ fun EpgGrid(
 
     LaunchedEffect(scrollResetKey, channelWindowIdentity) {
         if (channels.isEmpty() || didPositionInitialSelection) return@LaunchedEffect
-        channelListState.scrollToItem(selectedChannelId?.let(channelIndexById::get) ?: 0)
+        if (channelListState.firstVisibleItemIndex == 0 && channelListState.firstVisibleItemScrollOffset == 0) {
+            channelListState.scrollToItem(selectedChannelId?.let(channelIndexById::get) ?: 0)
+        }
         activeChannelFocusId = selectedChannelId
             ?.takeIf { it in channelIndexById }
             ?: channels.firstOrNull()?.id
@@ -290,7 +309,7 @@ fun EpgGrid(
         }
     }
 
-    LaunchedEffect(scrollResetKey, channelWindowIdentity, activeChannelFocusId) {
+    LaunchedEffect(scrollResetKey, channelIndexById, gridFocused, focusMode) {
         if (gridFocused && focusMode == EpgGridFocusMode.ChannelList && channels.isNotEmpty() &&
             activeChannelFocusId != null && activeChannelFocusId !in channelIndexById
         ) {
@@ -316,7 +335,11 @@ fun EpgGrid(
         if (handledSelectedFocusSignal == focusSelectedChannelSignal) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
-        channelListState.scrollToItem(idx)
+        if (channelListState.layoutInfo.visibleItemsInfo.any { it.index == idx }) {
+            revealRow(idx)
+        } else {
+            channelListState.scrollToItem(idx)
+        }
         runCatching { selectedChannelFocusRequester.requestFocus() }
         handledSelectedFocusSignal = focusSelectedChannelSignal
     }
@@ -479,6 +502,16 @@ fun EpgGrid(
         // ─── Body ───────────────────────────────────────────────────
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val totalWidth = halfHourWidth * slots.size
+            val viewportWidth = (maxWidth - channelColumnWidth - 1.dp).coerceAtLeast(0.dp)
+            val renderWindow by remember(hScroll, density, viewportWidth, pxPerMin) {
+                derivedStateOf {
+                    guideRenderWindow(
+                        hScroll.value,
+                        with(density) { viewportWidth.toPx() },
+                        with(density) { pxPerMin.dp.toPx() },
+                    )
+                }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -496,7 +529,7 @@ fun EpgGrid(
                     }
             ) {
                 LazyColumn(
-                    state = channelListState,
+                    state = if (channels.isEmpty()) emptyChannelListState else channelListState,
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag("iptv-guide")
@@ -508,8 +541,11 @@ fun EpgGrid(
                         contentType = { _, _ -> "channelRowAndPrograms" }
                     ) { idx, ch ->
                         val channelFocusRequester = remember(ch.id) { FocusRequester() }
-                        val locallyFocused = ch.id == activeChannelFocusId &&
-                            focusMode == EpgGridFocusMode.ChannelList
+                        val locallyFocused by remember(ch.id, scrollResetKey, focusMode) {
+                            derivedStateOf {
+                                ch.id == activeChannelFocusId && focusMode == EpgGridFocusMode.ChannelList
+                            }
+                        }
                         DisposableEffect(ch.id, channelFocusRequester) {
                             channelFocusRequesters[ch.id] = channelFocusRequester
                             onDispose {
@@ -526,6 +562,7 @@ fun EpgGrid(
                             // 1. Channel item (fixed width, doesn't scroll horizontally)
                             ChannelRow(
                                 channel = ch,
+                                displayQuality = ch.displayQuality(playbackQuality),
                                 isActive = ch.id == selectedChannelId || (gridFocused && locallyFocused),
                                 clockTickMillis = clockTickMillis,
                                 nowNext = nowNext[ch.id],
@@ -622,6 +659,7 @@ fun EpgGrid(
                                     isActive = ch.id == selectedChannelId && focusMode == EpgGridFocusMode.Epg,
                                     epgMode = focusMode == EpgGridFocusMode.Epg,
                                     rowHeight = rowHeight,
+                                    renderWindow = renderWindow,
                                     onClick = { program ->
                                         onExitEpg(ch)
                                         onProgramSelect(ch, program)
@@ -649,33 +687,35 @@ fun EpgGrid(
                     }
                 }
 
-                // NOW glow line across full body
-                if (clockTickMillis in windowStartMillis until windowEndMillis) {
-                    val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
-                    val xDpInside = (nowMin * pxPerMin).dp - with(density) { hScroll.value.toDp() }
-                    if (xDpInside >= 0.dp) {
-                        val xDp = channelColumnWidth + 1.dp + xDpInside
-                        Box(
-                            modifier = Modifier
-                                .offset(x = xDp)
-                                .fillMaxHeight()
-                                .width(2.dp)
-                                .background(LiveColors.Accent),
-                        )
-                        // Glow behind the 2dp line
-                        Box(
-                            modifier = Modifier
-                                .offset(x = xDp - 3.dp)
-                                .fillMaxHeight()
-                                .width(8.dp)
-                                .background(LiveColors.Accent.copy(alpha = 0.22f)),
-                        )
+                // Read scrolling in the drawing phase, not the whole guide composition.
+                Canvas(Modifier.fillMaxSize()) {
+                    if (clockTickMillis in windowStartMillis until windowEndMillis) {
+                        val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
+                        val inside = (nowMin * pxPerMin).dp.toPx() - hScroll.value
+                        val x = (channelColumnWidth + 1.dp).toPx() + inside
+                        if (inside >= 0f && x < size.width) {
+                            drawRect(LiveColors.Accent.copy(alpha = 0.22f), Offset(x - 3.dp.toPx(), 0f), Size(8.dp.toPx(), size.height))
+                            drawRect(LiveColors.Accent, Offset(x, 0f), Size(2.dp.toPx(), size.height))
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private val GuideListStatesSaver = listSaver<LinkedHashMap<String, LazyListState>, Any>(
+    save = { states ->
+        states.flatMap { (key, state) -> listOf(key, state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset) }
+    },
+    restore = { values ->
+        LinkedHashMap<String, LazyListState>().apply {
+            values.chunked(3).forEach { (key, index, offset) ->
+                put(key as String, LazyListState(index as Int, offset as Int))
+            }
+        }
+    },
+)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -693,6 +733,7 @@ private fun ProgramsRow(
     isActive: Boolean,
     epgMode: Boolean,
     rowHeight: Dp,
+    renderWindow: GuideRenderWindow,
     onClick: (IptvProgram?) -> Unit,
     onFocused: () -> Unit,
     onMoveVertically: (rowIdx: Int, anchorStartMin: Int) -> Boolean,
@@ -760,6 +801,11 @@ private fun ProgramsRow(
         }
         if (placements.isNotEmpty()) {
             placements.forEachIndexed { placementIndex, placement ->
+                // Preserve the complete focus graph while navigating programmes. In
+                // channel/touch mode only construct cells near the visible timeline.
+                if (!epgMode && !renderWindow.intersects(placement.startMin, placement.endMin)) {
+                    return@forEachIndexed
+                }
                 val offset = (placement.startMin * pxPerMin).dp
                 val width = (placement.durationMin * pxPerMin).dp
                 val isCatchupSupported = placement.isCatchupSupported(channel, nowMillis)
@@ -767,50 +813,52 @@ private fun ProgramsRow(
                 val isFocusable = focusableIndex >= 0
                 val placementIsNow = placement.isNow(nowMillis)
                 val placementIsPast = placement.isPast(nowMillis)
-                ProgramCell(
-                    program = placement.program,
-                    clockTickMillis = clockTickMillis,
-                    width = width,
-                    isNow = placementIsNow,
-                    isPast = placementIsPast,
-                    isFocusTarget = placementIsNow,
-                    focusable = isFocusable,
-                    isCatchupSupported = isCatchupSupported,
-                    onClick = {
-                        epgProgramActionTarget(
-                            program = placement.program,
-                            isPast = placementIsPast,
-                            isLive = placementIsNow,
-                            isCatchupSupported = isCatchupSupported,
-                        )?.let(onClick)
-                    },
-                    onFocused = onFocused,
-                    onMoveLeft = {
-                        if (focusableIndex > 0) {
-                            runCatching { rowFocusRequesters[focusableIndex - 1].requestFocus() }
-                            true
-                        } else {
-                            onMoveLeftFromStart()
-                        }
-                    },
-                    onMoveRight = {
-                        if (focusableIndex in 0 until rowFocusRequesters.lastIndex) {
-                            runCatching { rowFocusRequesters[focusableIndex + 1].requestFocus() }
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                    onMoveUp = {
-                        onMoveVertically(rowIdx - 1, placement.startMin)
-                    },
-                    onMoveDown = {
-                        onMoveVertically(rowIdx + 1, placement.startMin)
-                    },
-                    rowHeight = rowHeight,
-                    focusRequester = rowFocusRequesters.getOrNull(focusableIndex),
-                    modifier = Modifier.offset(x = offset),
-                )
+                key(placement.startMillis, placement.endMillis) {
+                    ProgramCell(
+                        program = placement.program,
+                        clockTickMillis = clockTickMillis,
+                        width = width,
+                        isNow = placementIsNow,
+                        isPast = placementIsPast,
+                        isFocusTarget = placementIsNow,
+                        focusable = isFocusable,
+                        isCatchupSupported = isCatchupSupported,
+                        onClick = {
+                            epgProgramActionTarget(
+                                program = placement.program,
+                                isPast = placementIsPast,
+                                isLive = placementIsNow,
+                                isCatchupSupported = isCatchupSupported,
+                            )?.let(onClick)
+                        },
+                        onFocused = onFocused,
+                        onMoveLeft = {
+                            if (focusableIndex > 0) {
+                                runCatching { rowFocusRequesters[focusableIndex - 1].requestFocus() }
+                                true
+                            } else {
+                                onMoveLeftFromStart()
+                            }
+                        },
+                        onMoveRight = {
+                            if (focusableIndex in 0 until rowFocusRequesters.lastIndex) {
+                                runCatching { rowFocusRequesters[focusableIndex + 1].requestFocus() }
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        onMoveUp = {
+                            onMoveVertically(rowIdx - 1, placement.startMin)
+                        },
+                        onMoveDown = {
+                            onMoveVertically(rowIdx + 1, placement.startMin)
+                        },
+                        rowHeight = rowHeight,
+                        focusRequester = rowFocusRequesters.getOrNull(focusableIndex),
+                        modifier = Modifier.offset(x = offset),
+                    )
+                }
             }
         }
     }
