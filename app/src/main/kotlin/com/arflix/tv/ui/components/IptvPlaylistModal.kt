@@ -169,7 +169,7 @@ fun IptvPlaylistModal(
 
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     val configuration = LocalConfiguration.current
-    val isWidescreen = !isTouchDevice || configuration.screenWidthDp >= 760
+    val isTvLayout = !isTouchDevice
     val screenHeightDp = configuration.screenHeightDp.dp
     val maxDialogHeight = (screenHeightDp * 0.90f).coerceAtMost(if (isTouchDevice) 620.dp else 680.dp)
 
@@ -214,6 +214,11 @@ fun IptvPlaylistModal(
         when (sourceType) {
             IptvSourceType.M3U -> {
                 when (row) {
+                    0 -> {
+                        playlistName = text
+                        editTextRefs[0]?.setText(text)
+                        editTextRefs[0]?.setSelection(text.length)
+                    }
                     1 -> {
                         playlistUrl = text
                         editTextRefs[1]?.setText(text)
@@ -228,6 +233,11 @@ fun IptvPlaylistModal(
             }
             IptvSourceType.XTREAM -> {
                 when (row) {
+                    0 -> {
+                        playlistName = text
+                        editTextRefs[0]?.setText(text)
+                        editTextRefs[0]?.setSelection(text.length)
+                    }
                     1 -> {
                         playlistUrl = text
                         editTextRefs[1]?.setText(text)
@@ -247,6 +257,11 @@ fun IptvPlaylistModal(
             }
             IptvSourceType.STALKER -> {
                 when (row) {
+                    0 -> {
+                        stalkerName = text
+                        editTextRefs[0]?.setText(text)
+                        editTextRefs[0]?.setSelection(text.length)
+                    }
                     1 -> {
                         stalkerPortalUrl = text
                         editTextRefs[1]?.setText(text)
@@ -292,15 +307,18 @@ fun IptvPlaylistModal(
             Box(
                 modifier = Modifier
                     .then(
-                        if (isWidescreen) Modifier.width(730.dp)
-                        else Modifier.fillMaxWidth(0.94f).widthIn(max = 600.dp)
+                        if (isTvLayout) Modifier.width(730.dp)
+                        else Modifier.fillMaxWidth(0.92f).widthIn(max = 640.dp)
                     )
                     .navigationBarsPadding()
                     .imePadding()
                     .heightIn(max = maxDialogHeight)
                     .background(BackgroundElevated, RoundedCornerShape(14.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
-                    .padding(20.dp)
+                    .padding(
+                        horizontal = if (isTvLayout) 20.dp else 16.dp,
+                        vertical = if (isTvLayout) 20.dp else 18.dp
+                    )
                     .focusRequester(modalFocusRequester)
                     .focusable()
                     .onPreviewKeyEvent { event ->
@@ -473,7 +491,7 @@ fun IptvPlaylistModal(
                         }
                     }
             ) {
-                if (isWidescreen) {
+                if (isTvLayout) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(22.dp)
@@ -1057,11 +1075,36 @@ fun IptvPlaylistModal(
                         }
                     }
                 } else {
-                    // Mobile / Touchscreen Fallback Layout
+                    // Mobile / Touchscreen Layout (matches InputModal / Add Addons design)
+                    var mobileFocusedIndex by remember(sourceType) { mutableIntStateOf(1) }
+
+                    fun mobilePasteTargetIndex(): Int {
+                        val maxField = if (sourceType == IptvSourceType.XTREAM) 3 else 2
+                        return mobileFocusedIndex.coerceIn(0, maxField)
+                    }
+
+                    val pasteTargetLabel = when (sourceType) {
+                        IptvSourceType.M3U -> when (mobilePasteTargetIndex()) {
+                            0 -> stringResource(R.string.settings_label_playlist_name)
+                            2 -> stringResource(R.string.settings_label_epg_sources)
+                            else -> stringResource(R.string.settings_label_m3u_url)
+                        }
+                        IptvSourceType.XTREAM -> when (mobilePasteTargetIndex()) {
+                            0 -> stringResource(R.string.settings_label_playlist_name)
+                            2 -> stringResource(R.string.settings_label_username)
+                            3 -> stringResource(R.string.settings_label_password)
+                            else -> stringResource(R.string.settings_label_server_url)
+                        }
+                        IptvSourceType.STALKER -> when (mobilePasteTargetIndex()) {
+                            0 -> stringResource(R.string.settings_stalker_portal_name_label)
+                            2 -> stringResource(R.string.settings_stalker_label_mac)
+                            else -> stringResource(R.string.settings_stalker_label_portal_url)
+                        }
+                    }
+
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(formScrollState)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
                             text = stringResource(
@@ -1075,208 +1118,299 @@ fun IptvPlaylistModal(
                             style = ArflixTypography.sectionTitle,
                             color = TextPrimary
                         )
-
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = stringResource(R.string.settings_modal_hint_touch),
+                            style = ArflixTypography.caption,
+                            color = TextSecondary.copy(alpha = 0.75f),
+                            modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
+                        )
 
                         // Source Type Tabs
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             SourceTypeTab(
                                 label = "M3U",
                                 isSelected = sourceType == IptvSourceType.M3U,
                                 isFocused = false,
-                                onClick = { sourceType = IptvSourceType.M3U },
+                                onClick = {
+                                    sourceType = IptvSourceType.M3U
+                                    if (!isEditing && playlistName.isBlank()) playlistName = "Playlist 1"
+                                },
                                 modifier = Modifier.weight(1f)
                             )
                             SourceTypeTab(
                                 label = "Xtream",
                                 isSelected = sourceType == IptvSourceType.XTREAM,
                                 isFocused = false,
-                                onClick = { sourceType = IptvSourceType.XTREAM },
+                                onClick = {
+                                    sourceType = IptvSourceType.XTREAM
+                                    if (!isEditing && playlistName.isBlank()) playlistName = "Playlist 1"
+                                },
                                 modifier = Modifier.weight(1.1f)
                             )
                             SourceTypeTab(
                                 label = "Stalker",
                                 isSelected = sourceType == IptvSourceType.STALKER,
                                 isFocused = false,
-                                onClick = { sourceType = IptvSourceType.STALKER },
+                                onClick = {
+                                    sourceType = IptvSourceType.STALKER
+                                    if (!isEditing && stalkerName.isBlank()) stalkerName = "Portal 1"
+                                },
                                 modifier = Modifier.weight(1.1f)
                             )
                         }
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        when (sourceType) {
-                            IptvSourceType.M3U -> {
-                                InputFieldBlock(
-                                    stepNumber = 1,
-                                    label = stringResource(R.string.settings_label_playlist_name),
-                                    placeholder = stringResource(R.string.settings_label_playlist_name),
-                                    value = playlistName,
-                                    isFocused = false,
-                                    onValueChange = { playlistName = it },
-                                    onRegisterEditText = { editTextRefs[0] = it },
-                                    onGainNativeFocus = {}
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                InputFieldWithPaste(
-                                    stepNumber = 2,
-                                    label = stringResource(R.string.settings_label_m3u_url),
-                                    placeholder = "https://example.com/playlist.m3u",
-                                    value = playlistUrl,
-                                    isInputFocused = false,
-                                    isPasteFocused = false,
-                                    onValueChange = { playlistUrl = it },
-                                    onRegisterEditText = { editTextRefs[1] = it },
-                                    onGainNativeFocus = {},
-                                    onPasteClick = { pasteClipboardIntoRow(1) }
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                InputFieldWithPaste(
-                                    stepNumber = 3,
-                                    label = stringResource(R.string.settings_label_epg_sources),
-                                    placeholder = "https://provider.com/epg.xml.gz",
-                                    value = epgSources,
-                                    singleLine = true,
-                                    isInputFocused = false,
-                                    isPasteFocused = false,
-                                    onValueChange = { epgSources = it },
-                                    onRegisterEditText = { editTextRefs[2] = it },
-                                    onGainNativeFocus = {},
-                                    onPasteClick = { pasteClipboardIntoRow(2) }
-                                )
+                        // Scrollable middle section for fields and toggles
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .verticalScroll(formScrollState)
+                        ) {
+                            when (sourceType) {
+                                IptvSourceType.M3U -> {
+                                    InputFieldBlock(
+                                        stepNumber = 1,
+                                        label = stringResource(R.string.settings_label_playlist_name),
+                                        placeholder = stringResource(R.string.settings_label_playlist_name),
+                                        value = playlistName,
+                                        isFocused = mobileFocusedIndex == 0,
+                                        onValueChange = { playlistName = it },
+                                        onRegisterEditText = { editTextRefs[0] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 0 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 2,
+                                        label = stringResource(R.string.settings_label_m3u_url),
+                                        placeholder = "https://example.com/playlist.m3u",
+                                        value = playlistUrl,
+                                        isFocused = mobileFocusedIndex == 1,
+                                        onValueChange = { playlistUrl = it },
+                                        onRegisterEditText = { editTextRefs[1] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 1 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 3,
+                                        label = stringResource(R.string.settings_label_epg_sources),
+                                        placeholder = "https://provider.com/epg.xml.gz",
+                                        value = epgSources,
+                                        isFocused = mobileFocusedIndex == 2,
+                                        onValueChange = { epgSources = it },
+                                        onRegisterEditText = { editTextRefs[2] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 2 }
+                                    )
+                                }
+                                IptvSourceType.XTREAM -> {
+                                    InputFieldBlock(
+                                        stepNumber = 1,
+                                        label = stringResource(R.string.settings_label_playlist_name),
+                                        placeholder = stringResource(R.string.settings_label_playlist_name),
+                                        value = playlistName,
+                                        isFocused = mobileFocusedIndex == 0,
+                                        onValueChange = { playlistName = it },
+                                        onRegisterEditText = { editTextRefs[0] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 0 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 2,
+                                        label = stringResource(R.string.settings_label_server_url),
+                                        placeholder = "http://provider.host:port",
+                                        value = playlistUrl,
+                                        isFocused = mobileFocusedIndex == 1,
+                                        onValueChange = { playlistUrl = it },
+                                        onRegisterEditText = { editTextRefs[1] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 1 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 3,
+                                        label = stringResource(R.string.settings_label_username),
+                                        placeholder = stringResource(R.string.settings_label_username),
+                                        value = xtreamUser,
+                                        isFocused = mobileFocusedIndex == 2,
+                                        onValueChange = { xtreamUser = it },
+                                        onRegisterEditText = { editTextRefs[2] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 2 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 4,
+                                        label = stringResource(R.string.settings_label_password),
+                                        placeholder = stringResource(R.string.settings_label_password),
+                                        value = xtreamPass,
+                                        isSecret = true,
+                                        isFocused = mobileFocusedIndex == 3,
+                                        onValueChange = { xtreamPass = it },
+                                        onRegisterEditText = { editTextRefs[3] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 3 }
+                                    )
+                                }
+                                IptvSourceType.STALKER -> {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(Color.White.copy(alpha = 0.05f))
+                                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                                            .padding(12.dp)
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.settings_stalker_middleware_hint),
+                                            style = ArflixTypography.caption.copy(fontWeight = FontWeight.SemiBold),
+                                            color = TextPrimary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = stringResource(R.string.settings_stalker_desc),
+                                            style = ArflixTypography.caption.copy(fontSize = 11.sp),
+                                            color = TextSecondary
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 1,
+                                        label = stringResource(R.string.settings_stalker_portal_name_label),
+                                        placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
+                                        value = stalkerName,
+                                        isFocused = mobileFocusedIndex == 0,
+                                        onValueChange = { stalkerName = it },
+                                        onRegisterEditText = { editTextRefs[0] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 0 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 2,
+                                        label = stringResource(R.string.settings_stalker_label_portal_url),
+                                        placeholder = stringResource(R.string.settings_stalker_ph_portal_url),
+                                        value = stalkerPortalUrl,
+                                        isFocused = mobileFocusedIndex == 1,
+                                        onValueChange = { stalkerPortalUrl = it },
+                                        onRegisterEditText = { editTextRefs[1] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 1 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 3,
+                                        label = stringResource(R.string.settings_stalker_label_mac),
+                                        placeholder = stringResource(R.string.settings_stalker_ph_mac),
+                                        value = stalkerMac,
+                                        isFocused = mobileFocusedIndex == 2,
+                                        onValueChange = { stalkerMac = it },
+                                        onRegisterEditText = { editTextRefs[2] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 2 }
+                                    )
+                                }
                             }
-                            IptvSourceType.XTREAM -> {
-                                InputFieldBlock(
-                                    stepNumber = 1,
-                                    label = stringResource(R.string.settings_label_playlist_name),
-                                    placeholder = stringResource(R.string.settings_label_playlist_name),
-                                    value = playlistName,
+
+                            if (sourceType != IptvSourceType.STALKER) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                ToggleRow(
+                                    label = stringResource(R.string.live),
+                                    value = importLiveTv,
                                     isFocused = false,
-                                    onValueChange = { playlistName = it },
-                                    onRegisterEditText = { editTextRefs[0] = it },
-                                    onGainNativeFocus = {}
+                                    onClick = { importLiveTv = !importLiveTv }
                                 )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                InputFieldWithPaste(
-                                    stepNumber = 2,
-                                    label = stringResource(R.string.settings_label_server_url),
-                                    placeholder = "http://provider.host:port",
-                                    value = playlistUrl,
-                                    isInputFocused = false,
-                                    isPasteFocused = false,
-                                    onValueChange = { playlistUrl = it },
-                                    onRegisterEditText = { editTextRefs[1] = it },
-                                    onGainNativeFocus = {},
-                                    onPasteClick = { pasteClipboardIntoRow(1) }
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                InputFieldWithPaste(
-                                    stepNumber = 3,
-                                    label = stringResource(R.string.settings_label_username),
-                                    placeholder = stringResource(R.string.settings_label_username),
-                                    value = xtreamUser,
-                                    isInputFocused = false,
-                                    isPasteFocused = false,
-                                    onValueChange = { xtreamUser = it },
-                                    onRegisterEditText = { editTextRefs[2] = it },
-                                    onGainNativeFocus = {},
-                                    onPasteClick = { pasteClipboardIntoRow(2) }
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                InputFieldWithPaste(
-                                    stepNumber = 4,
-                                    label = stringResource(R.string.settings_label_password),
-                                    placeholder = stringResource(R.string.settings_label_password),
-                                    value = xtreamPass,
-                                    isSecret = true,
-                                    isInputFocused = false,
-                                    isPasteFocused = false,
-                                    onValueChange = { xtreamPass = it },
-                                    onRegisterEditText = { editTextRefs[3] = it },
-                                    onGainNativeFocus = {},
-                                    onPasteClick = { pasteClipboardIntoRow(3) }
-                                )
-                            }
-                            IptvSourceType.STALKER -> {
-                                InputFieldBlock(
-                                    stepNumber = 1,
-                                    label = stringResource(R.string.settings_stalker_portal_name_label),
-                                    placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
-                                    value = stalkerName,
+                                Spacer(modifier = Modifier.height(8.dp))
+                                ToggleRow(
+                                    label = stringResource(R.string.movies),
+                                    value = importVod,
                                     isFocused = false,
-                                    onValueChange = { stalkerName = it },
-                                    onRegisterEditText = { editTextRefs[0] = it },
-                                    onGainNativeFocus = {}
+                                    onClick = { importVod = !importVod }
                                 )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                InputFieldWithPaste(
-                                    stepNumber = 2,
-                                    label = stringResource(R.string.settings_stalker_label_portal_url),
-                                    placeholder = stringResource(R.string.settings_stalker_ph_portal_url),
-                                    value = stalkerPortalUrl,
-                                    isInputFocused = false,
-                                    isPasteFocused = false,
-                                    onValueChange = { stalkerPortalUrl = it },
-                                    onRegisterEditText = { editTextRefs[1] = it },
-                                    onGainNativeFocus = {},
-                                    onPasteClick = { pasteClipboardIntoRow(1) }
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                InputFieldWithPaste(
-                                    stepNumber = 3,
-                                    label = stringResource(R.string.settings_stalker_label_mac),
-                                    placeholder = stringResource(R.string.settings_stalker_ph_mac),
-                                    value = stalkerMac,
-                                    isInputFocused = false,
-                                    isPasteFocused = false,
-                                    onValueChange = { stalkerMac = it },
-                                    onRegisterEditText = { editTextRefs[2] = it },
-                                    onGainNativeFocus = {},
-                                    onPasteClick = { pasteClipboardIntoRow(2) }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                ToggleRow(
+                                    label = stringResource(R.string.series),
+                                    value = importSeries,
+                                    isFocused = false,
+                                    onClick = { importSeries = !importSeries }
                                 )
                             }
                         }
 
-                        if (sourceType != IptvSourceType.STALKER) {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            ToggleRow(stringResource(R.string.live), importLiveTv, false) { importLiveTv = !importLiveTv }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            ToggleRow(stringResource(R.string.movies), importVod, false) { importVod = !importVod }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            ToggleRow(stringResource(R.string.series), importSeries, false) { importSeries = !importSeries }
+                        // Dedicated Full-Width Paste Button (mirroring InputModal)
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.Black.copy(alpha = 0.82f), RoundedCornerShape(10.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    pasteClipboardIntoRow(mobilePasteTargetIndex())
+                                }
+                                .padding(vertical = 12.dp, horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentPaste,
+                                contentDescription = stringResource(R.string.settings_cd_paste),
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.settings_paste_into, pasteTargetLabel),
+                                style = ArflixTypography.button,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
-
+                        // Bottom Action Buttons (mirroring InputModal)
+                        Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color.Black.copy(alpha = 0.82f))
+                                    .background(Color.Black.copy(alpha = 0.82f), RoundedCornerShape(10.dp))
                                     .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                                    .clickable { onDismiss() }
+                                    .clickable {
+                                        hideKeyboardAll()
+                                        onDismiss()
+                                    }
                                     .padding(vertical = 12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(tr("Cancel"), style = ArflixTypography.button, color = Color.White)
+                                Text(
+                                    text = tr("Cancel"),
+                                    style = ArflixTypography.button,
+                                    color = Color.White
+                                )
                             }
+
                             Box(
                                 modifier = Modifier
-                                    .weight(1.3f)
+                                    .weight(1f)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color.White)
+                                    .background(Color.White, RoundedCornerShape(10.dp))
                                     .clickable {
+                                        hideKeyboardAll()
                                         if (sourceType == IptvSourceType.STALKER) {
                                             onSaveStalker(stalkerName, stalkerPortalUrl, stalkerMac)
                                         } else {
-                                            onSaveIptv(playlistName, playlistUrl, xtreamUser, xtreamPass, epgSources, importLiveTv, importVod, importSeries)
+                                            onSaveIptv(
+                                                playlistName,
+                                                playlistUrl,
+                                                xtreamUser,
+                                                xtreamPass,
+                                                epgSources,
+                                                importLiveTv,
+                                                importVod,
+                                                importSeries
+                                            )
                                         }
                                     }
                                     .padding(vertical = 12.dp),
@@ -1674,8 +1808,15 @@ private fun InputFieldBlock(
                         isFocusable = true
                         isFocusableInTouchMode = true
 
+                        val isLikelyUrl = label.contains("url", ignoreCase = true) ||
+                            label.contains("server", ignoreCase = true) ||
+                            label.contains("epg", ignoreCase = true)
+
                         inputType = if (isSecret) {
                             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                        } else if (isLikelyUrl) {
+                            (InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI) or
+                                if (singleLine) 0 else InputType.TYPE_TEXT_FLAG_MULTI_LINE
                         } else {
                             InputType.TYPE_CLASS_TEXT or if (singleLine) 0 else InputType.TYPE_TEXT_FLAG_MULTI_LINE
                         }
