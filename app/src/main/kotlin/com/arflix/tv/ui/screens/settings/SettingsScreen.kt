@@ -2220,9 +2220,9 @@ fun SettingsScreen(
 
         if (showCatalogPackInput) {
             InputModal(
-                title = "Import Catalog Pack",
+                title = stringResource(R.string.settings_catalog_pack_import_title),
                 fields = listOf(
-                    InputField(label = "Pack URL", value = catalogPackInputUrl, onValueChange = { catalogPackInputUrl = it })
+                    InputField(label = stringResource(R.string.settings_catalog_pack_url_label), value = catalogPackInputUrl, onValueChange = { catalogPackInputUrl = it })
                 ),
                 onConfirm = {
                     if (catalogPackInputUrl.isNotBlank()) {
@@ -2508,8 +2508,8 @@ fun SettingsScreen(
         uiState.simklUserCode?.let { simklCode ->
             val verificationUrl = uiState.simklVerificationUrl ?: "https://simkl.com/pin"
             TraktActivationModal(
-                title = "Connect Simkl",
-                instruction = "Visit $verificationUrl on your phone or computer and enter this code:",
+                title = stringResource(R.string.settings_simkl_connect_title),
+                instruction = stringResource(R.string.settings_activation_visit_instruction, verificationUrl),
                 verificationUrl = verificationUrl,
                 userCode = simklCode,
                 onDismiss = { viewModel.disconnectSimkl() }
@@ -4256,14 +4256,14 @@ private fun MobileSettingsMainPage(
                     iconRes = R.drawable.ic_discord,
                     title = "Discord RPC",
                     subtitle = when {
-                        !isDiscordSupported -> "Not included in this build"
-                        isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> "Connected as $discordUsername"
+                        !isDiscordSupported -> stringResource(R.string.discord_not_included_in_build)
+                        isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> stringResource(R.string.settings_connected_as, discordUsername.orEmpty())
                         else -> ""
                     },
                     value = when {
-                        !isDiscordSupported -> "Unavailable"
-                        isDiscordLoggedIn -> "Disconnect"
-                        else -> "Connect"
+                        !isDiscordSupported -> stringResource(R.string.unavailable)
+                        isDiscordLoggedIn -> stringResource(R.string.settings_disconnect)
+                        else -> stringResource(R.string.connect)
                     },
                     enabled = isDiscordSupported,
                     isFocused = false,
@@ -4348,14 +4348,16 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.PlayArrow,
                         title = stringResource(R.string.auto_play_next_title),
-                        value = if (uiState.autoPlayNext) "On" else "Off",
+                        value = stringResource(if (uiState.autoPlayNext) R.string.on else R.string.off),
+                        toggleChecked = uiState.autoPlayNext,
                         isFocused = false,
                         onClick = { viewModel.setAutoPlayNext(!uiState.autoPlayNext) }
                     )
                     MobileSettingsRow(
                         icon = Icons.Default.PlayArrow,
                         title = stringResource(R.string.autoplay),
-                        value = if (uiState.autoPlaySingleSource) "On" else "Off",
+                        value = stringResource(if (uiState.autoPlaySingleSource) R.string.on else R.string.off),
+                        toggleChecked = uiState.autoPlaySingleSource,
                         isFocused = false,
                         onClick = { viewModel.setAutoPlaySingleSource(!uiState.autoPlaySingleSource) }
                     )
@@ -4369,14 +4371,16 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.Movie,
                         title = stringResource(R.string.trailer_auto_play),
-                        value = if (uiState.trailerAutoPlay) "On" else "Off",
+                        value = stringResource(if (uiState.trailerAutoPlay) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerAutoPlay,
                         isFocused = false,
                         onClick = { viewModel.setTrailerAutoPlay(!uiState.trailerAutoPlay) }
                     )
                     MobileSettingsRow(
                         icon = Icons.Default.VolumeUp,
                         title = stringResource(R.string.trailer_sound),
-                        value = if (uiState.trailerSoundEnabled) "On" else "Off",
+                        value = stringResource(if (uiState.trailerSoundEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerSoundEnabled,
                         isFocused = false,
                         onClick = { viewModel.setTrailerSoundEnabled(!uiState.trailerSoundEnabled) }
                     )
@@ -4390,7 +4394,8 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.Movie,
                         title = stringResource(R.string.trailer_in_cards),
-                        value = if (uiState.trailerInCards) "On" else "Off",
+                        value = stringResource(if (uiState.trailerInCards) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerInCards,
                         isFocused = false,
                         onClick = { viewModel.setTrailerInCards(!uiState.trailerInCards) }
                     )
@@ -4405,7 +4410,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Movie,
                         title = stringResource(R.string.dv_compat_title),
                         subtitle = stringResource(R.string.dv_compat_desc),
-                        value = if (uiState.dolbyVisionCompatEnabled) "On" else "Off",
+                        value = stringResource(if (uiState.dolbyVisionCompatEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.dolbyVisionCompatEnabled,
                         isFocused = false,
                         onClick = { viewModel.setDolbyVisionCompatEnabled(!uiState.dolbyVisionCompatEnabled) }
                     )
@@ -4422,7 +4428,8 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.Person,
                         title = stringResource(R.string.skip_profile),
-                        value = if (uiState.skipProfileSelection) "On" else "Off",
+                        value = stringResource(if (uiState.skipProfileSelection) R.string.on else R.string.off),
+                        toggleChecked = uiState.skipProfileSelection,
                         isFocused = false,
                         onClick = { viewModel.setSkipProfileSelection(!uiState.skipProfileSelection) }
                     )
@@ -4485,7 +4492,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.subtitle_stylized),
                         subtitle = stringResource(R.string.subtitle_stylized_desc),
-                        value = if (uiState.subtitleStylized) "On" else "Off",
+                        value = stringResource(if (uiState.subtitleStylized) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleStylized,
                         isToggle = true,
                         isFocused = false,
                         onClick = { viewModel.toggleSubtitleStylized() }
@@ -4495,7 +4503,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.ai_find_best_match_title),
                         subtitle = stringResource(R.string.ai_find_best_match_desc),
-                        value = if (uiState.subtitleAiFindBestMatch) "On" else "Off",
+                        value = stringResource(if (uiState.subtitleAiFindBestMatch) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleAiFindBestMatch,
                         isToggle = true,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch) }
@@ -4504,7 +4513,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.subtitle_preload_title),
                         subtitle = stringResource(R.string.subtitle_preload_desc),
-                        value = if (uiState.subtitlePreloadEnabled) "On" else "Off",
+                        value = stringResource(if (uiState.subtitlePreloadEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitlePreloadEnabled,
                         isToggle = true,
                         isFocused = false,
                         onClick = { viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled) }
@@ -4513,7 +4523,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.filter_subtitles),
                         subtitle = stringResource(R.string.filter_subtitles_desc),
-                        value = if (uiState.filterSubtitlesByLanguage) "On" else "Off",
+                        value = stringResource(if (uiState.filterSubtitlesByLanguage) R.string.on else R.string.off),
+                        toggleChecked = uiState.filterSubtitlesByLanguage,
                         isToggle = true,
                         isFocused = false,
                         showDivider = false,
@@ -4525,7 +4536,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.AutoAwesome,
                         title = stringResource(R.string.ai_subtitle_translation_title),
                         subtitle = stringResource(R.string.ai_subtitle_translation_desc),
-                        value = if (uiState.subtitleAiEnabled) "On" else "Off",
+                        value = stringResource(if (uiState.subtitleAiEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleAiEnabled,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleAiEnabled(!uiState.subtitleAiEnabled) }
                     )
@@ -4544,7 +4556,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.AutoAwesome,
                         title = stringResource(R.string.ai_auto_select_title),
                         subtitle = stringResource(R.string.ai_auto_select_desc),
-                        value = if (uiState.subtitleAiAutoSelect) "On" else "Off",
+                        value = stringResource(if (uiState.subtitleAiAutoSelect) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleAiAutoSelect,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleAiAutoSelect(!uiState.subtitleAiAutoSelect) }
                     )
@@ -4552,7 +4565,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.ai_remove_hi_title),
                         subtitle = stringResource(R.string.ai_remove_hi_desc),
-                        value = if (uiState.subtitleRemoveHearingImpaired) "On" else "Off",
+                        value = stringResource(if (uiState.subtitleRemoveHearingImpaired) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleRemoveHearingImpaired,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired) }
                     )
@@ -4608,7 +4622,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Palette,
                         title = stringResource(R.string.oled_black_background),
                         subtitle = stringResource(R.string.oled_black_background_desc),
-                        value = if (uiState.oledBlackBackground) "On" else "Off",
+                        value = stringResource(if (uiState.oledBlackBackground) R.string.on else R.string.off),
+                        toggleChecked = uiState.oledBlackBackground,
                         isFocused = false,
                         onClick = { viewModel.setOledBlackBackground(!uiState.oledBlackBackground) }
                     )
@@ -4622,7 +4637,8 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.Movie,
                         title = stringResource(R.string.show_budget),
-                        value = if (uiState.showBudget) "On" else "Off",
+                        value = stringResource(if (uiState.showBudget) R.string.on else R.string.off),
+                        toggleChecked = uiState.showBudget,
                         isFocused = false,
                         showDivider = true,
                         onClick = { viewModel.setShowBudget(!uiState.showBudget) }
@@ -4630,7 +4646,8 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.Star,
                         title = stringResource(R.string.show_episode_ratings),
-                        value = if (uiState.showEpisodeRatings) "On" else "Off",
+                        value = stringResource(if (uiState.showEpisodeRatings) R.string.on else R.string.off),
+                        toggleChecked = uiState.showEpisodeRatings,
                         isFocused = false,
                         showDivider = true,
                         onClick = { viewModel.setShowEpisodeRatings(!uiState.showEpisodeRatings) }
@@ -4638,7 +4655,8 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.VisibilityOff,
                         title = stringResource(R.string.spoiler_blur),
-                        value = if (uiState.spoilerBlurEnabled) "On" else "Off",
+                        value = stringResource(if (uiState.spoilerBlurEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.spoilerBlurEnabled,
                         isFocused = false,
                         showDivider = true,
                         onClick = { viewModel.setSpoilerBlurEnabled(!uiState.spoilerBlurEnabled) }
@@ -4655,7 +4673,8 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Palette,
                         title = stringResource(R.string.smooth_scrolling),
                         subtitle = stringResource(R.string.smooth_scrolling_desc),
-                        value = if (uiState.smoothScrolling) "On" else "Off",
+                        value = stringResource(if (uiState.smoothScrolling) R.string.on else R.string.off),
+                        toggleChecked = uiState.smoothScrolling,
                         isFocused = false,
                         showDivider = false,
                         onClick = { viewModel.setSmoothScrolling(!uiState.smoothScrolling) }
@@ -4870,7 +4889,8 @@ private fun MobilePrivacySubPage(
             icon = Icons.Default.Settings,
             title = stringResource(R.string.settings_diagnostics_sharing),
             subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
-            value = if (uiState.diagnosticsSharingEnabled) "On" else "Off",
+            value = stringResource(if (uiState.diagnosticsSharingEnabled) R.string.on else R.string.off),
+            toggleChecked = uiState.diagnosticsSharingEnabled,
             isFocused = false,
             showDivider = false,
             onClick = { viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled) }
@@ -5666,7 +5686,7 @@ private fun tvSettingsFocusedHelp(section: String, focusedIndex: Int): TvSetting
         "accounts" -> when (focusedIndex) {
             0 -> TvSettingsHelp(stringResource(R.string.cloud_account), stringResource(R.string.settings_help_cloud_account_desc))
             1 -> TvSettingsHelp(stringResource(R.string.settings_help_trakt), stringResource(R.string.settings_help_trakt_desc))
-            10 -> TvSettingsHelp("Discord RPC", "Show your watch status on your Discord profile.")
+            10 -> TvSettingsHelp("Discord RPC", stringResource(R.string.discord_rpc_help_desc))
             11 -> TvSettingsHelp(stringResource(R.string.force_cloud_sync), stringResource(R.string.settings_help_force_sync_desc))
             12 -> TvSettingsHelp(stringResource(R.string.settings_help_app_updates), stringResource(R.string.settings_help_app_updates_desc))
             13 -> TvSettingsHelp(stringResource(R.string.settings_diagnostics_sharing), stringResource(R.string.settings_diagnostics_sharing_desc))
@@ -5836,9 +5856,9 @@ private fun TvGeneralSettingsRows(
                     subtitle = stringResource(R.string.ui_mode_desc),
                     value = when (deviceModeOverride) {
                         "tv" -> "TV"
-                        "tablet" -> "Tablet"
-                        "phone" -> "Phone"
-                        else -> "Auto"
+                        "tablet" -> stringResource(R.string.settings_mode_tablet)
+                        "phone" -> stringResource(R.string.settings_mode_phone)
+                        else -> stringResource(R.string.auto)
                     },
                     isFocused = focusedIndex == localIndex,
                     onClick = onDeviceModeClick,
@@ -6306,7 +6326,7 @@ private fun GeneralSettings(
             title = stringResource(R.string.volume_boost),
             subtitle = stringResource(R.string.volume_boost_desc),
             value = when (volumeBoostDb) {
-                0 -> "Off"
+                0 -> stringResource(R.string.off)
                 else -> "+${volumeBoostDb} dB"
             },
             isFocused = focusedIndex == 27,
@@ -8267,7 +8287,7 @@ private fun CatalogsSettings(
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_add_catalog)) {
                 MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_catalog), subtitle = stringResource(R.string.add_catalog_desc), value = "", isFocused = false, showDivider = true, onClick = onAddCatalog)
-                MobileSettingsRow(icon = Icons.Default.Widgets, title = "Import Catalog Pack", subtitle = "Import a bundle of catalogs from a JSON manifest URL", value = "", isFocused = false, showDivider = false, onClick = onImportCatalogPack)
+                MobileSettingsRow(icon = Icons.Default.Widgets, title = stringResource(R.string.settings_catalog_pack_import_title), subtitle = stringResource(R.string.settings_catalog_pack_import_desc), value = "", isFocused = false, showDivider = false, onClick = onImportCatalogPack)
             }
             if (catalogs.isNotEmpty()) {
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_my_catalogs)) {
@@ -8362,7 +8382,7 @@ private fun CatalogsSettings(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Unarchive,
-                                                contentDescription = "Unpack catalog row",
+                                                contentDescription = stringResource(R.string.settings_cd_unpack_catalog_row),
                                                 tint = Color.White.copy(alpha = 0.7f),
                                                 modifier = Modifier.size(18.dp)
                                             )
@@ -8399,7 +8419,7 @@ private fun CatalogsSettings(
             Text(text = stringResource(R.string.catalogs), style = ArflixTypography.caption, color = TextSecondary.copy(alpha = 0.65f), modifier = Modifier.padding(bottom = 20.dp))
             SettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_catalog), subtitle = stringResource(R.string.add_catalog_desc), value = stringResource(R.string.settings_badge_add), isFocused = focusedIndex == 0, onClick = onAddCatalog, modifier = Modifier.settingsFocusSlot(0))
             Spacer(modifier = Modifier.height(16.dp))
-            SettingsRow(icon = Icons.Default.Widgets, title = "Import Catalog Pack", subtitle = "Import a bundle of catalogs from a JSON manifest URL", value = "IMPORT", isFocused = focusedIndex == 1, onClick = onImportCatalogPack, modifier = Modifier.settingsFocusSlot(1))
+            SettingsRow(icon = Icons.Default.Widgets, title = stringResource(R.string.settings_catalog_pack_import_title), subtitle = stringResource(R.string.settings_catalog_pack_import_desc), value = stringResource(R.string.settings_catalog_pack_import_badge), isFocused = focusedIndex == 1, onClick = onImportCatalogPack, modifier = Modifier.settingsFocusSlot(1))
             Spacer(modifier = Modifier.height(16.dp))
             catalogs.forEachIndexed { index, catalog ->
                 val rowFocusIndex = index + 2; val isRowFocused = focusedIndex == rowFocusIndex
@@ -9031,8 +9051,8 @@ private fun AccountsSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsActionRow(
-            title = "Watchlist source",
-            description = "Choose which connected service supplies your watchlist.",
+            title = stringResource(R.string.settings_routing_watchlist_source),
+            description = stringResource(R.string.settings_routing_watchlist_source_desc),
             actionLabel = trackingModeLabel(trackingUiState.trackingWatchlistReadMode),
             isFocused = focusedIndex == 4,
             onClick = {
@@ -9047,8 +9067,8 @@ private fun AccountsSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsActionRow(
-            title = "Continue Watching source",
-            description = "Choose where playback progress and Up Next are loaded from.",
+            title = stringResource(R.string.settings_routing_continue_source),
+            description = stringResource(R.string.settings_routing_continue_source_desc),
             actionLabel = trackingModeLabel(trackingUiState.trackingContinueReadMode),
             isFocused = focusedIndex == 5,
             onClick = {
@@ -9063,8 +9083,8 @@ private fun AccountsSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsActionRow(
-            title = "Watched history source",
-            description = "Choose which connected service supplies watched badges.",
+            title = stringResource(R.string.settings_routing_watched_source),
+            description = stringResource(R.string.settings_routing_watched_source_desc),
             actionLabel = trackingModeLabel(trackingUiState.trackingWatchedReadMode),
             isFocused = focusedIndex == 6,
             onClick = {
@@ -9079,8 +9099,8 @@ private fun AccountsSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsToggleRow(
-            title = "Update Trakt while watching",
-            subtitle = if (isTraktAuthenticated) "Send progress and watched changes to Trakt." else "Connect Trakt to enable this.",
+            title = stringResource(R.string.settings_routing_update_trakt),
+            subtitle = stringResource(if (isTraktAuthenticated) R.string.settings_routing_update_trakt_on else R.string.settings_routing_update_trakt_off),
             isEnabled = isTraktAuthenticated && trackingUiState.trackingWriteToTrakt,
             isFocused = focusedIndex == 7,
             onToggle = { enabled -> if (isTraktAuthenticated) onTrackingWriteTarget(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT, enabled) },
@@ -9090,8 +9110,8 @@ private fun AccountsSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsToggleRow(
-            title = "Update Simkl while watching",
-            subtitle = if (isSimklConnected) "Send progress and watched changes to Simkl." else "Connect Simkl to enable this.",
+            title = stringResource(R.string.settings_routing_update_simkl),
+            subtitle = stringResource(if (isSimklConnected) R.string.settings_routing_update_simkl_on else R.string.settings_routing_update_simkl_off),
             isEnabled = isSimklConnected && trackingUiState.trackingWriteToSimkl,
             isFocused = focusedIndex == 8,
             onToggle = { enabled -> if (isSimklConnected) onTrackingWriteTarget(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL, enabled) },
@@ -9120,8 +9140,8 @@ private fun AccountsSettings(
         AccountRow(
             name = "Discord Rich Presence",
             description = when {
-                !isDiscordSupported -> "Not included in this build"
-                isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> "Connected as $discordUsername"
+                !isDiscordSupported -> stringResource(R.string.discord_not_included_in_build)
+                isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> stringResource(R.string.settings_connected_as, discordUsername.orEmpty())
                 else -> ""
             },
             isConnected = isDiscordLoggedIn,
@@ -9666,7 +9686,7 @@ private fun TrackingIntegrationsPage(
                 tagline = stringResource(R.string.settings_simkl_tagline),
                 isConnected = uiState.isSimklConnected,
                 isWorking = uiState.isSimklAuthStarting || uiState.isSimklPolling,
-                connectedAs = if (uiState.isSimklConnected) (uiState.simklUsername ?: "Connected") else null,
+                connectedAs = if (uiState.isSimklConnected) (uiState.simklUsername ?: stringResource(R.string.connected)) else null,
                 comingSoon = false,
                 showDivider = false,
                 onConnect = {
@@ -9681,9 +9701,9 @@ private fun TrackingIntegrationsPage(
         }
 
         if (uiState.isTraktAuthenticated || uiState.isSimklConnected || uiState.isMdbListConnected) {
-            MobileSettingsCategory(title = "DATA ROUTING") {
+            MobileSettingsCategory(title = stringResource(R.string.settings_data_routing)) {
                 TrackingRoutingRow(
-                    title = "Watchlist source",
+                    title = stringResource(R.string.settings_routing_watchlist_source),
                     value = trackingModeLabel(uiState.trackingWatchlistReadMode),
                     showDivider = true,
                     onClick = {
@@ -9694,7 +9714,7 @@ private fun TrackingIntegrationsPage(
                     }
                 )
                 TrackingRoutingRow(
-                    title = "Continue Watching source",
+                    title = stringResource(R.string.settings_routing_continue_source),
                     value = trackingModeLabel(uiState.trackingContinueReadMode),
                     showDivider = true,
                     onClick = {
@@ -9705,7 +9725,7 @@ private fun TrackingIntegrationsPage(
                     }
                 )
                 TrackingRoutingRow(
-                    title = "Watched history source",
+                    title = stringResource(R.string.settings_routing_watched_source),
                     value = trackingModeLabel(uiState.trackingWatchedReadMode),
                     showDivider = uiState.isTraktAuthenticated || uiState.isSimklConnected,
                     onClick = {
@@ -9717,8 +9737,8 @@ private fun TrackingIntegrationsPage(
                 )
                 if (uiState.isTraktAuthenticated) {
                     TrackingRoutingRow(
-                        title = "Update Trakt while watching",
-                        value = if (uiState.trackingWriteToTrakt) "On" else "Off",
+                        title = stringResource(R.string.settings_routing_update_trakt),
+                        value = stringResource(if (uiState.trackingWriteToTrakt) R.string.on else R.string.off),
                         showDivider = uiState.isSimklConnected,
                         onClick = {
                             onWriteTarget(
@@ -9730,8 +9750,8 @@ private fun TrackingIntegrationsPage(
                 }
                 if (uiState.isSimklConnected) {
                     TrackingRoutingRow(
-                        title = "Update Simkl while watching",
-                        value = if (uiState.trackingWriteToSimkl) "On" else "Off",
+                        title = stringResource(R.string.settings_routing_update_simkl),
+                        value = stringResource(if (uiState.trackingWriteToSimkl) R.string.on else R.string.off),
                         showDivider = false,
                         onClick = {
                             onWriteTarget(
@@ -9746,12 +9766,13 @@ private fun TrackingIntegrationsPage(
     }
 }
 
+@Composable
 private fun trackingModeLabel(mode: com.arflix.tv.data.repository.sync.TrackingReadMode): String = when (mode) {
     com.arflix.tv.data.repository.sync.TrackingReadMode.BOTH -> "Trakt + Simkl"
     com.arflix.tv.data.repository.sync.TrackingReadMode.TRAKT -> "Trakt"
     com.arflix.tv.data.repository.sync.TrackingReadMode.SIMKL -> "Simkl"
     com.arflix.tv.data.repository.sync.TrackingReadMode.MDBLIST -> "MDBList"
-    com.arflix.tv.data.repository.sync.TrackingReadMode.AUTO -> "Automatic"
+    com.arflix.tv.data.repository.sync.TrackingReadMode.AUTO -> stringResource(R.string.settings_tracking_mode_automatic)
 }
 
 private fun nextTrackingMode(
@@ -10048,7 +10069,7 @@ private fun AccountRow(
                 }
             } else {
                 Text(
-                    text = "UNAVAILABLE",
+                    text = stringResource(R.string.unavailable).uppercase(),
                     style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
                     color = TextSecondary,
                     maxLines = 1
@@ -10702,6 +10723,7 @@ private fun InputModal(
                                 )
                             }
 
+                            val enterFieldHint = stringResource(R.string.settings_input_hint_enter, field.label)
                             val regexFieldFocusColor = resolveAccentColor(fallback = Pink)
                             Box(
                                 modifier = Modifier
@@ -10721,7 +10743,7 @@ private fun InputModal(
                                             setText(field.value)
                                             setTextColor(android.graphics.Color.WHITE)
                                             setHintTextColor(android.graphics.Color.GRAY)
-                                            hint = field.placeholder.ifBlank { "Enter ${field.label.lowercase()}..." }
+                                            hint = field.placeholder.ifBlank { enterFieldHint }
                                             textSize = 16f
                                             background = null
                                             setPadding(20, 14, 20, 14)
@@ -10814,6 +10836,7 @@ private fun InputModal(
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                     update = { editText ->
+                                        editText.hint = field.placeholder.ifBlank { enterFieldHint }
                                         val current = editText.text?.toString().orEmpty()
                                         if (current != field.value) {
                                             editText.setText(field.value)
@@ -11605,7 +11628,7 @@ private fun CatalogPackImportDialog(
                         LoadingIndicator(size = 40.dp)
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Loading catalog pack details...",
+                            text = stringResource(R.string.settings_catalog_pack_loading),
                             style = ArflixTypography.body,
                             color = TextPrimary
                         )
@@ -11613,7 +11636,7 @@ private fun CatalogPackImportDialog(
                 } else if (error != null) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "Import Failed",
+                            text = stringResource(R.string.settings_catalog_pack_import_failed),
                             style = ArflixTypography.sectionTitle,
                             color = Color(0xFFDC2626)
                         )
@@ -11634,7 +11657,7 @@ private fun CatalogPackImportDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Close",
+                                text = stringResource(R.string.close),
                                 style = ArflixTypography.button,
                                 color = Color.Black
                             )
@@ -11643,7 +11666,7 @@ private fun CatalogPackImportDialog(
                 } else if (pendingPack != null) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "Import Catalog Pack",
+                            text = stringResource(R.string.settings_catalog_pack_import_title),
                             style = ArflixTypography.sectionTitle,
                             color = TextPrimary
                         )
@@ -11655,7 +11678,7 @@ private fun CatalogPackImportDialog(
                         )
                         if (!pendingPack.author.isNullOrBlank()) {
                             Text(
-                                text = "Author: ${pendingPack.author} • v${pendingPack.version ?: "1.0.0"}",
+                                text = stringResource(R.string.settings_catalog_pack_author, pendingPack.author.orEmpty(), pendingPack.version ?: "1.0.0"),
                                 style = ArflixTypography.caption,
                                 color = TextSecondary.copy(alpha = 0.8f)
                             )
@@ -11670,7 +11693,7 @@ private fun CatalogPackImportDialog(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Catalogs included (${pendingPack.catalogs?.size ?: 0}):",
+                            text = stringResource(R.string.settings_catalog_pack_included, pendingPack.catalogs?.size ?: 0),
                             style = ArflixTypography.caption,
                             color = TextSecondary.copy(alpha = 0.6f)
                         )
@@ -11732,7 +11755,7 @@ private fun CatalogPackImportDialog(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "Install Pack",
+                                    text = stringResource(R.string.settings_catalog_pack_install),
                                     style = ArflixTypography.button,
                                     color = if (isConfirmFocused) Color.Black else Color.White
                                 )
@@ -11757,7 +11780,7 @@ private fun CatalogPackImportDialog(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "Cancel",
+                                    text = stringResource(R.string.cancel),
                                     style = ArflixTypography.button,
                                     color = if (isCancelFocused) Color.Black else Color.White
                                 )
@@ -11832,13 +11855,13 @@ private fun CatalogPackDeleteConfirmDialog(
                     }
             ) {
                 Text(
-                    text = "Delete Catalog Pack",
+                    text = stringResource(R.string.settings_catalog_pack_delete_title),
                     style = ArflixTypography.sectionTitle,
                     color = Color(0xFFDC2626)
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Do you want to delete the pack \"$packName\"? This will remove all catalogs that were imported with this pack.",
+                    text = stringResource(R.string.settings_catalog_pack_delete_message, packName),
                     style = ArflixTypography.body,
                     color = TextSecondary
                 )
@@ -11866,7 +11889,7 @@ private fun CatalogPackDeleteConfirmDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Delete Pack",
+                            text = stringResource(R.string.settings_catalog_pack_delete_confirm),
                             style = ArflixTypography.button,
                             color = if (isConfirmFocused) Color.Black else Color.White
                         )
@@ -11891,7 +11914,7 @@ private fun CatalogPackDeleteConfirmDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Cancel",
+                            text = stringResource(R.string.cancel),
                             style = ArflixTypography.button,
                             color = if (isCancelFocused) Color.Black else Color.White
                         )
