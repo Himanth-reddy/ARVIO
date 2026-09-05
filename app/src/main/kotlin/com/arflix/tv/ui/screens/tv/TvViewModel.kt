@@ -846,10 +846,12 @@ class TvViewModel @Inject constructor(
     }
 
     private fun finishEpgAttempt(channelIds: Collection<String>) {
-        if (!shouldEmitEpgSpinnerState()) return
+        // One terminal update per batch is required even on large lists. Skipping
+        // it made a completed/empty lookup display "Guide pending" forever.
         val ids = channelIds.asSequence().filter { it.isNotBlank() }.toSet()
         if (ids.isEmpty()) return
         val current = _uiState.value
+        if (ids.all { it in current.epgAttemptedChannelIds && it !in current.epgLoadingChannelIds }) return
         setUiState(
             current.copy(
                 epgLoadingChannelIds = current.epgLoadingChannelIds - ids,

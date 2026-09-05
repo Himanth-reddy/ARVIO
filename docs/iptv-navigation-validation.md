@@ -93,3 +93,48 @@ Credentials and raw provider URLs are excluded from this document and test fixtu
 ## Latest-main integration
 
 The IPTV changes were also applied to `14543b97b` (including the newly merged player/details PRs). The signed sideload release and the 42-test focused JVM suite built successfully; a second assemble confirmed the final sources were up to date. Uncommitted player-preview work in the original worktree was left intact, not overwritten or mixed into this IPTV commit.
+
+## Follow-up hardening and measurement
+
+Changes on top of `5ab0c13db`:
+
+- Each profile/provider/category retains an independent lazy-list position and loaded-page limit, bounded to 16 category windows. Touch category selection uses the same lock checks as remote selection.
+- Retain up to 160 indexed channel schedules across neighboring windows; an empty/failed refresh does not erase already displayed guide data. Always include the playing channel in the indexed query, even outside the browsed category.
+- Re-evaluate the mini-player's current/next programme against the clock. Previously a completed programme could remain labelled NOW until a network refresh.
+- Resolve a saved last channel from SQLite when it lies outside the first loaded page; respect hidden/restricted groups.
+- Handle an expired HLS live window by seeking to the live edge, once per minute, without applying this recovery to catchup.
+- Emit a terminal empty-guide result for large playlists too, instead of leaving successfully completed lookups marked pending.
+- Make XML parsing and retry spooling cancellable. Avoid parsing dates/descriptions for unrelated XMLTV channels. Visible XMLTV requests now share the provider budget; authorization failures no longer provoke a second request with another user agent.
+- Correct the SAX fallback's empty `localName` handling. With namespaces disabled, the parser supplies `qName` and an empty `localName`; the previous null-only fallback silently recognized no XML elements. Regression tests now exercise real XML and cancellation.
+- Move the live indicator's alpha updates to the graphics layer, avoiding composition for each pulse frame.
+
+### Regression results
+
+- Final focused JVM suite: **60 passed**, zero failures (previous 42 plus repository optimization, XML parser/cancellation, clock/cache/recovery and saved-channel tests).
+- Physical TCL suite: **9 passed in 160.084 seconds**. Programme navigation now uses actual populated programme rows, not empty placeholders. Includes category A -> B -> A independent scroll restoration.
+- Android 14 phone emulator: **3 passed in 11.754 seconds**: touch scrolling across appended pages, hiding a category, and independent category scroll restoration. This is emulator coverage, not a claim of physical-phone performance.
+- Release compilation, R8 and vital lint completed successfully. Device navigation tests ran against a debug-signed-with-release-key build; performance observations used the optimized release APK.
+- After the external-focus correction, the complete **10-test TCL suite passed in 164.431 seconds**, including the new regression that restoring focus to a visible row must not move it to the top. An earlier run while the TV was asleep could not find Compose hierarchies and was discarded; no production crash was recorded. The TV was awakened for the repeat and its screensaver setting restored afterward.
+
+### Physical performance observations
+
+The committed opt-in `GuideScrollDriver` injects 160 Down and 160 Up key pairs with 150 ms pacing, without spawning a shell for each key. It requires a manually prepared, focused guide; it never changes account/playlist configuration. Capture `dumpsys gfxinfo com.arvio.tv reset` before the run, then `dumpsys gfxinfo com.arvio.tv` immediately afterward. Perfetto can run alongside it.
+
+For the real 108,145-channel catalog, starting at channel 1 with the same mini-player stream:
+
+| Build/run | Frames | Missed deadlines | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `5ab0c13db`, native driver | 3,331 | 25.22% | 34 ms | 57 ms | 77 ms |
+| Follow-up release, native driver | 3,540 | 20.11% | 34 ms | 53 ms | 73 ms |
+| Follow-up repeat with tracing | 3,699 | 11.14% | 31 ms | 48 ms | 65 ms |
+| Final build, NPO 1 FHD playing | 3,206 | 33.72% | 38 ms | 65 ms | 93 ms |
+
+The repeat encountered an upstream HTTP 502 playback retry, so it is **not** an equivalent uninterrupted-video comparison and must not be used to promise an 11% outcome. Neither run demonstrates consistently smooth 60 fps. Both completed all 320 actions and returned to channel 1; the list and mini-player remained mounted. The first follow-up run is a modest improvement, not a performance pass.
+
+The final run used a different, Full-HD stream (NPO 1) and missed more deadlines; it also completed all 320 actions. This is a residual performance failure, not hidden as a passing result. Low-overhead profiling of simultaneous Full-HD playback and scrolling remains necessary. A later external-focus correction avoids pinning an already visible selected row to the top when returning from the drawer; it does not address the Full-HD frame-rate limitation.
+
+At 18:28 the final release resumed NPO 1 automatically after installation/restart and showed its cached guide. At 18:31 screenshots confirmed the NOW programme had advanced from NOS Sportjournaal (18:15-18:30) to EenVandaag (18:30-19:05) while browsing All Channels. A physical category round-trip also retained the selected channel 31 rather than resetting to channel 1.
+
+Two 35-second system traces also show background allocation pressure: before, the hottest worker used 13.303 CPU seconds and GC used about 2.9 seconds across nine events; after, GC used about 0.48 seconds across two events. These traces contain different warm-cache/background work, so they identify remaining costs rather than isolate one patch's effect. Main/render work remains significant and requires further profiling for the smoothness target.
+
+The fully automated Macrobenchmark launch attempt could not reliably open the production account/profile flow on this TCL. It was not counted as a passing test and was replaced by the tested explicit opt-in input driver. No unattended login flow or credentials are committed.

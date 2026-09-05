@@ -19,8 +19,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +35,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -178,7 +180,13 @@ fun EpgGrid(
     // Shared horizontal scroll state between header and body rows.
     val hScroll = rememberScrollState()
     // A single LazyListState handles vertical scrolling for both channels and EPG.
-    val channelListState = rememberLazyListState()
+    val positions = rememberSaveable(saver = GuideListStatesSaver) { LinkedHashMap<String, LazyListState>() }
+    val channelListState = remember(scrollResetKey) {
+        val state = positions.remove(scrollResetKey) ?: LazyListState()
+        positions[scrollResetKey] = state
+        while (positions.size > 16) positions.remove(positions.keys.first())
+        state
+    }
     var didPositionInitialSelection by remember(scrollResetKey) { mutableStateOf(false) }
     var activeChannelFocusId by remember(scrollResetKey) { mutableStateOf(selectedChannelId) }
     var activeChannelFocusIndex by remember(scrollResetKey) { mutableIntStateOf(0) }
@@ -187,7 +195,9 @@ fun EpgGrid(
 
     LaunchedEffect(scrollResetKey, channelWindowIdentity) {
         if (channels.isEmpty() || didPositionInitialSelection) return@LaunchedEffect
-        channelListState.scrollToItem(selectedChannelId?.let(channelIndexById::get) ?: 0)
+        if (channelListState.firstVisibleItemIndex == 0 && channelListState.firstVisibleItemScrollOffset == 0) {
+            channelListState.scrollToItem(selectedChannelId?.let(channelIndexById::get) ?: 0)
+        }
         activeChannelFocusId = selectedChannelId
             ?.takeIf { it in channelIndexById }
             ?: channels.firstOrNull()?.id
@@ -316,7 +326,11 @@ fun EpgGrid(
         if (handledSelectedFocusSignal == focusSelectedChannelSignal) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
-        channelListState.scrollToItem(idx)
+        if (channelListState.layoutInfo.visibleItemsInfo.any { it.index == idx }) {
+            revealRow(idx)
+        } else {
+            channelListState.scrollToItem(idx)
+        }
         runCatching { selectedChannelFocusRequester.requestFocus() }
         handledSelectedFocusSignal = focusSelectedChannelSignal
     }
@@ -676,6 +690,19 @@ fun EpgGrid(
         }
     }
 }
+
+private val GuideListStatesSaver = listSaver<LinkedHashMap<String, LazyListState>, Any>(
+    save = { states ->
+        states.flatMap { (key, state) -> listOf(key, state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset) }
+    },
+    restore = { values ->
+        LinkedHashMap<String, LazyListState>().apply {
+            values.chunked(3).forEach { (key, index, offset) ->
+                put(key as String, LazyListState(index as Int, offset as Int))
+            }
+        }
+    },
+)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
