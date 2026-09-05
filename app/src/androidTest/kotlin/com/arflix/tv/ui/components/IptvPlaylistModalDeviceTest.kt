@@ -3,7 +3,6 @@ package com.arflix.tv.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
@@ -30,6 +29,7 @@ import com.arflix.tv.util.LocalDeviceType
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -101,21 +101,21 @@ class IptvPlaylistModalDeviceTest {
     @Test
     fun tvRemoteCanReachGuideAndSaveXtream() {
         show(DeviceType.TV)
-        keys(Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionDown)
+        keys(listOf(Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionDown))
         compose.onNodeWithTag("iptv_input_5").assertIsDisplayed()
-        keys(Key.DirectionDown)
+        keys(listOf(Key.DirectionDown))
         compose.onNodeWithText(compose.activity.getString(R.string.settings_save_playlist)).assertIsDisplayed()
         captureDialog("tv")
-        keys(Key.DirectionRight, Key.DirectionCenter)
+        keys(listOf(Key.DirectionRight, Key.DirectionCenter))
         assertEquals(SavedPlaylist(HOST, "user", "password", GUIDES), saved)
     }
 
     @Test
     fun tvRemoteM3uSaveIgnoresHiddenXtreamCredentials() {
         show(DeviceType.TV)
-        keys(Key.DirectionLeft, Key.DirectionLeft, Key.DirectionLeft, Key.DirectionCenter)
-        keys(Key.DirectionRight, Key.DirectionRight, Key.DirectionRight)
-        keys(Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter)
+        keys(listOf(Key.DirectionLeft, Key.DirectionLeft, Key.DirectionLeft, Key.DirectionCenter))
+        keys(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionRight))
+        keys(listOf(Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter))
         assertEquals(SavedPlaylist(HOST, "", "", GUIDES), saved)
     }
 
@@ -130,10 +130,9 @@ class IptvPlaylistModalDeviceTest {
     }
 
     private fun show(device: DeviceType, source: IptvSourceType = IptvSourceType.XTREAM) {
-        compose.activity.requestedOrientation = if (device == DeviceType.TV) {
-            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (device == DeviceType.TV) {
+            val config = compose.activity.resources.configuration
+            assumeTrue("Run remote tests on a landscape TV emulator", config.screenWidthDp >= 600 && config.screenWidthDp > config.screenHeightDp)
         }
         compose.setContent {
             CompositionLocalProvider(LocalDeviceType provides device) {
@@ -164,7 +163,7 @@ class IptvPlaylistModalDeviceTest {
         }
     }
 
-    private fun keys(vararg keys: Key) {
+    private fun keys(keys: List<Key>) {
         keys.forEach { key ->
             compose.onNodeWithTag("iptv_playlist_modal").performKeyInput { pressKey(key) }
             compose.waitForIdle()
