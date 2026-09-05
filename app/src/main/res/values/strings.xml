@@ -327,6 +327,15 @@
     <string name="settings_label_xtream_pass">Xtream Password (Optional)</string>
     <string name="settings_label_epg_sources">EPG Sources (Optional)</string>
     <string name="settings_helper_epg_one_per_line">One URL per line. Commas, semicolons, and pipes are also accepted.</string>
+    <string name="settings_save_playlist">Save Playlist</string>
+    <string name="settings_source_type">Source Type</string>
+    <string name="settings_source_m3u">M3U Playlist</string>
+    <string name="settings_source_xtream">Xtream Codes</string>
+    <string name="settings_source_stalker">Stalker Portal</string>
+    <string name="settings_save_portal">Save Portal</string>
+    <string name="settings_stalker_desc">Ministra / Stalker portal with MAC address authentication.</string>
+    <string name="settings_content_to_import">Content to Import</string>
+    <string name="settings_label_m3u_url">M3U Playlist URL</string>
     <string name="settings_label_title">Title</string>
     <string name="settings_add_quality_filter">Add Quality Filter</string>
     <string name="settings_edit_quality_filter">Edit Quality Filter</string>
