@@ -88,6 +88,7 @@ fun ChannelRow(
     variantCount: Int = 1,
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
+    displayQuality: Quality = channel.quality,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -177,7 +178,7 @@ fun ChannelRow(
                     return@onPreviewKeyEvent true
                 }
                 if (ev.key == Key.Menu) {
-                    if (ev.type == KeyEventType.KeyDown) onLongPress(true)
+                    if (ev.type == KeyEventType.KeyDown) onLongPress(false)
                     return@onPreviewKeyEvent true
                 }
                 if (ev.type == KeyEventType.KeyDown) {
@@ -279,7 +280,11 @@ fun ChannelRow(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             horizontalAlignment = Alignment.End,
         ) {
-            SmallPillBadge(if (variantCount > 1) stringResource(R.string.live_label_quality_variants, channel.quality.label, variantCount) else channel.quality.label)
+            if (displayQuality != Quality.UNKNOWN) {
+                SmallPillBadge(if (variantCount > 1) stringResource(R.string.live_label_quality_variants, displayQuality.label, variantCount) else displayQuality.label)
+            } else if (variantCount > 1) {
+                SmallPillBadge(stringResource(R.string.live_label_sources, variantCount))
+            }
             SmallPillBadge(channel.lang)
         }
     }

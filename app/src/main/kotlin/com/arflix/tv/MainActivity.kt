@@ -60,6 +60,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.arflix.tv.ui.components.AppBottomBar
+import com.arflix.tv.ui.components.shouldShowBottomBar
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -72,7 +73,7 @@ import com.arflix.tv.util.ACCENT_COLOR_KEY
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.LocalHasTouchScreen
 import com.arflix.tv.util.LocalAppLanguage
-import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.util.deviceHasTouchScreen
 import com.arflix.tv.util.findActivity
@@ -294,17 +295,16 @@ class MainActivity : ComponentActivity() {
             val activeProfileId by remember {
                 profileRepository.get().activeProfileId
             }.collectAsStateWithLifecycle(initialValue = null)
+            val initialAppLanguage = remember {
+                getSharedPreferences("app_locale", Context.MODE_PRIVATE)
+                    .getString("locale_tag", null)?.takeIf { it.isNotBlank() }
+                    ?: com.arflix.tv.util.defaultAppLanguage()
+            }
             val appLanguage by remember(activeProfileId) {
                 this@MainActivity.settingsDataStore.data.map { prefs ->
-                    val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
-                    val profileId = activeProfileId
-                    if (profileId.isNullOrBlank()) {
-                        fallbackLanguage
-                    } else {
-                        prefs[stringPreferencesKey("profile_${profileId}_content_language")] ?: fallbackLanguage
-                    }
+                    resolveAppLanguage(prefs, activeProfileId)
                 }
-            }.collectAsStateWithLifecycle(initialValue = "en-US")
+            }.collectAsStateWithLifecycle(initialValue = initialAppLanguage)
             LaunchedEffect(appLanguage) {
                 mediaRepository.get().contentLanguage = appLanguage
             }
@@ -636,8 +636,11 @@ fun ArflixApp(
     // the fullscreen IPTV player uses BackHandler to return to the guide.
     val isPlayerScreen = currentRoute?.startsWith("player") == true
     val isFullscreenRoute = isPlayerScreen || iptvFullscreen
-    val isProfileOrLogin = currentRoute == Screen.ProfileSelection.route || currentRoute == Screen.Login.route
-    val showBottomBar = isMobile && activeProfile != null && currentRoute != null && !isFullscreenRoute && !isProfileOrLogin
+    val showBottomBar = shouldShowBottomBar(
+        isMobile = isMobile,
+        currentRoute = currentRoute,
+        isFullscreenRoute = isFullscreenRoute
+    )
     val applySystemBarsPadding = isMobile && !isFullscreenRoute
 
     val isPlayerRoute = iptvFullscreen || currentRoute?.contains("player") == true

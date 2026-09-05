@@ -49,6 +49,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import com.arflix.tv.R
+import com.arflix.tv.navigation.Screen
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.TextPrimary
@@ -110,6 +111,16 @@ internal fun appBottomBarSpec(mode: AppBottomBarMode): AppBottomBarSpec = when (
         indicatorSizeDp = 4,
         labelFontSizeSp = 10,
     )
+}
+
+internal fun shouldShowBottomBar(
+    isMobile: Boolean,
+    currentRoute: String?,
+    isFullscreenRoute: Boolean
+): Boolean {
+    if (!isMobile || currentRoute == null || isFullscreenRoute) return false
+    val isProfileOrLogin = currentRoute == Screen.ProfileSelection.route || currentRoute == Screen.Login.route
+    return !isProfileOrLogin
 }
 
 data class BottomBarItem(

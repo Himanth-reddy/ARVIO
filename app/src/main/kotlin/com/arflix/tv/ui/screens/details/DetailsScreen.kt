@@ -40,6 +40,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -264,8 +266,6 @@ fun DetailsScreen(
     var showStreamSelector by remember { mutableStateOf(false) }
     var showTrailerPlayer by remember { mutableStateOf(false) }
     KeepScreenOn(active = showTrailerPlayer)
-    var pendingAutoPlayRequest by remember { mutableStateOf<PendingAutoPlayRequest?>(null) }
-    var autoPlayWaitTick by remember { mutableIntStateOf(0) }
 
     // Episode Context Menu state
     var showEpisodeContextMenu by remember { mutableStateOf(false) }
@@ -292,12 +292,18 @@ fun DetailsScreen(
             tmdbSeason = tmdbSeason,
             tmdbEpisode = tmdbEpisode
         )
-        viewModel.loadStreams(imdbId, identity)
-        autoPlayWaitTick = 0
-        pendingAutoPlayRequest = PendingAutoPlayRequest(
-            identity = identity,
-            startPositionMs = startPositionMs,
-            requestedAtMs = SystemClock.elapsedRealtime()
+        viewModel.recordPlayedEpisode(mediaId, identity)
+        // Let the player resolve this identity. The current Details snapshot may still
+        // contain another episode's sources, and starting both resolvers duplicates requests.
+        onNavigateToPlayer(
+            mediaType,
+            mediaId,
+            identity,
+            imdbId,
+            null,
+            null,
+            null,
+            startPositionMs
         )
     }
 
@@ -366,59 +372,6 @@ fun DetailsScreen(
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
-    }
-
-    LaunchedEffect(
-        pendingAutoPlayRequest,
-        uiState.isLoadingStreams,
-        uiState.streams,
-        uiState.autoPlayMinQuality,
-        autoPlayWaitTick
-    ) {
-        val request = pendingAutoPlayRequest ?: return@LaunchedEffect
-
-        val validStreams = uiState.streams.filter(::isAutoPlayableStream)
-        val minThreshold = minQualityThreshold(uiState.autoPlayMinQuality)
-        val selectedStream = bestAutoPlayStream(validStreams, minThreshold)
-        val shouldWaitForSources = shouldWaitForAutoPlaySources(
-            isLoadingStreams = uiState.isLoadingStreams,
-            selectedStream = selectedStream,
-            elapsedMs = SystemClock.elapsedRealtime() - request.requestedAtMs
-        )
-
-        when {
-            selectedStream != null && !shouldWaitForSources -> {
-                val identity = request.identity
-                viewModel.recordPlayedEpisode(mediaId, identity)
-                onNavigateToPlayer(
-                    mediaType,
-                    mediaId,
-                    identity,
-                    uiState.imdbId,
-                    selectedStream.url?.takeIf { it.isNotBlank() },
-                    selectedStream.addonId.takeIf { it.isNotBlank() },
-                    selectedStream.source.takeIf { it.isNotBlank() },
-                    request.startPositionMs
-                )
-                pendingAutoPlayRequest = null
-            }
-            shouldWaitForSources -> {
-                delay(AUTOPLAY_SOURCE_RECHECK_MS)
-                autoPlayWaitTick += 1
-            }
-            uiState.isLoadingStreams -> Unit
-            validStreams.isNotEmpty() || uiState.streams.isNotEmpty() -> {
-                showStreamSelector = true
-                pendingAutoPlayRequest = null
-            }
-            else -> {
-                // When no streams found, show the StreamSelector with its
-                // friendly "no addons" / "no sources" empty state instead of
-                // navigating to the player which would show a scary error.
-                showStreamSelector = true
-                pendingAutoPlayRequest = null
-            }
-        }
     }
 
     // Place episode focus for whichever season is actually loaded. Keyed on currentSeason (which
@@ -1203,12 +1156,6 @@ fun DetailsScreen(
 private enum class FocusSection {
     BUTTONS, EPISODES, SEASONS, RATINGS, CAST, REVIEWS, SIMILAR, COLLECTION
 }
-
-private data class PendingAutoPlayRequest(
-    val identity: EpisodeIdentity?,
-    val startPositionMs: Long?,
-    val requestedAtMs: Long
-)
 
 private fun handleLeft(
     section: FocusSection,
@@ -3652,22 +3599,20 @@ private fun DetailsImdbSvgRatingBadge(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun MdbExternalRatingsRow(
+internal fun MdbExternalRatingsRow(
     ratings: List<MdbExternalRating>,
     centered: Boolean,
     textShadow: Shadow
 ) {
-    Row(
+    FlowRow(
         horizontalArrangement = Arrangement.spacedBy(
             6.dp,
             if (centered) Alignment.CenterHorizontally else Alignment.Start
         ),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
         ratings.forEach { rating ->
             Row(

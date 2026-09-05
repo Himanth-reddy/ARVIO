@@ -44,11 +44,11 @@ fun ChannelLogo(
     size: Dp,
     modifier: Modifier = Modifier,
 ) {
-    val initials = initialsFor(channel.name)
+    val initials = remember(channel.name) { initialsFor(channel.name) }
     val variant = (channel.name.firstOrNull()?.code ?: 0) % 3
     val context = LocalContext.current
     val density = LocalDensity.current
-    val logoUrl = safeChannelLogoUrl(channel.logo)
+    val logoUrl = remember(channel.logo) { safeChannelLogoUrl(channel.logo) }
     var showFallback by remember(logoUrl) { mutableStateOf(logoUrl.isNullOrBlank()) }
     Box(
         modifier = modifier
@@ -124,10 +124,12 @@ fun ChannelLogo(
     }
 }
 
+private val channelNameWhitespace = Regex("\\s+")
+
 internal fun initialsFor(name: String): String {
     val trimmed = name.trim()
     if (trimmed.isEmpty()) return "??"
-    val parts = trimmed.split(Regex("\\s+")).filter { it.any(Char::isLetterOrDigit) }
+    val parts = trimmed.split(channelNameWhitespace).filter { it.any(Char::isLetterOrDigit) }
     return when (parts.size) {
         0 -> "??"
         1 -> parts[0].take(2).uppercase()

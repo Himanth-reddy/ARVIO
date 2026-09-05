@@ -91,7 +91,7 @@ fun TouchCategoryRail(
             }
         }
 
-        itemsIndexed(items, key = { index, item -> "${item.id}#$index" }) { _, item ->
+        itemsIndexed(items, key = { _, item -> item.id }) { _, item ->
             val sectionId = item.playlistSectionId
             val isSectionHeader = sectionId != null
             val isSectionOpen = sectionId != null && sectionId in expandedPlaylistIds

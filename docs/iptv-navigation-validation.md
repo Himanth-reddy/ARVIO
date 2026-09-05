@@ -93,3 +93,141 @@ Credentials and raw provider URLs are excluded from this document and test fixtu
 ## Latest-main integration
 
 The IPTV changes were also applied to `14543b97b` (including the newly merged player/details PRs). The signed sideload release and the 42-test focused JVM suite built successfully; a second assemble confirmed the final sources were up to date. Uncommitted player-preview work in the original worktree was left intact, not overwritten or mixed into this IPTV commit.
+
+## Follow-up hardening and measurement
+
+Changes on top of `5ab0c13db`:
+
+- Each profile/provider/category retains an independent lazy-list position and loaded-page limit, bounded to 16 category windows. Touch category selection uses the same lock checks as remote selection.
+- Retain up to 160 indexed channel schedules across neighboring windows; an empty/failed refresh does not erase already displayed guide data. Always include the playing channel in the indexed query, even outside the browsed category.
+- Re-evaluate the mini-player's current/next programme against the clock. Previously a completed programme could remain labelled NOW until a network refresh.
+- Resolve a saved last channel from SQLite when it lies outside the first loaded page; respect hidden/restricted groups.
+- Handle an expired HLS live window by seeking to the live edge, once per minute, without applying this recovery to catchup.
+- Emit a terminal empty-guide result for large playlists too, instead of leaving successfully completed lookups marked pending.
+- Make XML parsing and retry spooling cancellable. Avoid parsing dates/descriptions for unrelated XMLTV channels. Visible XMLTV requests now share the provider budget; authorization failures no longer provoke a second request with another user agent.
+- Correct the SAX fallback's empty `localName` handling. With namespaces disabled, the parser supplies `qName` and an empty `localName`; the previous null-only fallback silently recognized no XML elements. Regression tests now exercise real XML and cancellation.
+- Move the live indicator's alpha updates to the graphics layer, avoiding composition for each pulse frame.
+
+### Regression results
+
+- Final focused JVM suite: **60 passed**, zero failures (previous 42 plus repository optimization, XML parser/cancellation, clock/cache/recovery and saved-channel tests).
+- Physical TCL suite: **9 passed in 160.084 seconds**. Programme navigation now uses actual populated programme rows, not empty placeholders. Includes category A -> B -> A independent scroll restoration.
+- Android 14 phone emulator: **3 passed in 11.754 seconds**: touch scrolling across appended pages, hiding a category, and independent category scroll restoration. This is emulator coverage, not a claim of physical-phone performance.
+- Release compilation, R8 and vital lint completed successfully. Device navigation tests ran against a debug-signed-with-release-key build; performance observations used the optimized release APK.
+- After the external-focus correction, the complete **10-test TCL suite passed in 164.431 seconds**, including the new regression that restoring focus to a visible row must not move it to the top. An earlier run while the TV was asleep could not find Compose hierarchies and was discarded; no production crash was recorded. The TV was awakened for the repeat and its screensaver setting restored afterward.
+
+### Physical performance observations
+
+The committed opt-in `GuideScrollDriver` injects 160 Down and 160 Up key pairs with 150 ms pacing, without spawning a shell for each key. It requires a manually prepared, focused guide; it never changes account/playlist configuration. Capture `dumpsys gfxinfo com.arvio.tv reset` before the run, then `dumpsys gfxinfo com.arvio.tv` immediately afterward. Perfetto can run alongside it.
+
+For the real 108,145-channel catalog, starting at channel 1 with the same mini-player stream:
+
+| Build/run | Frames | Missed deadlines | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `5ab0c13db`, native driver | 3,331 | 25.22% | 34 ms | 57 ms | 77 ms |
+| Follow-up release, native driver | 3,540 | 20.11% | 34 ms | 53 ms | 73 ms |
+| Follow-up repeat with tracing | 3,699 | 11.14% | 31 ms | 48 ms | 65 ms |
+| Final build, NPO 1 FHD playing | 3,206 | 33.72% | 38 ms | 65 ms | 93 ms |
+
+The repeat encountered an upstream HTTP 502 playback retry, so it is **not** an equivalent uninterrupted-video comparison and must not be used to promise an 11% outcome. Neither run demonstrates consistently smooth 60 fps. Both completed all 320 actions and returned to channel 1; the list and mini-player remained mounted. The first follow-up run is a modest improvement, not a performance pass.
+
+The final run used a different, Full-HD stream (NPO 1) and missed more deadlines; it also completed all 320 actions. This is a residual performance failure, not hidden as a passing result. Low-overhead profiling of simultaneous Full-HD playback and scrolling remains necessary. A later external-focus correction avoids pinning an already visible selected row to the top when returning from the drawer; it does not address the Full-HD frame-rate limitation.
+
+At 18:28 the final release resumed NPO 1 automatically after installation/restart and showed its cached guide. At 18:31 screenshots confirmed the NOW programme had advanced from NOS Sportjournaal (18:15-18:30) to EenVandaag (18:30-19:05) while browsing All Channels. A physical category round-trip also retained the selected channel 31 rather than resetting to channel 1.
+
+Two 35-second system traces also show background allocation pressure: before, the hottest worker used 13.303 CPU seconds and GC used about 2.9 seconds across nine events; after, GC used about 0.48 seconds across two events. These traces contain different warm-cache/background work, so they identify remaining costs rather than isolate one patch's effect. Main/render work remains significant and requires further profiling for the smoothness target.
+
+The fully automated Macrobenchmark launch attempt could not reliably open the production account/profile flow on this TCL. It was not counted as a passing test and was replaced by the tested explicit opt-in input driver. No unattended login flow or credentials are committed.
+
+### Final category-transition regression
+
+The actual screen briefly publishes no displayed rows while a selected category is
+being loaded/collapsed. Measuring a retained LazyListState against those zero rows
+clamped its position to zero, even though the selected channel ID survived. The
+grid now uses a separate empty-list state during that transition. The row scope is
+published with its data, and drawer-close focus waits for that scope to be ready.
+
+- A new delayed All -> empty -> one favorite -> empty -> All regression failed on
+  the previous installed build (`expected 90, was 0`). It passed after the fix.
+- The entire physical TCL suite passed again: **11 tests, 169.029 seconds**.
+- Release compilation, R8 and vital lint passed; the original signer was verified
+  before updating the TV in place. No production app uninstall or data clear.
+- At 19:31/19:32, the actual 108,145-channel release screen retained channel 31
+  at the bottom and channel 26 at the top through an All -> Favorites -> All
+  round-trip. NPO 1 video continued playing, and its current/next guide remained
+  visible. This verifies the viewport regression, not an overall frame-rate pass.
+- Temporary position diagnostics were removed from the final release.
+
+The Full-HD scrolling performance gate above remains unpassed. The release-signed
+APK is provided as a test build, not evidence that every device or uncached guide
+now loads instantly.
+
+## Low-memory rendering, favorites and ratings follow-up (2026-09-05)
+
+This follow-up targets the remaining channel-scroll workload and two tester
+reports. It does not change provider requests, channel order, EPG retention,
+stream buffering or the existing provider rate limits.
+
+- Compose only programme cells near the visible horizontal timeline, with a
+  quantized 30-minute overscan. Programme-navigation mode retains the full focus
+  graph so offscreen programmes remain reachable with the remote.
+- Derive each row's focus flag independently and draw the NOW line using the
+  drawing phase rather than recomposing the grid on every horizontal pixel.
+  Remember channel-logo initials and validated image URLs.
+- Replace the 250ms select-key dead zone with a gesture-aware guard: consume the
+  original hold/release and short synthetic repeat pairs, but accept a fresh
+  deliberate menu click. Short synthetic-repeat protection applies after menu
+  actions too, preventing a held action from starting the underlying channel.
+- Make Add/Remove Favorite explicit and idempotent in the repository. Repeating
+  Add cannot undo it or move an existing favorite. Changes still use DataStore
+  and the existing IPTV cloud-invalidation path.
+- Wrap MDBList rating chips within the details column. The old horizontal row
+  could place ratings offscreen without focusable controls to reach them on TV.
+  This fixes visibility of returned ratings, not missing ratings upstream.
+
+### Controlled renderer comparison
+
+ArflixTV3 Android 12 / API 31 emulator, 2,048 MB RAM. ARVIO requests largeHeap;
+the measured app heap allowance is **512 MiB**, not the emulator's normal 192 MiB
+heap-growth limit. Both APKs use the release certificate but are debug builds.
+
+The fixture creates 55,000 channels and supplies a 144-channel page, with 24
+half-hour programmes per row. Each run injects 80 Down and 80 Up presses at
+150ms pacing and verifies focus returns to channel zero. It uses the real
+display clock and FrameMetrics, without a Compose test-clock override. There is
+no video, logo download, real provider import or XMLTV download in this fixture.
+
+| Renderer | Frames | Missed deadlines | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Before (`6c40ea6ee`), run 1 | 876 | 40.30% | 37.44 ms | 133.96 ms | 151.75 ms |
+| Before, run 2 | 1,078 | 39.05% | 29.04 ms | 86.16 ms | 117.78 ms |
+| Updated, run 1 | 1,490 | 15.70% | 20.22 ms | 34.64 ms | 50.94 ms |
+| Updated, run 2 | 1,487 | 15.80% | 20.35 ms | 35.94 ms | 50.74 ms |
+
+The initial experiment using Compose's controlled test clock produced only five
+frames and invalid multi-second timings. It was discarded and its timing test
+replaced with `GuideRenderingBenchmark`. It is not included in this comparison.
+
+Both updated runs improve this workload substantially, but **neither proves
+consistent 60fps on physical low-memory TVs with Full-HD video playing**. The
+physical performance gate above remains open. No physical TV was operated for
+this follow-up; Shield and Google Streamer results still need tester confirmation.
+
+### Functional coverage
+
+- 42 focused JVM tests passed after incorporating main at `e114d1686`:
+  render-window bounds, native-key gesture guard,
+  favorite membership/order, guide continuity/navigation, quality and provider
+  request budgets, plus the merged playlist EPG-settings regression tests.
+- 17 Android UI tests passed in 99.828 seconds on the 2 GB emulator: all previous
+  navigation/hidden-category/reorder cases, offscreen programme navigation,
+  bounded programme composition, and a held Select followed by one deliberate
+  click that adds exactly one favorite without starting playback.
+- The final combined build, including the held-menu-action guard, passed the
+  same 17 UI tests again in 84.424 seconds.
+- Rating layout tests verify all eight supplied ratings remain inside their
+  container at TV (420dp), phone (280dp) and tablet (500dp) widths.
+- The dense guide's initial composed programme-cell count falls from 216 to 81
+  for the same viewport. This is a composition count, not a heap-memory claim.
+- Debug APK/test APK builds and release Kotlin compilation passed. Signing
+  remained unchanged; the app was updated in place without clearing its data.
