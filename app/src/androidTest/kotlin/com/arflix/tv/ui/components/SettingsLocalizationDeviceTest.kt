@@ -20,6 +20,7 @@ import com.arflix.tv.util.localizedAppContext
 import java.util.Locale
 import org.junit.After
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -137,10 +138,14 @@ class SettingsLocalizationDeviceTest(private val language: String) {
         )
         assertTrue(context.getString(R.string.settings_activation_visit_instruction, "https://example.test/pin")
             .contains("https://example.test/pin"))
-        assertEquals("S2 E3", context.getString(R.string.player_season_episode_short, 2, 3))
+        assertEquals(if (language == "pt-BR") "T2 E3" else "S2 E3",
+            context.getString(R.string.player_season_episode_short, 2, 3))
     }
 
     @Test fun translatedLiveTvControlsStillDispatchTheCorrectActions() {
+        val configuration = compose.activity.resources.configuration
+        assumeTrue("The TV playback overlay requires a landscape display",
+            configuration.screenWidthDp > configuration.screenHeightDp)
         val actions = mutableListOf<String>()
         compose.setContent {
             Localized(language) {
