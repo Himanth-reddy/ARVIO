@@ -328,7 +328,9 @@ private fun FullscreenGuideContent(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 5.dp else 6.dp)) {
                     GuideChip(stringResource(R.string.live_label_ch, channel.number), LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
-                    GuideChip(channel.quality.label, LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
+                    if (channel.quality != Quality.UNKNOWN) {
+                        GuideChip(channel.quality.label, LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
+                    }
                     if (catchupSupported) {
                         GuideChip(stringResource(R.string.live_label_catchup), LiveColors.Bg, LiveColors.Accent)
                     }

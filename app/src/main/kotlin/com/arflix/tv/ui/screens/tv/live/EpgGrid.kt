@@ -122,6 +122,7 @@ fun EpgGrid(
     onRequestNextChannels: () -> Unit = {},
     onVisibleChannelRange: (Int, Int) -> Unit = { _, _ -> },
     channelColumnWidthOverride: Dp? = null,
+    playbackQuality: LivePlaybackQuality? = null,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -543,6 +544,7 @@ fun EpgGrid(
                             // 1. Channel item (fixed width, doesn't scroll horizontally)
                             ChannelRow(
                                 channel = ch,
+                                displayQuality = ch.displayQuality(playbackQuality),
                                 isActive = ch.id == selectedChannelId || (gridFocused && locallyFocused),
                                 clockTickMillis = clockTickMillis,
                                 nowNext = nowNext[ch.id],

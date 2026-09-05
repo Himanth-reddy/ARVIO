@@ -422,6 +422,7 @@ private fun SourceBadge(count: Int, onOpenVariants: (() -> Unit)?) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun QualityBadge(q: Quality) {
+    if (q == Quality.UNKNOWN) return
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))

@@ -494,6 +494,7 @@ private fun catchupQualityRank(channel: EnrichedChannel): Int = when (channel.qu
     Quality.FHD -> 3
     Quality.HD -> 2
     Quality.SD -> 1
+    Quality.UNKNOWN -> 0
 }
 
 private fun catchupPlaybackVariant(
@@ -2369,6 +2370,16 @@ fun LiveTvScreen(
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
+    var playbackQuality by remember(exoPlayer) { mutableStateOf<LivePlaybackQuality?>(null) }
+    DisposableEffect(exoPlayer) {
+        val listener = LivePlaybackQualityListener(exoPlayer) { playbackQuality = it }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+    val playingDisplayChannel = remember(playingChannel, playbackQuality) {
+        playingChannel?.let { it.copy(quality = it.displayQuality(playbackQuality)) }
+    }
+
     var playerPositionMs by remember { mutableLongStateOf(0L) }
     var playerDurationMs by remember { mutableLongStateOf(0L) }
     var playerIsPlaying by remember { mutableStateOf(false) }
@@ -2437,6 +2448,7 @@ fun LiveTvScreen(
 
         if (!forcePrepare &&
             stream == lastPreparedStreamUrl &&
+            exoPlayer.currentMediaItem?.mediaId == playingChannelId.orEmpty() &&
             isHls == lastPreparedIsHls &&
             headers == lastPreparedHeaders &&
             (playingCatchupProgram == null || catchupUrlAnchorOffsetMs == lastPreparedCatchupOffsetMs)
@@ -2449,6 +2461,7 @@ fun LiveTvScreen(
         exoPlayer.clearMediaItems()
         val mediaItem = MediaItem.Builder()
             .setUri(stream)
+            .setMediaId(playingChannelId.orEmpty())
             .apply {
                 if (isHls) {
                     setMimeType(MimeTypes.APPLICATION_M3U8)
@@ -3101,7 +3114,7 @@ fun LiveTvScreen(
                     }
                     MiniPlayerRow(
                         exoPlayer = exoPlayer,
-                        channel = playingChannel,
+                        channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
                         nowNext = currentNowNext,
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
@@ -3125,6 +3138,7 @@ fun LiveTvScreen(
                     )
                     EpgGrid(
                         channels = filteredChannels,
+                        playbackQuality = playbackQuality,
                         totalChannelCount = selectedCategoryTotalCount,
                         clockTickMillis = guideClockMillis,
                         nowNext = effectiveGuideNowNext,
@@ -3249,7 +3263,7 @@ fun LiveTvScreen(
                     }
                     MiniPlayerRow(
                         exoPlayer = exoPlayer,
-                        channel = playingChannel,
+                        channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
                         nowNext = currentNowNext,
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
@@ -3262,6 +3276,7 @@ fun LiveTvScreen(
                     )
                     EpgGrid(
                         channels = filteredChannels,
+                        playbackQuality = playbackQuality,
                         totalChannelCount = selectedCategoryTotalCount,
                         clockTickMillis = guideClockMillis,
                         nowNext = effectiveGuideNowNext,
@@ -3471,7 +3486,7 @@ fun LiveTvScreen(
                         ?: selectedCategoryId
 
                     FullscreenHud(
-                        channel = playingChannel,
+                        channel = playingDisplayChannel,
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
                         categoryName = categoryTitle,
@@ -3569,7 +3584,7 @@ fun LiveTvScreen(
                 }
                 FullscreenGuideOverlay(
                     visible = isFullScreen && fullscreenGuideOpen,
-                    channel = guideChannel ?: playingChannel,
+                    channel = (guideChannel ?: playingChannel)?.let { it.copy(quality = it.displayQuality(playbackQuality)) },
                     guide = guideForChannel(guideChannel ?: playingChannel),
                     selectedProgram = playingCatchupProgram,
                     clockTickMillis = guideClockMillis,
