@@ -25,6 +25,8 @@ import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.data.repository.SkipIntroRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.toStreamSource
+import com.arflix.tv.core.plugin.PluginManager
 import com.arflix.tv.ui.screens.details.minQualityThreshold
 import com.arflix.tv.ui.screens.details.qualityScoreForAutoPlay
 import com.arflix.tv.data.repository.isHubCloudPageUrl
@@ -60,6 +62,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Clock
@@ -110,7 +113,7 @@ private fun playbackDiag(message: String) {
  * A user-facing player message, kept as a resource reference until a composable renders it.
  * A ViewModel only has the application context, whose resources follow the SYSTEM language
  * instead of the language selected in the app, so resolving here would show the wrong
- * language whenever the two differ.
+ * language whenever the two differ. Mirrors [com.arflix.tv.ui.screens.plugin.PluginMessage].
  */
 sealed interface PlayerMessage {
     /** A localizable message. [formatArgs] may itself contain [PlayerMessage] entries. */
@@ -261,7 +264,8 @@ class PlayerViewModel @Inject constructor(
     private val animeMapper: AnimeMapper,
     private val tmdbApi: TmdbApi,
     private val skipIntroRepository: SkipIntroRepository,
-    private val playbackTelemetryRepository: PlaybackTelemetryRepository
+    private val playbackTelemetryRepository: PlaybackTelemetryRepository,
+    private val pluginManager: PluginManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -1127,7 +1131,21 @@ class PlayerViewModel @Inject constructor(
                 var isFirstEmission = true
                 var sourceEmptyReported = false
 
-                progressiveFlow.collect { progressive ->
+                var pluginSearchStarted = false
+                val playerSources = mergePlayerSourceDiscovery(
+                    addons = progressiveFlow,
+                    pluginBatches = pluginManager.executeScrapersStreaming(
+                        tmdbId = mediaId.toString(),
+                        mediaType = if (mediaType == MediaType.MOVIE) "movie" else "tv",
+                        season = seasonNumber,
+                        episode = episodeNumber
+                    ).map { (_, results) ->
+                        pluginSearchStarted = true
+                        results.orEmpty().map { it.toStreamSource() }
+                    },
+                    onPluginFailure = { Log.w(TAG, "Player plugin source discovery failed", it) }
+                )
+                playerSources.collect { progressive ->
                     if (progressive.isFinal) {
                         primaryStreamResolutionFinal = true
                     }
@@ -1158,7 +1176,7 @@ class PlayerViewModel @Inject constructor(
                         PlayerAutoplayAvailability.SELECTED -> _uiState.value.error
                         PlayerAutoplayAvailability.NO_MATCH -> PlayerMessage.Res(R.string.stream_no_sources_match)
                         PlayerAutoplayAvailability.NO_SOURCES -> when {
-                            streamingAddonCount == 0 && !hasHomeServerConnections ->
+                            streamingAddonCount == 0 && !pluginSearchStarted && !hasHomeServerConnections ->
                                 PlayerMessage.Res(R.string.player_error_no_streaming_addons)
                             hasHomeServerConnections -> PlayerMessage.Res(R.string.player_error_no_streams_media_servers)
                             else -> PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
@@ -1211,7 +1229,7 @@ class PlayerViewModel @Inject constructor(
                         subtitles = filteredSubtitles,
                         error = errorMessage,
                         isSetupError = availability == PlayerAutoplayAvailability.NO_SOURCES &&
-                            streamingAddonCount == 0 &&
+                            streamingAddonCount == 0 && !pluginSearchStarted &&
                             !hasHomeServerConnections &&
                             !supplementalSourcesStillLoading,
                         streamProgress = if (progressive.isFinal) null else progressFraction,
