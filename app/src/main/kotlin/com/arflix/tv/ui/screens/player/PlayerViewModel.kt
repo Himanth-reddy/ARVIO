@@ -1173,6 +1173,7 @@ class PlayerViewModel @Inject constructor(
                         hasSelection = !canStartAutoplay()
                     )
                     val errorMessage = when (availability) {
+                        PlayerAutoplayAvailability.SELECTED -> _uiState.value.error
                         PlayerAutoplayAvailability.NO_MATCH -> PlayerMessage.Res(R.string.stream_no_sources_match)
                         PlayerAutoplayAvailability.NO_SOURCES -> when {
                             streamingAddonCount == 0 && !pluginSearchStarted && !hasHomeServerConnections ->
@@ -5003,7 +5004,7 @@ class PlayerViewModel @Inject constructor(
             streams = sortedStreams,
             isLoadingStreams = false,
             sourceSearchActive = sourceLookupStillActive(currentJob),
-            error = null,
+            error = _uiState.value.error.takeUnless { canStartAutoplay() },
             isSetupError = false,
             streamProgress = null,
             streamLoadPhase = null
@@ -5066,7 +5067,7 @@ class PlayerViewModel @Inject constructor(
             streams = sortedStreams,
             isLoadingStreams = false,
             sourceSearchActive = sourceLookupStillActive(currentJob),
-            error = null,
+            error = _uiState.value.error.takeUnless { canStartAutoplay() },
             isSetupError = false,
             streamProgress = null,
             streamLoadPhase = null
