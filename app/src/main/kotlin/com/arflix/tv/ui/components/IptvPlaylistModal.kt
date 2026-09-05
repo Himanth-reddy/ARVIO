@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -60,6 +62,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -175,8 +178,7 @@ fun IptvPlaylistModal(
         )
     }
 
-    // Right pane grid:
-    // rightFocusedRow: 0 = Name, 1 = URL/Host, 2 = EPG/User/MAC, 3 = Pass (Xtream only), actionsRow = Actions
+    // Right pane grid: Name, URL, EPG/User/MAC, Password and EPG (Xtream), then actions.
     // rightFocusedColumn: 0 = Input field, 1 = Paste button (or Save button on actions row)
     var rightFocusedRow by remember { mutableIntStateOf(0) }
     var rightFocusedColumn by remember { mutableIntStateOf(0) }
@@ -193,10 +195,10 @@ fun IptvPlaylistModal(
     val modalFocusRequester = remember { FocusRequester() }
     val formScrollState = rememberScrollState()
 
-    // 0: Name, 1: URL/Host, 2: EPG/User/MAC, 3: Pass (Xtream)
-    val editTextRefs = remember { MutableList<EditText?>(4) { null } }
+    // 0: Name, 1: URL/Host, 2: EPG/User/MAC, 3: Pass, 4: EPG (Xtream)
+    val editTextRefs = remember { MutableList<EditText?>(5) { null } }
 
-    fun actionsRow(): Int = if (sourceType == IptvSourceType.XTREAM) 4 else 3
+    fun actionsRow(): Int = if (sourceType == IptvSourceType.XTREAM) 5 else 3
     fun hasPasteButton(row: Int): Boolean = row in 1 until actionsRow()
 
     fun anyEditTextFocused(): Boolean = editTextRefs.any { it?.hasFocus() == true }
@@ -220,6 +222,24 @@ fun IptvPlaylistModal(
             edit.requestFocus()
             val shown = imm?.showSoftInput(edit, InputMethodManager.SHOW_IMPLICIT) ?: false
             if (!shown) imm?.showSoftInput(edit, InputMethodManager.SHOW_FORCED)
+        }
+    }
+
+    fun saveSource() {
+        hideKeyboardAll()
+        if (sourceType == IptvSourceType.STALKER) {
+            onSaveStalker(stalkerName, stalkerPortalUrl, stalkerMac)
+        } else {
+            onSaveIptv(
+                playlistName,
+                playlistUrl,
+                if (sourceType == IptvSourceType.XTREAM) xtreamUser else "",
+                if (sourceType == IptvSourceType.XTREAM) xtreamPass else "",
+                epgSources,
+                importLiveTv,
+                importVod,
+                importSeries
+            )
         }
     }
 
@@ -266,6 +286,11 @@ fun IptvPlaylistModal(
                         xtreamPass = text
                         editTextRefs[3]?.setText(text)
                         editTextRefs[3]?.setSelection(text.length)
+                    }
+                    4 -> {
+                        epgSources = text
+                        editTextRefs[4]?.setText(text)
+                        editTextRefs[4]?.setSelection(text.length)
                     }
                 }
             }
@@ -334,6 +359,7 @@ fun IptvPlaylistModal(
                         vertical = if (isTvLayout) 20.dp else 18.dp
                     )
                     .focusRequester(modalFocusRequester)
+                    .testTag("iptv_playlist_modal")
                     .focusable()
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -473,21 +499,7 @@ fun IptvPlaylistModal(
                                             hideKeyboardAll()
                                             onDismiss()
                                         } else {
-                                            hideKeyboardAll()
-                                            if (sourceType == IptvSourceType.STALKER) {
-                                                onSaveStalker(stalkerName, stalkerPortalUrl, stalkerMac)
-                                            } else {
-                                                onSaveIptv(
-                                                    playlistName,
-                                                    playlistUrl,
-                                                    xtreamUser,
-                                                    xtreamPass,
-                                                    epgSources,
-                                                    importLiveTv,
-                                                    importVod,
-                                                    importSeries
-                                                )
-                                            }
+                                            saveSource()
                                         }
                                         true
                                     } else {
@@ -729,7 +741,7 @@ fun IptvPlaylistModal(
                                         label = stringResource(R.string.settings_label_epg_sources),
                                         placeholder = "https://provider.com/epg.xml.gz",
                                         value = epgSources,
-                                        singleLine = true,
+                                        singleLine = false,
                                         isInputFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 2 && rightFocusedColumn == 0,
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 2 && rightFocusedColumn == 1,
                                         onValueChange = { epgSources = it },
@@ -901,6 +913,45 @@ fun IptvPlaylistModal(
                                             pasteClipboardIntoRow(3)
                                         }
                                     )
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    InputFieldWithPaste(
+                                        stepNumber = 5,
+                                        label = stringResource(R.string.settings_label_epg_sources),
+                                        placeholder = "https://provider.com/epg.xml.gz",
+                                        value = epgSources,
+                                        singleLine = false,
+                                        isInputFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 4 && rightFocusedColumn == 0,
+                                        isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 4 && rightFocusedColumn == 1,
+                                        onValueChange = { epgSources = it },
+                                        onRegisterEditText = { editTextRefs[4] = it },
+                                        onGainNativeFocus = {
+                                            activePane = ActivePane.RIGHT
+                                            rightFocusedRow = 4
+                                            rightFocusedColumn = 0
+                                        },
+                                        onDpadUp = {
+                                            rightFocusedRow = 3
+                                            rightFocusedColumn = 0
+                                            modalFocusRequester.requestFocus()
+                                        },
+                                        onDpadDown = {
+                                            rightFocusedRow = 5
+                                            rightFocusedColumn = 0
+                                            modalFocusRequester.requestFocus()
+                                        },
+                                        onDpadRight = {
+                                            rightFocusedColumn = 1
+                                            modalFocusRequester.requestFocus()
+                                        },
+                                        onPasteClick = {
+                                            activePane = ActivePane.RIGHT
+                                            rightFocusedRow = 4
+                                            rightFocusedColumn = 1
+                                            pasteClipboardIntoRow(4)
+                                        }
+                                    )
                                 }
 
                                 IptvSourceType.STALKER -> {
@@ -1013,7 +1064,8 @@ fun IptvPlaylistModal(
                             val isSaveFocused = activePane == ActivePane.RIGHT && rightFocusedRow == actRow && rightFocusedColumn == 1
 
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth()
+                                    .revealFocusedField(isCancelFocused || isSaveFocused),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Box(
@@ -1056,23 +1108,7 @@ fun IptvPlaylistModal(
                                             color = if (isSaveFocused) Color.White else Color.White.copy(alpha = 0.14f),
                                             shape = RoundedCornerShape(10.dp)
                                         )
-                                        .clickable {
-                                            hideKeyboardAll()
-                                            if (sourceType == IptvSourceType.STALKER) {
-                                                onSaveStalker(stalkerName, stalkerPortalUrl, stalkerMac)
-                                            } else {
-                                                onSaveIptv(
-                                                    playlistName,
-                                                    playlistUrl,
-                                                    xtreamUser,
-                                                    xtreamPass,
-                                                    epgSources,
-                                                    importLiveTv,
-                                                    importVod,
-                                                    importSeries
-                                                )
-                                            }
-                                        }
+                                        .clickable { saveSource() }
                                         .padding(vertical = 12.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -1093,7 +1129,7 @@ fun IptvPlaylistModal(
                     var mobileFocusedIndex by remember(sourceType) { mutableIntStateOf(1) }
 
                     fun mobilePasteTargetIndex(): Int {
-                        val maxField = if (sourceType == IptvSourceType.XTREAM) 3 else 2
+                        val maxField = if (sourceType == IptvSourceType.XTREAM) 4 else 2
                         return mobileFocusedIndex.coerceIn(0, maxField)
                     }
 
@@ -1107,6 +1143,7 @@ fun IptvPlaylistModal(
                             0 -> stringResource(R.string.settings_label_playlist_name)
                             2 -> stringResource(R.string.settings_label_username)
                             3 -> stringResource(R.string.settings_label_password)
+                            4 -> stringResource(R.string.settings_label_epg_sources)
                             else -> stringResource(R.string.settings_label_server_url)
                         }
                         IptvSourceType.STALKER -> when (mobilePasteTargetIndex()) {
@@ -1214,6 +1251,7 @@ fun IptvPlaylistModal(
                                         label = stringResource(R.string.settings_label_epg_sources),
                                         placeholder = "https://provider.com/epg.xml.gz",
                                         value = epgSources,
+                                        singleLine = false,
                                         isFocused = mobileFocusedIndex == 2,
                                         onValueChange = { epgSources = it },
                                         onRegisterEditText = { editTextRefs[2] = it },
@@ -1264,6 +1302,18 @@ fun IptvPlaylistModal(
                                         onValueChange = { xtreamPass = it },
                                         onRegisterEditText = { editTextRefs[3] = it },
                                         onGainNativeFocus = { mobileFocusedIndex = 3 }
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InputFieldBlock(
+                                        stepNumber = 5,
+                                        label = stringResource(R.string.settings_label_epg_sources),
+                                        placeholder = "https://provider.com/epg.xml.gz",
+                                        value = epgSources,
+                                        singleLine = false,
+                                        isFocused = mobileFocusedIndex == 4,
+                                        onValueChange = { epgSources = it },
+                                        onRegisterEditText = { editTextRefs[4] = it },
+                                        onGainNativeFocus = { mobileFocusedIndex = 4 }
                                     )
                                 }
                                 IptvSourceType.STALKER -> {
@@ -1410,23 +1460,7 @@ fun IptvPlaylistModal(
                                     .weight(1f)
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(Color.White, RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        hideKeyboardAll()
-                                        if (sourceType == IptvSourceType.STALKER) {
-                                            onSaveStalker(stalkerName, stalkerPortalUrl, stalkerMac)
-                                        } else {
-                                            onSaveIptv(
-                                                playlistName,
-                                                playlistUrl,
-                                                xtreamUser,
-                                                xtreamPass,
-                                                epgSources,
-                                                importLiveTv,
-                                                importVod,
-                                                importSeries
-                                            )
-                                        }
-                                    }
+                                    .clickable { saveSource() }
                                     .padding(vertical = 12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -1445,6 +1479,17 @@ fun IptvPlaylistModal(
             }
         }
     }
+}
+
+@Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun Modifier.revealFocusedField(isFocused: Boolean): Modifier {
+    val requester = remember { BringIntoViewRequester() }
+    val isTv = !LocalDeviceType.current.isTouchDevice()
+    LaunchedEffect(isFocused, isTv) {
+        if (isFocused && isTv) requester.bringIntoView()
+    }
+    return bringIntoViewRequester(requester)
 }
 
 @Composable
@@ -1600,7 +1645,7 @@ private fun InputFieldWithPaste(
 ) {
     val buttonPadding = 5.dp
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().revealFocusedField(isInputFocused || isPasteFocused)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(bottom = 6.dp)
@@ -1617,7 +1662,7 @@ private fun InputFieldWithPaste(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(46.dp)
+                .height(if (singleLine) 46.dp else 84.dp)
                 .background(
                     Color.White.copy(alpha = if (isInputFocused || isPasteFocused) 0.12f else 0.05f),
                     RoundedCornerShape(10.dp)
@@ -1651,7 +1696,7 @@ private fun InputFieldWithPaste(
                             this.isSingleLine = singleLine
                             setHorizontallyScrolling(singleLine)
                             minLines = 1
-                            maxLines = 1
+                            maxLines = if (singleLine) 1 else 3
                             isFocusable = true
                             isFocusableInTouchMode = true
                             inputType = if (isSecret) {
@@ -1716,7 +1761,7 @@ private fun InputFieldWithPaste(
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("iptv_input_$stepNumber"),
                     update = { editText ->
                         val current = editText.text?.toString().orEmpty()
                         if (current != value) {
@@ -1773,7 +1818,7 @@ private fun InputFieldBlock(
     onDpadUp: (() -> Unit)? = null,
     onDpadDown: (() -> Unit)? = null
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().revealFocusedField(isFocused)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(bottom = 6.dp)
@@ -1790,7 +1835,7 @@ private fun InputFieldBlock(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(46.dp)
+                .height(if (singleLine) 46.dp else 84.dp)
                 .background(
                     Color.White.copy(alpha = if (isFocused) 0.12f else 0.05f),
                     RoundedCornerShape(10.dp)
@@ -1818,7 +1863,7 @@ private fun InputFieldBlock(
                         this.isSingleLine = singleLine
                         setHorizontallyScrolling(singleLine)
                         minLines = 1
-                        maxLines = 1
+                        maxLines = if (singleLine) 1 else 3
                         isFocusable = true
                         isFocusableInTouchMode = true
 
@@ -1884,7 +1929,7 @@ private fun InputFieldBlock(
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("iptv_input_$stepNumber"),
                 update = { editText ->
                     val current = editText.text?.toString().orEmpty()
                     if (current != value) {

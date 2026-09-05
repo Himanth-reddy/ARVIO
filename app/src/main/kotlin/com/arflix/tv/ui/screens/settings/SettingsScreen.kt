@@ -2066,20 +2066,7 @@ fun SettingsScreen(
                 ResolvedIptvSource(IptvSourceType.M3U, "", "", "")
             }
 
-            val resolvedEpg = when {
-                showStalkerInput -> ""
-                editingPlaylist != null -> {
-                    val rawEpg = editingPlaylist.settingsEpgInput()
-                    if (sourceInfo.sourceType == IptvSourceType.XTREAM &&
-                        (rawEpg == editingPlaylist.m3uUrl || rawEpg.contains("get.php") || rawEpg.contains("xmltv.php"))
-                    ) {
-                        ""
-                    } else {
-                        rawEpg
-                    }
-                }
-                else -> ""
-            }
+            val resolvedEpg = editingPlaylist?.settingsEpgInput().orEmpty()
 
             val resolvedMac = when {
                 showStalkerInput -> stalkerEditMac
@@ -2142,6 +2129,7 @@ fun SettingsScreen(
                         showIptvInput = false
                         showStalkerInput = false
                         editingIptvIndex = -1
+                        stalkerEditId = null
                     },
                     onSaveStalker = { name, portalUrl, macAddress ->
                         val id = stalkerEditId
@@ -10148,7 +10136,7 @@ private data class ResolvedIptvSource(
     val xtreamPass: String
 )
 
-private fun IptvPlaylistEntry.settingsEpgInput(): String {
+internal fun IptvPlaylistEntry.settingsEpgInput(): String {
     return (epgUrls.orEmpty().ifEmpty { listOf(epgUrl) })
         .map { it.trim() }
         .filter { it.isNotBlank() }
