@@ -1994,6 +1994,23 @@ class IptvRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "toggle favorite channel")
     }
 
+    suspend fun setFavoriteChannel(channelId: String, favorite: Boolean) {
+        val trimmed = channelId.trim()
+        if (trimmed.isEmpty()) return
+        var changed = false
+        context.settingsDataStore.edit { prefs ->
+            val existing = decodeFavoriteChannels(prefs)
+            val updated = favoriteChannelsWithMembership(existing, trimmed, favorite)
+            if (updated != existing) {
+                prefs[favoriteChannelsKey()] = gson.toJson(updated)
+                changed = true
+            }
+        }
+        if (changed) {
+            invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "set favorite channel")
+        }
+    }
+
     /**
      * Reorders a channel within the favourites list.
      *

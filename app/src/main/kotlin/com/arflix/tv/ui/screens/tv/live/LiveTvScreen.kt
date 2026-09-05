@@ -138,13 +138,6 @@ private enum class LiveTvFocusZone {
     EPG,
 }
 
-/**
- * Gap that ends a held-OK press storm. Measured repeat interval on device is ~33ms and
- * remotes sit around 50-100ms, while a deliberate second press is several hundred ms
- * away — so this cleanly separates "still holding" from "pressed again".
- */
-private const val SelectRepeatBurstGapMs = 250L
-
 private sealed interface LockedGroupPinAction {
     data class OpenCategory(val categoryId: String, val groupKey: String) : LockedGroupPinAction
     data class ToggleLock(
@@ -1109,7 +1102,8 @@ fun LiveTvScreen(
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
     // The focused row's channel object, reported by the row itself on focus. Not saveable —
     // it is rebuilt on the next focus event, and only the id needs to survive process death.
-    var focusedChannelObject by remember { mutableStateOf<EnrichedChannel?>(null) }
+    // Only event handlers need the current row; keep it separate from settled UI selection.
+    val focusedChannelObject = remember { arrayOfNulls<EnrichedChannel>(1) }
     var epgPrefetchAnchorId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
     var startupChannelApplied by rememberSaveable(selectedProviderId) { mutableStateOf(false) }
     var playingCatchupProgram by remember { mutableStateOf<IptvProgram?>(null) }
@@ -1123,7 +1117,7 @@ fun LiveTvScreen(
         // visibleEnrichedState.index.byId instead returns null for any favourite outside
         // the paged window, so the menu silently did nothing on those rows while the mouse
         // path — which gets the object straight from the row — still worked.
-        focusedChannelObject = channel
+        focusedChannelObject[0] = channel
         pendingFocusCommit[0] = channel.id to categoryScope
         focusCommitJob[0]?.cancel()
         focusCommitJob[0] = focusCommitScope.launch {
@@ -1647,7 +1641,6 @@ fun LiveTvScreen(
     // so a latch stored per-row was recycled mid-hold — every later repeat re-fired the
     // long press (menu flickering open/closed) and the release still read as a click
     // (channel opened). Screen-level state survives the rebuild.
-    var selectGestureHandled by remember { mutableStateOf(false) }
     // Holding OK does NOT stay one key press. After the first genuine auto-repeat burst
     // (repeat=0,1,2 sharing a downTime) the platform starts emitting a stream of brand new
     // press/release pairs — each with its own downTime and repeat=0, ~33ms apart — which
@@ -1655,11 +1648,7 @@ fun LiveTvScreen(
     //   DOWN r=0 down=16034223 / DOWN r=1 / DOWN r=2 / UP        <- the actual press
     //   DOWN r=0 down=16034724 / UP  <- picked a menu item
     //   DOWN r=0 down=16034757 / UP  <- tuned the channel
-    // No repeatCount test can separate those from real presses, so gate on time instead:
-    // once a hold has been recognised, swallow select keys until the stream goes quiet.
-    // Nobody presses OK twice inside SelectRepeatBurstGapMs.
-    var selectBurstActive by remember { mutableStateOf(false) }
-    var lastSelectEventAtMs by remember { mutableLongStateOf(0L) }
+    val selectKeyGuard = remember { GuideSelectKeyGuard() }
     // A second selection on the currently playing programme offers Watch Live
     // and, only after a confident movie/series match, Stream Now.
     var programActionDialog by remember { mutableStateOf<ProgramActionData?>(null) }
@@ -1904,7 +1893,7 @@ fun LiveTvScreen(
     fun enterSelectedCategory(categoryId: String) {
         noteGuideUserNavigation()
         focusCommitJob[0]?.cancel()
-        focusedChannelObject = null
+        focusedChannelObject[0] = null
         selectedCategoryId = categoryId
         categoryDrawerOpen = false
         focusGuideAfterDrawerClose = true
@@ -2000,7 +1989,7 @@ fun LiveTvScreen(
         // just opened and immediately pick whatever is focused. Checking "is the menu
         // open?" instead is a race: that guard reads channelMenuActions, a plain captured
         // val that is only correct after recomposition, and repeats arrive sooner.
-        if (fromKeyHold) selectBurstActive = true
+        if (fromKeyHold) selectKeyGuard.blockCurrentPress(includeSyntheticBurst = true)
         channelMenu = ChannelMenuState(
             channelId = channel.id,
             channelName = channel.name,
@@ -2850,7 +2839,7 @@ fun LiveTvScreen(
             hasVariants = menu.hasVariants,
             onToggleFavorite = {
                 channelMenu = null
-                viewModel.toggleFavoriteChannel(menu.channelId)
+                viewModel.setFavoriteChannel(menu.channelId, !menu.isFavorite)
             },
             onMoveUp = {
                 channelMenu = null
@@ -2910,18 +2899,12 @@ fun LiveTvScreen(
                         // otherwise the row underneath navigates or opens the channel.
                         val isSelectKey = event.key == Key.DirectionCenter || event.key == Key.Enter
                         if (isSelectKey) {
-                            // Drop the synthetic press storm that a sustained hold turns into.
-                            // Cleared by the first select event that arrives after a real gap,
-                            // i.e. once the user has actually let go.
-                            val eventAtMs = event.nativeKeyEvent.eventTime
-                            val gapMs = eventAtMs - lastSelectEventAtMs
-                            lastSelectEventAtMs = eventAtMs
-                            if (selectBurstActive) {
-                                if (gapMs in 0..SelectRepeatBurstGapMs) {
-                                    return@onPreviewKeyEvent true
-                                }
-                                selectBurstActive = false
-                            }
+                            if (selectKeyGuard.consume(
+                                    downTime = event.nativeKeyEvent.downTime,
+                                    eventTime = event.nativeKeyEvent.eventTime,
+                                    isDown = event.type == KeyEventType.KeyDown,
+                                    repeatCount = event.nativeKeyEvent.repeatCount,
+                                )) return@onPreviewKeyEvent true
                         }
                         val menu = channelMenu
                         if (menu != null && channelMenuActions.isNotEmpty()) {
@@ -2931,9 +2914,9 @@ fun LiveTvScreen(
                             if (isSelectKey && event.nativeKeyEvent.repeatCount > 0) {
                                 return@onPreviewKeyEvent true
                             }
-                            // Arm the burst guard so this action's own release — and any
-                            // synthetic presses behind it — cannot reach the row underneath.
-                            if (isSelectKey) selectBurstActive = true
+                            // Keep a held menu action and its synthetic repeats out of
+                            // the underlying row, while accepting a fresh deliberate click.
+                            if (isSelectKey) selectKeyGuard.blockCurrentPress(includeSyntheticBurst = true)
                             return@onPreviewKeyEvent when (event.key) {
                                 Key.DirectionUp -> {
                                     channelMenu = menu.copy(
@@ -2977,22 +2960,22 @@ fun LiveTvScreen(
                             // index only when there is none. The index covers just the paged
                             // window, so it cannot resolve an out-of-window favourite.
                             val focusedChannel =
-                                focusedChannelObject
+                                focusedChannelObject[0]
                                     ?: focusedChannelId
                                         ?.let { id -> visibleEnrichedState.value.index.byId[id] }
                             when {
                                 event.type == KeyEventType.KeyDown &&
                                     event.nativeKeyEvent.repeatCount == 0 -> {
-                                    selectGestureHandled = false
+                                    selectKeyGuard.holdHandled = false
                                 }
-                                event.type == KeyEventType.KeyDown && !selectGestureHandled -> {
+                                event.type == KeyEventType.KeyDown && !selectKeyGuard.holdHandled -> {
                                     // First auto-repeat of a held OK — that is the long press.
-                                    selectGestureHandled = true
+                                    selectKeyGuard.holdHandled = true
                                     focusedChannel?.let { openChannelMenu(it, fromKeyHold = true) }
                                 }
                                 event.type == KeyEventType.KeyUp -> {
-                                    val wasHold = selectGestureHandled
-                                    selectGestureHandled = false
+                                    val wasHold = selectKeyGuard.holdHandled
+                                    selectKeyGuard.holdHandled = false
                                     if (!wasHold && focusedChannel != null) {
                                         selectChannel(focusedChannel, displayedCurrentProgram(focusedChannel))
                                     }

@@ -1366,6 +1366,13 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    fun setFavoriteChannel(channelId: String, favorite: Boolean) {
+        viewModelScope.launch {
+            iptvRepository.setFavoriteChannel(channelId, favorite)
+            scheduleIptvCloudSync()
+        }
+    }
+
     fun moveFavoriteChannelUp(channelId: String) = moveFavoriteChannel(channelId, -1)
 
     fun moveFavoriteChannelDown(channelId: String) = moveFavoriteChannel(channelId, +1)

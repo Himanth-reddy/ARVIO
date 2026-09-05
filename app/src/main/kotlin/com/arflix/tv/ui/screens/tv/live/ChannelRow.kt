@@ -178,7 +178,7 @@ fun ChannelRow(
                     return@onPreviewKeyEvent true
                 }
                 if (ev.key == Key.Menu) {
-                    if (ev.type == KeyEventType.KeyDown) onLongPress(true)
+                    if (ev.type == KeyEventType.KeyDown) onLongPress(false)
                     return@onPreviewKeyEvent true
                 }
                 if (ev.type == KeyEventType.KeyDown) {

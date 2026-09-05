@@ -161,3 +161,73 @@ published with its data, and drawer-close focus waits for that scope to be ready
 The Full-HD scrolling performance gate above remains unpassed. The release-signed
 APK is provided as a test build, not evidence that every device or uncached guide
 now loads instantly.
+
+## Low-memory rendering, favorites and ratings follow-up (2026-09-05)
+
+This follow-up targets the remaining channel-scroll workload and two tester
+reports. It does not change provider requests, channel order, EPG retention,
+stream buffering or the existing provider rate limits.
+
+- Compose only programme cells near the visible horizontal timeline, with a
+  quantized 30-minute overscan. Programme-navigation mode retains the full focus
+  graph so offscreen programmes remain reachable with the remote.
+- Derive each row's focus flag independently and draw the NOW line using the
+  drawing phase rather than recomposing the grid on every horizontal pixel.
+  Remember channel-logo initials and validated image URLs.
+- Replace the 250ms select-key dead zone with a gesture-aware guard: consume the
+  original hold/release and short synthetic repeat pairs, but accept a fresh
+  deliberate menu click. Short synthetic-repeat protection applies after menu
+  actions too, preventing a held action from starting the underlying channel.
+- Make Add/Remove Favorite explicit and idempotent in the repository. Repeating
+  Add cannot undo it or move an existing favorite. Changes still use DataStore
+  and the existing IPTV cloud-invalidation path.
+- Wrap MDBList rating chips within the details column. The old horizontal row
+  could place ratings offscreen without focusable controls to reach them on TV.
+  This fixes visibility of returned ratings, not missing ratings upstream.
+
+### Controlled renderer comparison
+
+ArflixTV3 Android 12 / API 31 emulator, 2,048 MB RAM. ARVIO requests largeHeap;
+the measured app heap allowance is **512 MiB**, not the emulator's normal 192 MiB
+heap-growth limit. Both APKs use the release certificate but are debug builds.
+
+The fixture creates 55,000 channels and supplies a 144-channel page, with 24
+half-hour programmes per row. Each run injects 80 Down and 80 Up presses at
+150ms pacing and verifies focus returns to channel zero. It uses the real
+display clock and FrameMetrics, without a Compose test-clock override. There is
+no video, logo download, real provider import or XMLTV download in this fixture.
+
+| Renderer | Frames | Missed deadlines | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Before (`6c40ea6ee`), run 1 | 876 | 40.30% | 37.44 ms | 133.96 ms | 151.75 ms |
+| Before, run 2 | 1,078 | 39.05% | 29.04 ms | 86.16 ms | 117.78 ms |
+| Updated, run 1 | 1,490 | 15.70% | 20.22 ms | 34.64 ms | 50.94 ms |
+| Updated, run 2 | 1,487 | 15.80% | 20.35 ms | 35.94 ms | 50.74 ms |
+
+The initial experiment using Compose's controlled test clock produced only five
+frames and invalid multi-second timings. It was discarded and its timing test
+replaced with `GuideRenderingBenchmark`. It is not included in this comparison.
+
+Both updated runs improve this workload substantially, but **neither proves
+consistent 60fps on physical low-memory TVs with Full-HD video playing**. The
+physical performance gate above remains open. No physical TV was operated for
+this follow-up; Shield and Google Streamer results still need tester confirmation.
+
+### Functional coverage
+
+- 42 focused JVM tests passed after incorporating main at `e114d1686`:
+  render-window bounds, native-key gesture guard,
+  favorite membership/order, guide continuity/navigation, quality and provider
+  request budgets, plus the merged playlist EPG-settings regression tests.
+- 17 Android UI tests passed in 99.828 seconds on the 2 GB emulator: all previous
+  navigation/hidden-category/reorder cases, offscreen programme navigation,
+  bounded programme composition, and a held Select followed by one deliberate
+  click that adds exactly one favorite without starting playback.
+- The final combined build, including the held-menu-action guard, passed the
+  same 17 UI tests again in 84.424 seconds.
+- Rating layout tests verify all eight supplied ratings remain inside their
+  container at TV (420dp), phone (280dp) and tablet (500dp) widths.
+- The dense guide's initial composed programme-cell count falls from 216 to 81
+  for the same viewport. This is a composition count, not a heap-memory claim.
+- Debug APK/test APK builds and release Kotlin compilation passed. Signing
+  remained unchanged; the app was updated in place without clearing its data.
