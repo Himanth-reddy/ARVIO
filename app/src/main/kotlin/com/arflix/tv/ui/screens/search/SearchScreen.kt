@@ -906,7 +906,7 @@ private fun GlowChip(
     }
     Box(
         modifier = modifier
-            .semantics {
+            .semantics(mergeDescendants = true) {
                 selected = isSelected
                 role = Role.Tab
                 // Accessibility activation must not add a second native D-pad focus target.

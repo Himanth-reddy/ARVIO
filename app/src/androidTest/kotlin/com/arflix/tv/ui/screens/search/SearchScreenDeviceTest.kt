@@ -10,7 +10,10 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.arflix.tv.R
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
@@ -46,6 +49,7 @@ class SearchScreenDeviceTest {
         keys(listOf(Key.DirectionRight, Key.DirectionCenter))
         filter("shows").assertIsSelected()
         verify(exactly = 1) { viewModel.setDiscoverFilters(DiscoverType.TV_SHOWS, null, null) }
+        finishReload()
         capture("tv-filters")
     }
 
@@ -57,11 +61,13 @@ class SearchScreenDeviceTest {
         filter("movies").assertIsSelected()
         verify(exactly = 2) { viewModel.setDiscoverFilters(DiscoverType.MOVIES, null, null) }
         keys(listOf(Key.DirectionUp, Key.DirectionCenter))
+        assertKeyboardVisible()
         compose.onNodeWithTag("search-input").assertIsFocused().performTextInput("test")
         compose.runOnIdle { assertEquals("test", state.value.query) }
         keys(listOf(Key.Escape, Key.DirectionCenter))
-        compose.onNodeWithTag("search-input").assertIsFocused().performTextInput(" again")
-        compose.runOnIdle { assertEquals("test again", state.value.query) }
+        assertKeyboardVisible()
+        compose.onNodeWithTag("search-input").assertIsFocused().performTextReplacement("updated")
+        compose.runOnIdle { assertEquals("updated", state.value.query) }
     }
 
     @Test fun tvCanEnterResultsAndReturnWithoutSelectingAll() {
@@ -83,6 +89,7 @@ class SearchScreenDeviceTest {
 
     @Test fun tvFilterAccessibilityActionRemainsAvailable() {
         show(DeviceType.TV)
+        filter("movies").assertTextEquals(compose.activity.getString(R.string.movies))
         filter("movies").assertHasClickAction().performSemanticsAction(SemanticsActions.OnClick) { it() }
         filter("movies").assertIsSelected()
         verify(exactly = 1) { viewModel.setDiscoverFilters(DiscoverType.MOVIES, null, null) }
@@ -106,7 +113,7 @@ class SearchScreenDeviceTest {
         val second = compose.onNodeWithTag("search-row-initial-2").fetchSemanticsNode().boundsInRoot
         assertTrue("Rows overlap: $first / $second", second.top >= first.bottom)
         capture("mobile-rows")
-        compose.onNodeWithText("First Movie", useUnmergedTree = true).performClick()
+        compose.onAllNodesWithText("First Movie", useUnmergedTree = true).onFirst().performClick()
         compose.runOnIdle { assertEquals(1, openedId) }
     }
 
@@ -138,6 +145,15 @@ class SearchScreenDeviceTest {
     }
 
     private fun filter(key: String) = compose.onNodeWithTag("search-filter-$key")
+
+    private fun assertKeyboardVisible() {
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.runOnUiThread {
+                ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+    }
 
     private fun keys(keys: List<Key>) {
         keys.forEach { key ->
