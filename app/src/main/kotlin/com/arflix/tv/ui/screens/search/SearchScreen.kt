@@ -71,6 +71,12 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -361,7 +367,7 @@ fun SearchScreen(
         }
     }
 
-    // D-pad handler: manages zone transitions. FILTERS zone lets native focus handle Left/Right.
+    // One D-pad handler owns zone transitions and filter selection.
     val dpadModifier = if (!isTouchDevice) {
         Modifier.onPreviewKeyEvent { event ->
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -540,7 +546,7 @@ fun SearchScreen(
         }
     } else Modifier
 
-    Box(modifier = Modifier.fillMaxSize().background(appBackgroundDark()).then(dpadModifier)) {
+    Box(modifier = Modifier.fillMaxSize().background(appBackgroundDark()).then(dpadModifier).testTag("search-screen")) {
         if (!isTouchDevice) AppTopBar(selectedItem = SidebarItem.SEARCH, isFocused = focusZone == FocusZone.SIDEBAR, focusedIndex = sidebarFocusIndex, profile = currentProfile)
 
         Column(
@@ -740,6 +746,7 @@ private fun SearchInputBar(
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .testTag("search-input")
                 .focusRequester(searchFocusRequester)
                 .onFocusChanged {
                     if (it.isFocused) onFocused() else onFocusLost()
@@ -796,6 +803,7 @@ private fun SearchInputBar(
                 keyboardActions = KeyboardActions(onSearch = { onSearch() }),
                 modifier = Modifier
                     .weight(1f)
+                    .testTag("search-input")
                     .focusRequester(textInputFocusRequester),
                 decorationBox = { inner ->
                     if (query.isEmpty()) {
@@ -865,6 +873,7 @@ private fun DiscoverFilterStrip(
                 isSelected = filter.isSelected,
                 isVisuallyFocused = !isTouchDevice && focusZone == FocusZone.FILTERS && focusedFilterIndex == index,
                 isTouchDevice = isTouchDevice,
+                modifier = Modifier.testTag("search-filter-${filter.key}"),
                 onSelect = filter.onSelect
             )
         }
@@ -897,6 +906,12 @@ private fun GlowChip(
     }
     Box(
         modifier = modifier
+            .semantics {
+                selected = isSelected
+                role = Role.Tab
+                // Accessibility activation must not add a second native D-pad focus target.
+                if (!isTouchDevice) onClick { onSelect(); true }
+            }
             .padding(vertical = 2.dp)
             .background(
                 color = backgroundColor,
@@ -1011,7 +1026,7 @@ private fun RowsLayer(
                 )
 
                 val rowContent = @Composable {
-                    Column(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.fillMaxWidth().testTag("search-row-${category.id}")) {
                         Row(
                             modifier = Modifier.padding(
                                 start = if (isTouchDevice) 16.dp else focusBleedPadding,
