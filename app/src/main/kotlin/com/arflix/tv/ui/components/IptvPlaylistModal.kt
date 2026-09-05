@@ -121,7 +121,7 @@ fun IptvPlaylistModal(
     ) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var sourceType by remember {
+    var sourceType by remember(initialSourceType, initialXtreamUser, initialXtreamPass) {
         mutableStateOf(
             when {
                 initialSourceType == IptvSourceType.STALKER -> IptvSourceType.STALKER
@@ -131,27 +131,41 @@ fun IptvPlaylistModal(
         )
     }
 
-    var playlistName by remember {
-        mutableStateOf(if (initialSourceType != IptvSourceType.STALKER && initialName.isNotBlank()) initialName else "Playlist 1")
+    var playlistName by remember(initialName, isEditing, initialSourceType) {
+        mutableStateOf(
+            if (isEditing) initialName
+            else if (initialName.isNotBlank() && initialSourceType != IptvSourceType.STALKER) initialName
+            else "Playlist 1"
+        )
     }
-    var playlistUrl by remember { mutableStateOf(if (initialSourceType != IptvSourceType.STALKER) initialUrl else "") }
-    var xtreamUser by remember { mutableStateOf(initialXtreamUser) }
-    var xtreamPass by remember { mutableStateOf(initialXtreamPass) }
-    var epgSources by remember { mutableStateOf(initialEpg) }
-
-    var stalkerName by remember {
-        mutableStateOf(if (initialSourceType == IptvSourceType.STALKER && initialName.isNotBlank()) initialName else "Portal 1")
+    var playlistUrl by remember(initialUrl, initialSourceType) {
+        mutableStateOf(if (initialSourceType != IptvSourceType.STALKER) initialUrl else "")
     }
-    var stalkerPortalUrl by remember { mutableStateOf(if (initialSourceType == IptvSourceType.STALKER) initialUrl else "") }
-    var stalkerMac by remember { mutableStateOf(initialMacAddress) }
+    var xtreamUser by remember(initialXtreamUser) { mutableStateOf(initialXtreamUser) }
+    var xtreamPass by remember(initialXtreamPass) { mutableStateOf(initialXtreamPass) }
+    var epgSources by remember(initialEpg) { mutableStateOf(initialEpg) }
 
-    var importLiveTv by remember { mutableStateOf(initialImportLiveTv) }
-    var importVod by remember { mutableStateOf(initialImportVod) }
-    var importSeries by remember { mutableStateOf(initialImportSeries) }
+    var stalkerName by remember(initialName, isEditing, initialSourceType) {
+        mutableStateOf(
+            if (initialSourceType == IptvSourceType.STALKER && initialName.isNotBlank()) initialName
+            else if (isEditing && initialSourceType == IptvSourceType.STALKER) initialName
+            else "Portal 1"
+        )
+    }
+    var stalkerPortalUrl by remember(initialUrl, initialSourceType) {
+        mutableStateOf(if (initialSourceType == IptvSourceType.STALKER) initialUrl else "")
+    }
+    var stalkerMac by remember(initialMacAddress) { mutableStateOf(initialMacAddress) }
 
-    var activePane by remember { mutableStateOf(ActivePane.LEFT) }
+    var importLiveTv by remember(initialImportLiveTv) { mutableStateOf(initialImportLiveTv) }
+    var importVod by remember(initialImportVod) { mutableStateOf(initialImportVod) }
+    var importSeries by remember(initialImportSeries) { mutableStateOf(initialImportSeries) }
+
+    var activePane by remember(isEditing) {
+        mutableStateOf(if (isEditing) ActivePane.RIGHT else ActivePane.LEFT)
+    }
     // Left pane indices: 0 = M3U, 1 = Xtream, 2 = Stalker, 3 = Live, 4 = Movies, 5 = Series
-    var leftFocusedIndex by remember {
+    var leftFocusedIndex by remember(sourceType) {
         mutableIntStateOf(
             when (sourceType) {
                 IptvSourceType.M3U -> 0

@@ -131,6 +131,7 @@ import com.arflix.tv.ui.components.QrCodeImage
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType as ComponentToastType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -472,15 +473,6 @@ fun SettingsScreen(
     var customAddonUrl by remember { mutableStateOf("") }
     var showIptvInput by remember { mutableStateOf(false) }
     var editingIptvIndex by remember { mutableIntStateOf(-1) }
-    var iptvEditName by remember { mutableStateOf("") }
-    var iptvEditUrl by remember { mutableStateOf("") }
-    var iptvEditEpg by remember { mutableStateOf("") }
-    var iptvEditEnabled by remember { mutableStateOf(true) }
-    var iptvEditImportLiveTv by remember { mutableStateOf(true) }
-    var iptvEditImportVod by remember { mutableStateOf(true) }
-    var iptvEditImportSeries by remember { mutableStateOf(true) }
-    var iptvEditXtreamUser by remember { mutableStateOf("") }
-    var iptvEditXtreamPass by remember { mutableStateOf("") }
     var showStalkerInput by remember { mutableStateOf(false) }
     var stalkerEditPortal by remember { mutableStateOf("") }
     var stalkerEditMac by remember { mutableStateOf("") }
@@ -714,44 +706,9 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(uiState.iptvPlaylists, showIptvInput, editingIptvIndex) {
+    LaunchedEffect(showIptvInput) {
         if (!showIptvInput) {
             editingIptvIndex = -1
-            iptvEditName = ""
-            iptvEditUrl = ""
-            iptvEditEpg = ""
-            iptvEditEnabled = true
-            iptvEditXtreamUser = ""
-            iptvEditXtreamPass = ""
-            iptvEditImportLiveTv = true
-            iptvEditImportVod = true
-            iptvEditImportSeries = true
-        } else {
-            val playlist = uiState.iptvPlaylists.getOrNull(editingIptvIndex)
-            iptvEditName = playlist?.name ?: "List ${editingIptvIndex + 2}".takeIf { editingIptvIndex >= 0 } ?: "List ${uiState.iptvPlaylists.size + 1}"
-            // When editing, try to extract Xtream credentials from the saved URL
-            // (normalizeIptvInput converts "host user pass" to a full get.php URL)
-            val savedUrl = playlist?.m3uUrl ?: ""
-            val xtreamUri = try { android.net.Uri.parse(savedUrl) } catch (_: Exception) { null }
-            val xtreamUser = xtreamUri?.getQueryParameter("username") ?: ""
-            val xtreamPass = xtreamUri?.getQueryParameter("password") ?: ""
-            val isXtreamUrl = savedUrl.contains("get.php") && xtreamUser.isNotBlank() && xtreamPass.isNotBlank()
-            if (isXtreamUrl) {
-                // Show just the host:port for Xtream URLs
-                val baseUrl = "${xtreamUri!!.scheme}://${xtreamUri.host}${if (xtreamUri.port > 0) ":${xtreamUri.port}" else ""}"
-                iptvEditUrl = baseUrl
-                iptvEditXtreamUser = xtreamUser
-                iptvEditXtreamPass = xtreamPass
-            } else {
-                iptvEditUrl = savedUrl
-                iptvEditXtreamUser = ""
-                iptvEditXtreamPass = ""
-            }
-            iptvEditEpg = playlist?.settingsEpgInput().orEmpty()
-            iptvEditEnabled = playlist?.enabled ?: true
-            iptvEditImportLiveTv = playlist?.importLiveTv ?: true
-            iptvEditImportVod = playlist?.importVod ?: true
-            iptvEditImportSeries = playlist?.importSeries ?: true
         }
     }
 
@@ -1403,6 +1360,20 @@ fun SettingsScreen(
                 onSubtitleAiQrClick = { viewModel.startAiKeyServer() },
                 onAddIptvClick = { editingIptvIndex = -1; showIptvInput = true },
                 onEditIptvClick = { idx -> editingIptvIndex = idx; showIptvInput = true },
+                onAddStalkerPortal = {
+                    stalkerEditId = null
+                    stalkerEditPortal = ""
+                    stalkerEditMac = ""
+                    stalkerEditName = ""
+                    showStalkerInput = true
+                },
+                onEditStalkerPortal = { portal ->
+                    stalkerEditId = portal.id
+                    stalkerEditPortal = portal.portalUrl
+                    stalkerEditMac = portal.macAddress
+                    stalkerEditName = portal.name
+                    showStalkerInput = true
+                },
                 onAddCatalogClick = { showCatalogInput = true },
                 onImportCatalogPackClick = { showCatalogPackInput = true },
                 onRenameCatalogClick = { catalog ->
@@ -2060,72 +2031,138 @@ fun SettingsScreen(
             )
         }
         if (showIptvInput || showStalkerInput) {
+            val editingPlaylist = if (showIptvInput && editingIptvIndex in uiState.iptvPlaylists.indices) {
+                uiState.iptvPlaylists[editingIptvIndex]
+            } else null
             val isEditingStalker = showStalkerInput && stalkerEditId != null
-            val isEditingIptv = showIptvInput && editingIptvIndex >= 0
+            val isEditingIptv = showIptvInput && editingPlaylist != null
             val isEditing = isEditingStalker || isEditingIptv
-            val initialSource = when {
-                showStalkerInput -> IptvSourceType.STALKER
-                iptvEditXtreamUser.isNotBlank() && iptvEditXtreamPass.isNotBlank() -> IptvSourceType.XTREAM
-                else -> IptvSourceType.M3U
+
+            val resolvedInitialName = when {
+                showStalkerInput -> stalkerEditName
+                editingPlaylist != null -> editingPlaylist.name
+                else -> ""
             }
 
-            IptvPlaylistModal(
-                isEditing = isEditing,
-                initialSourceType = initialSource,
-                initialName = if (showStalkerInput) stalkerEditName else iptvEditName,
-                initialUrl = if (showStalkerInput) stalkerEditPortal else iptvEditUrl,
-                initialXtreamUser = iptvEditXtreamUser,
-                initialXtreamPass = iptvEditXtreamPass,
-                initialEpg = iptvEditEpg,
-                initialMacAddress = stalkerEditMac,
-                initialImportLiveTv = iptvEditImportLiveTv,
-                initialImportVod = iptvEditImportVod,
-                initialImportSeries = iptvEditImportSeries,
-                onSaveIptv = { name, url, xtreamUser, xtreamPass, epg, importLiveTv, importVod, importSeries ->
-                    val hasXtream = xtreamUser.isNotBlank() && xtreamPass.isNotBlank()
-                    val finalM3uUrl = if (hasXtream) {
-                        "${url.trim()} ${xtreamUser.trim()} ${xtreamPass.trim()}"
+            val sourceInfo = if (showStalkerInput) {
+                ResolvedIptvSource(IptvSourceType.STALKER, stalkerEditPortal, "", "")
+            } else if (editingPlaylist != null) {
+                val rawUrl = editingPlaylist.m3uUrl.trim()
+                val parts = rawUrl.split("\\s+".toRegex()).filter { it.isNotBlank() }
+                if (parts.size == 3 && !rawUrl.contains("get.php")) {
+                    ResolvedIptvSource(IptvSourceType.XTREAM, parts[0], parts[1], parts[2])
+                } else {
+                    val uri = try { android.net.Uri.parse(rawUrl) } catch (_: Exception) { null }
+                    val u = uri?.getQueryParameter("username").orEmpty()
+                    val p = uri?.getQueryParameter("password").orEmpty()
+                    if ((rawUrl.contains("get.php") || rawUrl.contains("player_api.php")) && u.isNotBlank() && p.isNotBlank()) {
+                        val base = "${uri!!.scheme}://${uri.host}${if (uri.port > 0) ":${uri.port}" else ""}"
+                        ResolvedIptvSource(IptvSourceType.XTREAM, base, u, p)
                     } else {
-                        url
+                        ResolvedIptvSource(IptvSourceType.M3U, rawUrl, "", "")
                     }
-                    val finalEpgUrl = if (hasXtream && epg.isBlank()) {
-                        "${url.trim()} ${xtreamUser.trim()} ${xtreamPass.trim()}"
-                    } else {
-                        epg
-                    }
-                    val finalEpgUrls = splitSettingsEpgInput(finalEpgUrl)
-                    val updated = uiState.iptvPlaylists.toMutableList()
-                    val entry = com.arflix.tv.data.repository.IptvPlaylistEntry(
-                        id = updated.getOrNull(editingIptvIndex)?.id ?: "list_${editingIptvIndex + 2}".takeIf { editingIptvIndex >= 0 } ?: "list_${updated.size + 1}",
-                        name = name,
-                        m3uUrl = finalM3uUrl,
-                        epgUrl = finalEpgUrls.firstOrNull().orEmpty(),
-                        enabled = iptvEditEnabled,
-                        epgUrls = finalEpgUrls,
-                        importLiveTv = importLiveTv,
-                        importVod = importVod,
-                        importSeries = importSeries
-                    )
-                    if (editingIptvIndex in updated.indices) updated[editingIptvIndex] = entry else updated.add(entry)
-                    viewModel.saveIptvPlaylists(updated)
-                    showIptvInput = false
-                    showStalkerInput = false
-                },
-                onSaveStalker = { name, portalUrl, macAddress ->
-                    val id = stalkerEditId
-                    if (id != null) {
-                        viewModel.onEditStalkerPortal(id, portalUrl, macAddress, name)
-                    } else {
-                        viewModel.onAddStalkerPortal(portalUrl, macAddress, name)
-                    }
-                    showIptvInput = false
-                    showStalkerInput = false
-                },
-                onDismiss = {
-                    showIptvInput = false
-                    showStalkerInput = false
                 }
-            )
+            } else {
+                ResolvedIptvSource(IptvSourceType.M3U, "", "", "")
+            }
+
+            val resolvedEpg = when {
+                showStalkerInput -> ""
+                editingPlaylist != null -> {
+                    val rawEpg = editingPlaylist.settingsEpgInput()
+                    if (sourceInfo.sourceType == IptvSourceType.XTREAM &&
+                        (rawEpg == editingPlaylist.m3uUrl || rawEpg.contains("get.php") || rawEpg.contains("xmltv.php"))
+                    ) {
+                        ""
+                    } else {
+                        rawEpg
+                    }
+                }
+                else -> ""
+            }
+
+            val resolvedMac = when {
+                showStalkerInput -> stalkerEditMac
+                else -> ""
+            }
+
+            val resolvedImportLiveTv = editingPlaylist?.importLiveTv ?: true
+            val resolvedImportVod = editingPlaylist?.importVod ?: true
+            val resolvedImportSeries = editingPlaylist?.importSeries ?: true
+            val playlistEnabled = editingPlaylist?.enabled ?: true
+
+            key(
+                if (showStalkerInput) "stalker_${stalkerEditId ?: "new"}"
+                else if (isEditingIptv) "iptv_${editingPlaylist.id}"
+                else "iptv_new"
+            ) {
+                IptvPlaylistModal(
+                    isEditing = isEditing,
+                    initialSourceType = sourceInfo.sourceType,
+                    initialName = resolvedInitialName,
+                    initialUrl = sourceInfo.url,
+                    initialXtreamUser = sourceInfo.xtreamUser,
+                    initialXtreamPass = sourceInfo.xtreamPass,
+                    initialEpg = resolvedEpg,
+                    initialMacAddress = resolvedMac,
+                    initialImportLiveTv = resolvedImportLiveTv,
+                    initialImportVod = resolvedImportVod,
+                    initialImportSeries = resolvedImportSeries,
+                    onSaveIptv = { name, url, xtreamUser, xtreamPass, epg, importLiveTv, importVod, importSeries ->
+                        val hasXtream = xtreamUser.isNotBlank() && xtreamPass.isNotBlank()
+                        val finalM3uUrl = if (hasXtream) {
+                            "${url.trim()} ${xtreamUser.trim()} ${xtreamPass.trim()}"
+                        } else {
+                            url.trim()
+                        }
+                        val finalEpgUrl = if (hasXtream && epg.isBlank()) {
+                            "${url.trim()} ${xtreamUser.trim()} ${xtreamPass.trim()}"
+                        } else {
+                            epg.trim()
+                        }
+                        val finalEpgUrls = splitSettingsEpgInput(finalEpgUrl)
+                        val updated = uiState.iptvPlaylists.toMutableList()
+                        val entry = com.arflix.tv.data.repository.IptvPlaylistEntry(
+                            id = editingPlaylist?.id ?: "list_${updated.size + 1}",
+                            name = name.trim(),
+                            m3uUrl = finalM3uUrl,
+                            epgUrl = finalEpgUrls.firstOrNull().orEmpty(),
+                            enabled = playlistEnabled,
+                            epgUrls = finalEpgUrls,
+                            importLiveTv = importLiveTv,
+                            importVod = importVod,
+                            importSeries = importSeries
+                        )
+                        if (editingPlaylist != null && editingIptvIndex in updated.indices) {
+                            updated[editingIptvIndex] = entry
+                        } else {
+                            updated.add(entry)
+                        }
+                        viewModel.saveIptvPlaylists(updated)
+                        showIptvInput = false
+                        showStalkerInput = false
+                        editingIptvIndex = -1
+                    },
+                    onSaveStalker = { name, portalUrl, macAddress ->
+                        val id = stalkerEditId
+                        if (id != null) {
+                            viewModel.onEditStalkerPortal(id, portalUrl.trim(), macAddress.trim(), name.trim())
+                        } else {
+                            viewModel.onAddStalkerPortal(portalUrl.trim(), macAddress.trim(), name.trim())
+                        }
+                        showIptvInput = false
+                        showStalkerInput = false
+                        editingIptvIndex = -1
+                        stalkerEditId = null
+                    },
+                    onDismiss = {
+                        showIptvInput = false
+                        showStalkerInput = false
+                        editingIptvIndex = -1
+                        stalkerEditId = null
+                    }
+                )
+            }
         }
         if (showStalkerRename) {
             InputModal(
@@ -3937,6 +3974,8 @@ private fun MobileSettingsLayout(
     onAddIptvClick: () -> Unit,
     onConfigureStalkerClick: () -> Unit = {},
     onEditIptvClick: (Int) -> Unit,
+    onAddStalkerPortal: () -> Unit = {},
+    onEditStalkerPortal: (StalkerPortalEntry) -> Unit = {},
     onAddCatalogClick: () -> Unit,
     onImportCatalogPackClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
@@ -4058,6 +4097,8 @@ private fun MobileSettingsLayout(
                     onAddIptvClick = onAddIptvClick,
                     onConfigureStalkerClick = onConfigureStalkerClick,
                     onEditIptvClick = onEditIptvClick,
+                    onAddStalkerPortal = onAddStalkerPortal,
+                    onEditStalkerPortal = onEditStalkerPortal,
                     onAddCatalogClick = onAddCatalogClick,
                     onImportCatalogPackClick = onImportCatalogPackClick,
                     onRenameCatalogClick = onRenameCatalogClick,
@@ -4284,6 +4325,8 @@ private fun MobileSettingsSubPage(
     onAddIptvClick: () -> Unit,
     onConfigureStalkerClick: () -> Unit = {},
     onEditIptvClick: (Int) -> Unit,
+    onAddStalkerPortal: () -> Unit = {},
+    onEditStalkerPortal: (StalkerPortalEntry) -> Unit = {},
     onAddCatalogClick: () -> Unit,
     onImportCatalogPackClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
@@ -4301,11 +4344,6 @@ private fun MobileSettingsSubPage(
 ) {
 
     val scrollState = rememberScrollState()
-    var showStalkerInput by remember { mutableStateOf(false) }
-    var stalkerEditId by remember { mutableStateOf<String?>(null) }
-    var stalkerEditPortal by remember { mutableStateOf("") }
-    var stalkerEditMac by remember { mutableStateOf("") }
-    var stalkerEditName by remember { mutableStateOf("") }
     var showStalkerRename by remember { mutableStateOf(false) }
     var stalkerRenameId by remember { mutableStateOf("") }
     var stalkerRenameName by remember { mutableStateOf("") }
@@ -4701,8 +4739,8 @@ private fun MobileSettingsSubPage(
                     focusedActionIndex = 0,
                     onConfigure = onAddIptvClick,
                     stalkerPortals = uiState.iptvStalkerPortals,
-                    onAddStalkerPortal = { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true },
-                    onEditStalkerPortal = { portal -> stalkerEditId = portal.id; stalkerEditPortal = portal.portalUrl; stalkerEditMac = portal.macAddress; stalkerEditName = portal.name; showStalkerInput = true },
+                    onAddStalkerPortal = onAddStalkerPortal,
+                    onEditStalkerPortal = onEditStalkerPortal,
                     onToggleStalkerPortal = { id -> viewModel.onToggleStalkerPortal(id) },
                     onMoveStalkerPortalUp = { id -> viewModel.onMoveStalkerPortalUp(id) },
                     onMoveStalkerPortalDown = { id -> viewModel.onMoveStalkerPortalDown(id) },
@@ -10112,6 +10150,13 @@ data class ToggleField(
     val label: String,
     val value: Boolean,
     val onValueChange: (Boolean) -> Unit
+)
+
+private data class ResolvedIptvSource(
+    val sourceType: IptvSourceType,
+    val url: String,
+    val xtreamUser: String,
+    val xtreamPass: String
 )
 
 private fun IptvPlaylistEntry.settingsEpgInput(): String {
