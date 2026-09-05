@@ -916,6 +916,7 @@ fun LiveTvScreen(
     // recents remain ordered dynamic lists, but they are simple id lookups.
     val filteredChannelsState = remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
     var filteredChannelsCategoryKey by remember { mutableStateOf<String?>(null) }
+    var filteredChannelsScopeKey by remember { mutableStateOf(categoryScope) }
     val recentsFilterKey = if (selectedCategoryId == "recent") recents.value else Unit
     LaunchedEffect(
         visibleEnrichedState.value.index,
@@ -992,6 +993,9 @@ fun LiveTvScreen(
             result = filteredChannelsState.value
         }
         filteredChannelsCategoryKey = selectedCategoryId
+        // Publish the scope with its rows, not with the pending selection:
+        // outgoing one-row favorites would clamp the restored All position.
+        filteredChannelsScopeKey = categoryScope
         filteredChannelsState.value = prepareGuideChannels(
             result, selectedCategoryId, state.snapshot.sortOrder, hiddenGroupSet, restrictedGroupSet
         )
@@ -1942,8 +1946,10 @@ fun LiveTvScreen(
         focusCategoryAfterDrawerOpen = false
     }
 
-    LaunchedEffect(categoryDrawerOpen, focusGuideAfterDrawerClose, selectedCategoryId, filteredChannelsWindowKey) {
-        if (categoryDrawerOpen || !focusGuideAfterDrawerClose || useTouchRail || filteredChannels.isEmpty()) {
+    LaunchedEffect(categoryDrawerOpen, focusGuideAfterDrawerClose, categoryScope, filteredChannelsScopeKey, filteredChannelsWindowKey) {
+        if (categoryDrawerOpen || !focusGuideAfterDrawerClose || useTouchRail || filteredChannels.isEmpty() ||
+            filteredChannelsScopeKey != categoryScope
+        ) {
             return@LaunchedEffect
         }
         val target = rememberedChannelByCategory[categoryScope]
@@ -3134,7 +3140,7 @@ fun LiveTvScreen(
                         } else {
                             EpgGridFocusMode.ChannelList
                         },
-                        scrollResetKey = categoryScope,
+                        scrollResetKey = filteredChannelsScopeKey,
                         compact = true,
                         gridFocused = focusZone == LiveTvFocusZone.EPG,
                         backHandlingEnabled = channelMenu == null && !searchOpen && variantPickerChannel == null,
@@ -3271,7 +3277,7 @@ fun LiveTvScreen(
                         } else {
                             EpgGridFocusMode.ChannelList
                         },
-                        scrollResetKey = categoryScope,
+                        scrollResetKey = filteredChannelsScopeKey,
                         compact = compactTouchLayout,
                         gridFocused = focusZone == LiveTvFocusZone.CHANNEL_LIST || focusZone == LiveTvFocusZone.EPG,
                         backHandlingEnabled = channelMenu == null && !searchOpen && variantPickerChannel == null,

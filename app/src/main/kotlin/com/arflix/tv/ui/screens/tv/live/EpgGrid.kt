@@ -187,6 +187,9 @@ fun EpgGrid(
         while (positions.size > 16) positions.remove(positions.keys.first())
         state
     }
+    // A pending category briefly has no rows. Measuring the saved state against
+    // an empty list would clamp its scroll position to zero before data arrives.
+    val emptyChannelListState = remember { LazyListState() }
     var didPositionInitialSelection by remember(scrollResetKey) { mutableStateOf(false) }
     var activeChannelFocusId by remember(scrollResetKey) { mutableStateOf(selectedChannelId) }
     var activeChannelFocusIndex by remember(scrollResetKey) { mutableIntStateOf(0) }
@@ -510,7 +513,7 @@ fun EpgGrid(
                     }
             ) {
                 LazyColumn(
-                    state = channelListState,
+                    state = if (channels.isEmpty()) emptyChannelListState else channelListState,
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag("iptv-guide")

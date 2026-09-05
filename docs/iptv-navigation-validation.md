@@ -138,3 +138,26 @@ At 18:28 the final release resumed NPO 1 automatically after installation/restar
 Two 35-second system traces also show background allocation pressure: before, the hottest worker used 13.303 CPU seconds and GC used about 2.9 seconds across nine events; after, GC used about 0.48 seconds across two events. These traces contain different warm-cache/background work, so they identify remaining costs rather than isolate one patch's effect. Main/render work remains significant and requires further profiling for the smoothness target.
 
 The fully automated Macrobenchmark launch attempt could not reliably open the production account/profile flow on this TCL. It was not counted as a passing test and was replaced by the tested explicit opt-in input driver. No unattended login flow or credentials are committed.
+
+### Final category-transition regression
+
+The actual screen briefly publishes no displayed rows while a selected category is
+being loaded/collapsed. Measuring a retained LazyListState against those zero rows
+clamped its position to zero, even though the selected channel ID survived. The
+grid now uses a separate empty-list state during that transition. The row scope is
+published with its data, and drawer-close focus waits for that scope to be ready.
+
+- A new delayed All -> empty -> one favorite -> empty -> All regression failed on
+  the previous installed build (`expected 90, was 0`). It passed after the fix.
+- The entire physical TCL suite passed again: **11 tests, 169.029 seconds**.
+- Release compilation, R8 and vital lint passed; the original signer was verified
+  before updating the TV in place. No production app uninstall or data clear.
+- At 19:31/19:32, the actual 108,145-channel release screen retained channel 31
+  at the bottom and channel 26 at the top through an All -> Favorites -> All
+  round-trip. NPO 1 video continued playing, and its current/next guide remained
+  visible. This verifies the viewport regression, not an overall frame-rate pass.
+- Temporary position diagnostics were removed from the final release.
+
+The Full-HD scrolling performance gate above remains unpassed. The release-signed
+APK is provided as a test build, not evidence that every device or uncached guide
+now loads instantly.

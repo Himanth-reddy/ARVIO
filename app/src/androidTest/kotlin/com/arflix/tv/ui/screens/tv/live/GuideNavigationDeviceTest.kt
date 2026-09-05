@@ -223,6 +223,38 @@ class GuideNavigationDeviceTest {
         compose.runOnIdle { assertEquals(180, firstVisible) }
     }
 
+    @Test fun pendingCategoryRowsDoNotEraseSavedScrollPosition() {
+        val category = mutableStateOf("all")
+        val channels = mutableStateOf(rows.take(336))
+        var firstVisible = 0
+        compose.setContent {
+            Box(Modifier.width(900.dp).height(400.dp)) {
+                EpgGrid(channels = channels.value, totalChannelCount = channels.value.size,
+                    clockTickMillis = 1_783_000_000_000L, nowNext = emptyMap(),
+                    selectedChannelId = null, focusSelectedChannelSignal = 0,
+                    scrollResetKey = category.value, onChannelSelect = {}, favorites = emptySet(),
+                    onVisibleChannelRange = { first, _ -> firstVisible = first })
+            }
+        }
+        compose.onNodeWithTag("iptv-guide").performScrollToIndex(90)
+        compose.runOnIdle { channels.value = emptyList() }
+        compose.waitForIdle()
+        compose.runOnIdle { category.value = "fav" }
+        compose.waitForIdle()
+        compose.runOnIdle { channels.value = rows.take(1) }
+        compose.waitForIdle()
+        compose.runOnIdle { channels.value = emptyList() }
+        compose.waitForIdle()
+        compose.runOnIdle { category.value = "all" }
+        compose.waitForIdle()
+        compose.runOnIdle { channels.value = rows.take(336) }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(90, firstVisible) }
+        compose.onNodeWithTag("iptv-guide").performTouchInput { swipeUp() }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue(firstVisible > 90) }
+    }
+
     @Test fun hidingFocusedCategoryKeepsRemoteFocusInTheDrawer() {
         val hidden = mutableStateOf(emptySet<String>())
         compose.setContent {
