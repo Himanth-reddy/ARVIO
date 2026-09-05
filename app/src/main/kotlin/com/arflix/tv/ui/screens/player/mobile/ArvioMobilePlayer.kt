@@ -149,6 +149,7 @@ fun ArvioMobilePlayer(
     onSkipOutro: () -> Unit,
     onPlayNextEpisode: () -> Unit,
     canPlayNextEpisode: Boolean = false,
+    onDismissNextEpisode: () -> Unit = {},
     onEnterPip: () -> Unit,
     onOpenCastChooser: () -> Unit,
     onRetryPlayback: () -> Unit,
@@ -971,6 +972,7 @@ fun ArvioMobilePlayer(
                     },
                     onCancelPrompt = {
                         dismissedUpNext = true
+                        onDismissNextEpisode()
                     }
                 )
             }

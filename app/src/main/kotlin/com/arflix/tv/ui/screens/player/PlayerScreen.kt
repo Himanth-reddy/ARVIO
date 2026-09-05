@@ -3814,6 +3814,9 @@ fun PlayerScreen(
                 },
                 canPlayNextEpisode = nextEpisodeIdentity != null &&
                     nextEpisodeAirDateResolution == NextEpisodeAirDateResolution.Allowed,
+                onDismissNextEpisode = {
+                    nextEpisodePromptGate.dismiss(nextEpisodeAirDateSource)
+                },
                 onPlayNextEpisode = {
                     if (nextEpisodeAirDateResolution != NextEpisodeAirDateResolution.Allowed) return@ArvioMobilePlayer
                     val next = nextEpisodeIdentity ?: return@ArvioMobilePlayer

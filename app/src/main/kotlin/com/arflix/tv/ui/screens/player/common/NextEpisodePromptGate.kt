@@ -21,6 +21,10 @@ data class PlaybackEpisodeKey(
 internal class NextEpisodePromptGate {
     private var handledEpisode: PlaybackEpisodeKey? = null
 
+    fun dismiss(episode: PlaybackEpisodeKey?) {
+        if (episode != null) handledEpisode = episode
+    }
+
     fun tryOpen(
         episode: PlaybackEpisodeKey?,
         eligible: Boolean,
