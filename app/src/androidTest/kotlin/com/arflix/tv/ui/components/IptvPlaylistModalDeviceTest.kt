@@ -7,20 +7,26 @@ import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.espresso.Espresso
-import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.replaceText
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.hasFocus
 import androidx.test.espresso.matcher.ViewMatchers.withHint
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.arflix.tv.R
@@ -64,17 +70,21 @@ class IptvPlaylistModalDeviceTest {
     @Test
     fun mobilePasteTargetsXtreamGuideField() {
         show(DeviceType.PHONE)
-        compose.onNodeWithTag("iptv_input_5").performScrollTo()
-        Espresso.onView(withHint(EPG_HINT)).perform(click())
+        // Native EditText bounds do not account for Compose scroll clipping in performScrollTo.
+        compose.onNode(hasScrollAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 500f) }
+        compose.onNodeWithTag("iptv_input_5").performTouchInput { click() }
+        Espresso.onView(withHint(EPG_HINT)).check(matches(hasFocus()))
         Espresso.closeSoftKeyboard()
+        val pastedGuide = "https://pasted.example/guide.xml.gz"
         compose.runOnIdle {
             val clipboard = compose.activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("EPG", GUIDES))
+            clipboard.setPrimaryClip(ClipData.newPlainText("EPG", pastedGuide))
         }
         val label = compose.activity.getString(R.string.settings_label_epg_sources)
         compose.onNodeWithText(compose.activity.getString(R.string.settings_paste_into, label)).performClick()
+        captureDialog("mobile-epg")
         saveByTouch()
-        assertEquals(GUIDES, saved?.epg)
+        assertEquals(SavedPlaylist(HOST, "user", "password", pastedGuide), saved)
     }
 
     @Test
@@ -157,7 +167,7 @@ class IptvPlaylistModalDeviceTest {
     }
 
     private fun captureDialog(layout: String) {
-        val bitmap = compose.onNodeWithTag("iptv_playlist_modal").captureToImage().asAndroidBitmap()
+        val bitmap = compose.onNodeWithTag("iptv_playlist_modal", useUnmergedTree = true).captureToImage().asAndroidBitmap()
         File(compose.activity.getExternalFilesDir(null), "pr647-$layout.png").outputStream().use {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
@@ -165,7 +175,7 @@ class IptvPlaylistModalDeviceTest {
 
     private fun keys(keys: List<Key>) {
         keys.forEach { key ->
-            compose.onNodeWithTag("iptv_playlist_modal").performKeyInput { pressKey(key) }
+            compose.onNodeWithTag("iptv_playlist_modal", useUnmergedTree = true).performKeyInput { pressKey(key) }
             compose.waitForIdle()
         }
     }
