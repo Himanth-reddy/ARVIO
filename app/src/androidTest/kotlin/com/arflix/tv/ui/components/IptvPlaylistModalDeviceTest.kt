@@ -20,6 +20,7 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.pressKey
 import androidx.test.espresso.Espresso
+import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.matcher.ViewMatchers.withHint
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -63,7 +64,8 @@ class IptvPlaylistModalDeviceTest {
     @Test
     fun mobilePasteTargetsXtreamGuideField() {
         show(DeviceType.PHONE)
-        compose.onNodeWithTag("iptv_input_5").performScrollTo().performClick()
+        compose.onNodeWithTag("iptv_input_5").performScrollTo()
+        Espresso.onView(withHint(EPG_HINT)).perform(click())
         Espresso.closeSoftKeyboard()
         compose.runOnIdle {
             val clipboard = compose.activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
