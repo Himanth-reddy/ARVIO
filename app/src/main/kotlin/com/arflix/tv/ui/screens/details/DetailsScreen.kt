@@ -293,11 +293,20 @@ fun DetailsScreen(
             tmdbEpisode = tmdbEpisode
         )
         viewModel.loadStreams(imdbId, identity)
-        autoPlayWaitTick = 0
-        pendingAutoPlayRequest = PendingAutoPlayRequest(
-            identity = identity,
-            startPositionMs = startPositionMs,
-            requestedAtMs = SystemClock.elapsedRealtime()
+        val validStreams = uiState.streams.filter(::isAutoPlayableStream)
+        val minThreshold = minQualityThreshold(uiState.autoPlayMinQuality)
+        val selectedStream = bestAutoPlayStream(validStreams, minThreshold)
+
+        viewModel.recordPlayedEpisode(mediaId, identity)
+        onNavigateToPlayer(
+            mediaType,
+            mediaId,
+            identity,
+            uiState.imdbId,
+            selectedStream?.url?.takeIf { it.isNotBlank() },
+            selectedStream?.addonId?.takeIf { it.isNotBlank() },
+            selectedStream?.source?.takeIf { it.isNotBlank() },
+            startPositionMs
         )
     }
 
