@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +82,7 @@ fun ProgramCell(
     val deviceType = LocalDeviceType.current
     val isTouchDevice = deviceType.isTouchDevice()
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val currentOnClick by rememberUpdatedState(onClick)
     var focused by remember { mutableStateOf(false) }
     val baseBg = when {
         isNow -> LiveColors.FocusBg
@@ -183,7 +185,7 @@ fun ProgramCell(
             )
             .then(
                 if (focusable || isTouchDevice) {
-                    Modifier.pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) }
+                    Modifier.pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick() }) }
                 } else {
                     Modifier
                 }
