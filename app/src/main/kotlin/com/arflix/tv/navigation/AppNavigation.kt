@@ -1,5 +1,6 @@
 package com.arflix.tv.navigation
 
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -553,7 +554,9 @@ fun AppNavigation(
                     type = NavType.BoolType
                     defaultValue = false
                 }
-            )
+            ),
+            exitTransition = { ExitTransition.None },
+            popExitTransition = { ExitTransition.None }
         ) { backStackEntry ->
             val mediaTypeStr = backStackEntry.arguments?.getString("mediaType") ?: "movie"
             val mediaId = backStackEntry.arguments?.getInt("mediaId") ?: 0

@@ -416,15 +416,18 @@ fun PlayerScreen(
         }
     }
 
+    var isExiting by remember { mutableStateOf(false) }
+
     // Synchronously restore orientation when leaving the player to prevent landscape stall on previous screen
     val onExitPlayer: () -> Unit = remember(activity, onBack, previousOrientation) {
         {
-            activity?.requestedOrientation = previousOrientation
-            onBack()
+            if (!isExiting) {
+                isExiting = true
+                activity?.requestedOrientation = previousOrientation
+                onBack()
+            }
         }
     }
-
-
 
     // Initialize Cast SDK once on mobile entry. No-op on TV (CastState.NotAvailable).
     DisposableEffect(deviceType) {
@@ -1735,6 +1738,13 @@ fun PlayerScreen(
         onDispose { playerEngine.release() }
     }
 
+    // Immediately pause video playback when exit is triggered
+    LaunchedEffect(isExiting) {
+        if (isExiting) {
+            runCatching { exoPlayer.pause() }
+        }
+    }
+
     // Observe audio delay & route to video offset renderer
     LaunchedEffect(uiState.audioDelayMs) {
         aiRenderersFactory.audioDelayUs.set(uiState.audioDelayMs * 1000L)
@@ -3036,8 +3046,7 @@ fun PlayerScreen(
                             return@onKeyEvent true
                         }
                         Key.MediaStop -> {
-                            exoPlayer.pause()
-                            onBack()
+                            onExitPlayer()
                             return@onKeyEvent true
                         }
                         Key.MediaRewind -> {
@@ -3115,10 +3124,10 @@ fun PlayerScreen(
                             closeQuickSeekOverlay(false)
                         } else if (seekInteraction.browsing) {
                             finishSeek(false)
-                        } else if (showControls) {
+                        } else if (showControls && !deviceType.isTouchDevice()) {
                             showControls = false
                         } else {
-                            onBack()
+                            onExitPlayer()
                         }
                         return@onKeyEvent true
                     }
@@ -3137,14 +3146,14 @@ fun PlayerScreen(
                             }
                             Key.Enter, Key.DirectionCenter -> {
                                 if (uiState.isSetupError) {
-                                    onBack()
+                                    onExitPlayer()
                                 } else {
-                                    if (errorModalFocusIndex == 0) viewModel.retry() else onBack()
+                                    if (errorModalFocusIndex == 0) viewModel.retry() else onExitPlayer()
                                 }
                                 true
                             }
                             Key.Back, Key.Escape -> {
-                                onBack()
+                                onExitPlayer()
                                 true
                             }
                             else -> false
@@ -3336,7 +3345,7 @@ fun PlayerScreen(
 
                     when (event.key) {
                         Key.Back, Key.Escape -> {
-                            onBack()
+                            onExitPlayer()
                             true
                         }
                         Key.DirectionLeft -> {
@@ -4854,12 +4863,28 @@ fun PlayerScreen(
                                 text = stringResource(R.string.back).uppercase(),
                                 isFocused = if (isSetup) errorModalFocusIndex == 0 else errorModalFocusIndex == 1,
                                 isPrimary = isSetup,
-                                onClick = onBack
+                                onClick = onExitPlayer
                             )
                         }
                     }
                 }
             }
+        }
+
+        // Unified black exit scrim overlay during player exit transition
+        val exitAlpha by animateFloatAsState(
+            targetValue = if (isExiting) 1f else 0f,
+            animationSpec = animTween(180, easing = FastOutSlowInEasing),
+            label = "playerExitScrim"
+        )
+
+        if (exitAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = exitAlpha))
+                    .zIndex(100f)
+            )
         }
     }
     }
