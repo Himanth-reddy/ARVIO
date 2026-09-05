@@ -631,6 +631,8 @@ fun MobilePlayerBottomSection(
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                    // Android cancellation arrives as a consumed synthetic up.
+                                    if (change.isConsumed) break
                                     if (!change.pressed) {
                                         change.consume()
                                         if (seeking) latestSeekEnd()
