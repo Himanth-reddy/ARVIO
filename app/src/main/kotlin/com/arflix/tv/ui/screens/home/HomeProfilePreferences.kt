@@ -25,7 +25,7 @@ internal fun readHomeProfilePreferences(
     profileId: String
 ): HomeProfilePreferences {
     val prefix = "profile_${profileId}_"
-    val fallbackLanguage = preferences[stringPreferencesKey("last_app_language")] ?: "en-US"
+    val fallbackLanguage = preferences[stringPreferencesKey("last_app_language")] ?: com.arflix.tv.util.defaultAppLanguage()
     val contentLang = preferences[stringPreferencesKey("${prefix}content_language")] ?: fallbackLanguage
     return HomeProfilePreferences(
         trailerAutoPlay = preferences[booleanPreferencesKey("${prefix}trailer_auto_play")] ?: false,

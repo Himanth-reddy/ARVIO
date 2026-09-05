@@ -296,7 +296,7 @@ class MainActivity : ComponentActivity() {
             }.collectAsStateWithLifecycle(initialValue = null)
             val appLanguage by remember(activeProfileId) {
                 this@MainActivity.settingsDataStore.data.map { prefs ->
-                    val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
+                    val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: com.arflix.tv.util.defaultAppLanguage()
                     val profileId = activeProfileId
                     if (profileId.isNullOrBlank()) {
                         fallbackLanguage
@@ -304,7 +304,7 @@ class MainActivity : ComponentActivity() {
                         prefs[stringPreferencesKey("profile_${profileId}_content_language")] ?: fallbackLanguage
                     }
                 }
-            }.collectAsStateWithLifecycle(initialValue = "en-US")
+            }.collectAsStateWithLifecycle(initialValue = com.arflix.tv.util.defaultAppLanguage())
             LaunchedEffect(appLanguage) {
                 mediaRepository.get().contentLanguage = appLanguage
             }

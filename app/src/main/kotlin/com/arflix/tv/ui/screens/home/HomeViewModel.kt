@@ -1179,7 +1179,7 @@ class HomeViewModel @Inject constructor(
     private suspend fun applyContentLanguageFromPrefs(): String {
         val prefs = context.settingsDataStore.data.first()
         val profileId = profileManager.getProfileId()
-        val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
+        val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: com.arflix.tv.util.defaultAppLanguage()
         val language = prefs[profileManager.profileStringKeyFor(profileId, "content_language")]
             ?: fallbackLanguage
         mediaRepository.contentLanguage = language
