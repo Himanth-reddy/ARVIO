@@ -158,8 +158,12 @@ class SettingsLocalizationDeviceTest(private val language: String) {
         compose.mainClock.autoAdvance = false
         listOf(R.string.live_cd_previous_channel, R.string.live_cd_rewind, R.string.live_cd_pause,
             R.string.live_cd_fast_forward, R.string.live_cd_next_channel, R.string.live_cd_replay)
-            .forEach { resource -> compose.onNodeWithContentDescription(text(resource)).performClick() }
+            .forEach { resource ->
+                compose.onNodeWithContentDescription(text(resource)).performClick()
+                compose.mainClock.advanceTimeByFrame()
+            }
         compose.onNodeWithContentDescription(text(R.string.play)).performClick()
+        compose.mainClock.advanceTimeByFrame()
         compose.onNodeWithContentDescription(text(R.string.live_cd_pause)).assertExists()
         assertEquals(listOf("previous", "rewind", "play-pause", "forward", "next", "replay", "play-pause"), actions)
     }
