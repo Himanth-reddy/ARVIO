@@ -2528,8 +2528,6 @@ private fun DetailsTvRows(
     onCollectionClick: (Int) -> Unit = {}
 ) {
     val contentScrollState = rememberTvLazyListState()
-    val detailsStackOffsetPx = remember { Animatable(0f) }
-    val density = LocalDensity.current
     val isTV = item.mediaType == MediaType.TV
     val hasEpisodes = isTV && episodes.isNotEmpty()
     val hasAnyValidRating = remember(episodes) {
@@ -2594,14 +2592,12 @@ private fun DetailsTvRows(
             focusSectionForUi == FocusSection.SEASONS
         ) {
             if (firstVisible > topClusterMaxIndex || contentScrollState.firstVisibleItemScrollOffset != 0) {
-                val travelPx = with(density) { 96.dp.toPx() }
-                detailsStackOffsetPx.stop()
-                detailsStackOffsetPx.snapTo(-travelPx)
-                contentScrollState.scrollToItem(0, 0)
-                detailsStackOffsetPx.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
-                )
+                val visibleTop = contentScrollState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
+                if (visibleTop != null) {
+                    contentScrollState.animateDetailsScrollDelta(visibleTop.offset.toFloat(), 130)
+                } else {
+                    contentScrollState.animateScrollToItem(0, 0)
+                }
             }
             return@LaunchedEffect
         }
@@ -2609,20 +2605,15 @@ private fun DetailsTvRows(
         val targetAligned = firstVisible == targetScrollIndex &&
             contentScrollState.firstVisibleItemScrollOffset == 0
         if (targetAligned) {
-            detailsStackOffsetPx.stop()
-            detailsStackOffsetPx.snapTo(0f)
             return@LaunchedEffect
         }
 
-        val direction = if (targetScrollIndex > firstVisible) 1f else -1f
-        val travelPx = with(density) { 96.dp.toPx() }
-        detailsStackOffsetPx.stop()
-        detailsStackOffsetPx.snapTo(direction * travelPx)
-        contentScrollState.scrollToItem(targetScrollIndex, 0)
-        detailsStackOffsetPx.animateTo(
-            targetValue = 0f,
-            animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
-        )
+        val visibleTarget = contentScrollState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetScrollIndex }
+        if (visibleTarget != null) {
+            contentScrollState.animateDetailsScrollDelta(visibleTarget.offset.toFloat(), 130)
+        } else {
+            contentScrollState.animateScrollToItem(targetScrollIndex, 0)
+        }
     }
 
     val contentStartPadding = 12.dp
@@ -2634,7 +2625,6 @@ private fun DetailsTvRows(
             .fillMaxWidth()
             .height(contentRowHeight)
             .padding(start = 24.dp, bottom = contentRowBottomPadding)
-            .graphicsLayer { translationY = detailsStackOffsetPx.value }
             .arvioManualBringIntoViewBoundary()
             .arvioDpadFocusGroup(enableFocusRestorer = false)
             .clipToBounds(),

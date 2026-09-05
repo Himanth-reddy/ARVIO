@@ -481,9 +481,9 @@ private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeSc
         animate(
             initialValue = 0f,
             targetValue = targetDelta,
-            animationSpec = spring(
-                dampingRatio = 0.85f,
-                stiffness = 200f
+            animationSpec = tween(
+                durationMillis = durationMillis,
+                easing = FastOutSlowInEasing
             )
         ) { value, _ ->
             val step = value - previousValue
@@ -1744,7 +1744,7 @@ private fun HeroSection(
                     cleanOverviewText(overviewOverride ?: currentItem.overview)
                 }
 
-                val overviewMaxHeight = if (isCompactHeight) 48.dp else 56.dp
+                val overviewMaxHeight = if (isCompactHeight) 38.dp else 56.dp
                 Box(
                     modifier = Modifier
                         .width(heroTextWidth)
@@ -1755,11 +1755,11 @@ private fun HeroSection(
                         style = ArflixTypography.body.copy(
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Normal,
-                            lineHeight = 16.sp,
+                            lineHeight = 15.sp,
                             shadow = textShadow
                         ),
                         color = Color.White.copy(alpha = 0.9f),
-                        maxLines = 3,
+                        maxLines = if (isCompactHeight) 2 else 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -3258,7 +3258,7 @@ private fun TvHomeRowsLayer(
             .fillMaxSize()
             .padding(top = 24.dp)
     ) {
-        val rowsViewportHeight = (maxHeight * 0.31f).coerceIn(260.dp, 340.dp)
+        val rowsViewportHeight = if (maxHeight < 600.dp) 238.dp else (maxHeight * 0.35f).coerceIn(260.dp, 340.dp)
         val listState = rememberLazyListState()
         var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
         val targetIndex = localCurrentRowIndex.coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
@@ -3282,30 +3282,13 @@ private fun TvHomeRowsLayer(
                 if (smoothScrolling) {
                     val visibleTarget = listState.layoutInfo.visibleItemsInfo
                         .firstOrNull { it.index == targetIndex }
-                    val deltaPx = if (visibleTarget != null) {
-                        visibleTarget.offset.toFloat()
+                    if (visibleTarget != null) {
+                        listState.animateHomeScrollDelta(
+                            deltaPx = visibleTarget.offset.toFloat(),
+                            durationMillis = if (jumpDistance >= 3) 150 else 120
+                        )
                     } else {
-                        if (targetIndex < currentIndex) {
-                            val intermediateSum = (targetIndex until currentIndex).sumOf { idx ->
-                                categoryHeightsPx.getOrNull(idx)?.toDouble() ?: (202.0 * density.density)
-                            }.toFloat()
-                            -(intermediateSum + currentOffset)
-                        } else {
-                            val intermediateSum = (currentIndex until targetIndex).sumOf { idx ->
-                                categoryHeightsPx.getOrNull(idx)?.toDouble() ?: (202.0 * density.density)
-                            }.toFloat()
-                            intermediateSum - currentOffset
-                        }
-                    }
-                    listState.animateHomeScrollDelta(
-                        deltaPx = deltaPx,
-                        durationMillis = if (jumpDistance >= 3) 180 else 150
-                    )
-                    if (
-                        listState.firstVisibleItemIndex != targetIndex ||
-                        abs(listState.firstVisibleItemScrollOffset) > 6
-                    ) {
-                        listState.scrollToItem(index = targetIndex, scrollOffset = 0)
+                        listState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
                     }
                 } else {
                     listState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
@@ -3328,8 +3311,7 @@ private fun TvHomeRowsLayer(
                 contentPadding = PaddingValues(bottom = rowsViewportHeight),
                 modifier = Modifier
                     .fillMaxSize()
-                    .arvioDpadFocusGroup(enableFocusRestorer = false)
-                    .clipToBounds(),
+                    .arvioDpadFocusGroup(enableFocusRestorer = false),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 itemsIndexed(
