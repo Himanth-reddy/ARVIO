@@ -4,6 +4,7 @@ package com.arflix.tv.ui.screens.player
 
 import com.arflix.tv.ui.screens.player.mobile.ArvioMobilePlayer
 import com.arflix.tv.ui.screens.player.mobile.MobileIconButton
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -121,6 +122,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -416,16 +418,6 @@ fun PlayerScreen(
         }
     }
 
-    // Synchronously restore orientation when leaving the player to prevent landscape stall on previous screen
-    val onExitPlayer: () -> Unit = remember(activity, onBack, previousOrientation) {
-        {
-            activity?.requestedOrientation = previousOrientation
-            onBack()
-        }
-    }
-
-
-
     // Initialize Cast SDK once on mobile entry. No-op on TV (CastState.NotAvailable).
     DisposableEffect(deviceType) {
         castManager.initialize(isMobile = deviceType.isTouchDevice())
@@ -599,10 +591,6 @@ fun PlayerScreen(
             pendingNextSourceName,
             pendingNextBingeGroup
         )
-    }
-    val cancelNextEpisodePrompt: () -> Unit = {
-        showNextEpisodePrompt = false
-        onExitPlayer()
     }
     var currentAspectRatioMode by remember { mutableStateOf(AspectRatioMode.AUTO) }
     val playerResizeMode = currentAspectRatioMode.resizeMode
@@ -1735,6 +1723,29 @@ fun PlayerScreen(
         onDispose { playerEngine.release() }
     }
 
+    val exitTransition = rememberPlayerExitTransition(
+        animateExit = deviceType.isTouchDevice(),
+        pause = { if (!playerReleased) exoPlayer.pause() },
+        leave = {
+            activity?.requestedOrientation = previousOrientation
+            onBack()
+        }
+    )
+    val onExitPlayer: () -> Unit = exitTransition::requestExit
+    val cancelNextEpisodePrompt: () -> Unit = {
+        showNextEpisodePrompt = false
+        onExitPlayer()
+    }
+    DisposableEffect(exoPlayer, exitTransition) {
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (playWhenReady && exitTransition.isExiting && !playerReleased) exoPlayer.pause()
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
     // Observe audio delay & route to video offset renderer
     LaunchedEffect(uiState.audioDelayMs) {
         aiRenderersFactory.audioDelayUs.set(uiState.audioDelayMs * 1000L)
@@ -1997,8 +2008,8 @@ fun PlayerScreen(
 
     // Update player when stream URL changes. Attach currently-known external subtitle tracks once,
     // then switch subtitle tracks via track overrides (no media source rebuild needed).
-    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
-        if (playerReleased) return@LaunchedEffect
+    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce, exitTransition.isExiting) {
+        if (playerReleased || exitTransition.isExiting) return@LaunchedEffect
         val url = uiState.selectedStreamUrl
         if (BuildConfig.DEBUG) {
         }
@@ -3006,6 +3017,7 @@ fun PlayerScreen(
             .background(Color.Black)
             .focusRequester(containerFocusRequester)
             .focusable()
+            .onPreviewKeyEvent { exitTransition.isExiting }
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     if (event.nativeKeyEvent.repeatCount > 0 &&
@@ -3036,8 +3048,7 @@ fun PlayerScreen(
                             return@onKeyEvent true
                         }
                         Key.MediaStop -> {
-                            exoPlayer.pause()
-                            onBack()
+                            onExitPlayer()
                             return@onKeyEvent true
                         }
                         Key.MediaRewind -> {
@@ -3115,10 +3126,10 @@ fun PlayerScreen(
                             closeQuickSeekOverlay(false)
                         } else if (seekInteraction.browsing) {
                             finishSeek(false)
-                        } else if (showControls) {
+                        } else if (showControls && !deviceType.isTouchDevice()) {
                             showControls = false
                         } else {
-                            onBack()
+                            onExitPlayer()
                         }
                         return@onKeyEvent true
                     }
@@ -3137,14 +3148,14 @@ fun PlayerScreen(
                             }
                             Key.Enter, Key.DirectionCenter -> {
                                 if (uiState.isSetupError) {
-                                    onBack()
+                                    onExitPlayer()
                                 } else {
-                                    if (errorModalFocusIndex == 0) viewModel.retry() else onBack()
+                                    if (errorModalFocusIndex == 0) viewModel.retry() else onExitPlayer()
                                 }
                                 true
                             }
                             Key.Back, Key.Escape -> {
-                                onBack()
+                                onExitPlayer()
                                 true
                             }
                             else -> false
@@ -3336,7 +3347,7 @@ fun PlayerScreen(
 
                     when (event.key) {
                         Key.Back, Key.Escape -> {
-                            onBack()
+                            onExitPlayer()
                             true
                         }
                         Key.DirectionLeft -> {
@@ -3481,94 +3492,16 @@ fun PlayerScreen(
             )
         }
 
-        // Loading screen overlay - keep visible until player is fully started.
-        if (!isTouchDevice && (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(50f),
-                contentAlignment = Alignment.Center
-            ) {
-                if (uiState.backdropUrl != null) {
-                    AsyncImage(
-                        model = uiState.backdropUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.7f))
-                    )
-                }
-
-                if (isTouchDevice) {
-                    val layoutDirection = LocalLayoutDirection.current
-                    val systemBarsInsets = WindowInsets.systemBars.asPaddingValues()
-                    val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
-
-                    val startInset = maxOf(
-                        systemBarsInsets.calculateStartPadding(layoutDirection),
-                        cutoutInsets.calculateStartPadding(layoutDirection)
-                    )
-                    val endInset = maxOf(
-                        systemBarsInsets.calculateEndPadding(layoutDirection),
-                        cutoutInsets.calculateEndPadding(layoutDirection)
-                    )
-                    val maxHorizontalPadding = maxOf(startInset, endInset, 24.dp)
-                    val topSafePadding = maxOf(
-                        systemBarsInsets.calculateTopPadding() + 8.dp,
-                        cutoutInsets.calculateTopPadding() + 12.dp,
-                        16.dp
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(
-                                top = topSafePadding,
-                                start = maxHorizontalPadding
-                            )
-                            .zIndex(52f)
-                    ) {
-                        MobileIconButton(
-                            icon = Icons.Default.Close,
-                            contentDescription = "Close",
-                            onClick = onExitPlayer
-                        )
-                    }
-                }
-
-                PulsingLogo(
-                    logoUrl = uiState.logoUrl,
-                    title = uiState.title,
-                    progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
-                    isTouchDevice = isTouchDevice,
-                    // streamLoadPhase covers source discovery; startupPhase takes over from
-                    // stream selection ("Loading subtitles…"/"Loading video stream…") until the
-                    // first frame renders; switchNotice overlays both for 2.5s on failover.
-                    // Unlike the percentage ring, the phase text is not gated on
-                    // showLoadingStats — status feedback should always be visible.
-                    phaseLabel = switchNotice
-                        ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
-                            ?.let { phaseRes ->
-                                // Name the addons still being queried so a chronically slow one
-                                // identifies itself to the user ("Loading subtitles… (bla)").
-                                val pending = uiState.pendingSubtitleAddons
-                                if (phaseRes == R.string.player_phase_loading_subtitles && pending.isNotEmpty()) {
-                                    val shown = pending.take(2).joinToString(", ")
-                                    val more = pending.size - 2
-                                    stringResource(
-                                        R.string.player_phase_loading_subtitles_detail,
-                                        "$shown${if (more > 0) " +$more" else ""}"
-                                    )
-                                } else stringResource(phaseRes)
-                            }
-                        ?: uiState.streamLoadPhase?.localizedText()
-                )
-            }
-        }
+        PlayerLoadingOverlay(
+            uiState = uiState,
+            hasPlaybackStarted = hasPlaybackStarted,
+            isTouchDevice = isTouchDevice,
+            isInPipMode = isInPipMode,
+            showSourceMenu = showSourceMenu,
+            onExitPlayer = onExitPlayer,
+            startupPhase = startupPhase,
+            switchNotice = switchNotice
+        )
 
         // Buffering indicator - only show after playback has started (mid-stream buffering)
         // Initial buffering is handled by the main loading screen above
@@ -4854,14 +4787,119 @@ fun PlayerScreen(
                                 text = stringResource(R.string.back).uppercase(),
                                 isFocused = if (isSetup) errorModalFocusIndex == 0 else errorModalFocusIndex == 1,
                                 isPrimary = isSetup,
-                                onClick = onBack
+                                onClick = onExitPlayer
                             )
                         }
                     }
                 }
             }
         }
+
+        PlayerExitScrim(exitTransition)
     }
+    }
+}
+
+@Composable
+internal fun PlayerLoadingOverlay(
+    uiState: PlayerUiState,
+    hasPlaybackStarted: Boolean,
+    isTouchDevice: Boolean,
+    isInPipMode: Boolean,
+    showSourceMenu: Boolean,
+    onExitPlayer: () -> Unit,
+    startupPhase: Int? = null,
+    switchNotice: String? = null
+) {
+    if (!isInPipMode && !showSourceMenu && uiState.error == null &&
+        (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("playerLoadingOverlay")
+                .zIndex(50f),
+            contentAlignment = Alignment.Center
+        ) {
+            if (uiState.backdropUrl != null) {
+                AsyncImage(
+                    model = uiState.backdropUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.7f))
+                )
+            }
+
+            if (isTouchDevice) {
+                val layoutDirection = LocalLayoutDirection.current
+                val systemBarsInsets = WindowInsets.systemBars.asPaddingValues()
+                val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+
+                val startInset = maxOf(
+                    systemBarsInsets.calculateStartPadding(layoutDirection),
+                    cutoutInsets.calculateStartPadding(layoutDirection)
+                )
+                val endInset = maxOf(
+                    systemBarsInsets.calculateEndPadding(layoutDirection),
+                    cutoutInsets.calculateEndPadding(layoutDirection)
+                )
+                val maxHorizontalPadding = maxOf(startInset, endInset, 24.dp)
+                val topSafePadding = maxOf(
+                    systemBarsInsets.calculateTopPadding() + 8.dp,
+                    cutoutInsets.calculateTopPadding() + 12.dp,
+                    16.dp
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(
+                            top = topSafePadding,
+                            start = maxHorizontalPadding
+                        )
+                        .zIndex(52f)
+                ) {
+                    MobileIconButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.close),
+                        onClick = onExitPlayer
+                    )
+                }
+            }
+
+            PulsingLogo(
+                logoUrl = uiState.logoUrl,
+                title = uiState.title,
+                progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
+                isTouchDevice = isTouchDevice,
+                // streamLoadPhase covers source discovery; startupPhase takes over from
+                // stream selection ("Loading subtitles…"/"Loading video stream…") until the
+                // first frame renders; switchNotice overlays both for 2.5s on failover.
+                // Unlike the percentage ring, the phase text is not gated on
+                // showLoadingStats — status feedback should always be visible.
+                phaseLabel = switchNotice
+                    ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
+                        ?.let { phaseRes ->
+                            // Name the addons still being queried so a chronically slow one
+                            // identifies itself to the user ("Loading subtitles… (bla)").
+                            val pending = uiState.pendingSubtitleAddons
+                            if (phaseRes == R.string.player_phase_loading_subtitles && pending.isNotEmpty()) {
+                                val shown = pending.take(2).joinToString(", ")
+                                val more = pending.size - 2
+                                stringResource(
+                                    R.string.player_phase_loading_subtitles_detail,
+                                    "$shown${if (more > 0) " +$more" else ""}"
+                                )
+                            } else stringResource(phaseRes)
+                        }
+                    ?: uiState.streamLoadPhase?.localizedText()
+            )
+        }
     }
 }
 

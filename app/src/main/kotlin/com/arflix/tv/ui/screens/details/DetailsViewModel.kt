@@ -50,6 +50,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 import com.arflix.tv.core.plugin.PluginManager
+import com.arflix.tv.data.repository.toStreamSource
 import com.arflix.tv.domain.model.LocalScraperResult
 import javax.inject.Inject
 
@@ -3104,24 +3105,3 @@ private object DetailsVMRegexes {
     )
 
 }
-
-private fun LocalScraperResult.toStreamSource(): StreamSource = StreamSource(
-    source = title,
-    addonName = provider ?: name ?: "Plugin",
-    addonId = "plugin_${provider?.lowercase()?.replace(" ", "_") ?: "unknown"}",
-    quality = quality ?: "Unknown",
-    size = size ?: "",
-    sizeBytes = null,
-    url = url,
-    infoHash = infoHash,
-    fileIdx = null,
-    behaviorHints = headers?.let { hdrs ->
-        com.arflix.tv.data.model.StreamBehaviorHints(
-            notWebReady = false,
-            proxyHeaders = com.arflix.tv.data.model.ProxyHeaders(request = hdrs)
-        )
-    },
-    subtitles = emptyList(),
-    sources = emptyList(),
-    description = null
-)

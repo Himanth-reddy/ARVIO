@@ -25,6 +25,10 @@ import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.data.repository.SkipIntroRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.toStreamSource
+import com.arflix.tv.core.plugin.PluginManager
+import com.arflix.tv.ui.screens.details.minQualityThreshold
+import com.arflix.tv.ui.screens.details.qualityScoreForAutoPlay
 import com.arflix.tv.data.repository.isHubCloudPageUrl
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.CloudSyncRepository
@@ -58,6 +62,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Clock
@@ -259,7 +264,8 @@ class PlayerViewModel @Inject constructor(
     private val animeMapper: AnimeMapper,
     private val tmdbApi: TmdbApi,
     private val skipIntroRepository: SkipIntroRepository,
-    private val playbackTelemetryRepository: PlaybackTelemetryRepository
+    private val playbackTelemetryRepository: PlaybackTelemetryRepository,
+    private val pluginManager: PluginManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -296,6 +302,7 @@ class PlayerViewModel @Inject constructor(
     private var currentAddonOrderedIds: List<String> = emptyList()
     private var currentInstalledAddons: List<Addon> = emptyList()
     private var currentIsLiveStreamPlayback: Boolean = false
+    private var autoPlayMinimumQuality: Int = 0
     private var lastScrobbleTime: Long = 0
     private var lastWatchHistorySaveTime: Long = 0
     private var lastWatchHistorySavedPositionSeconds: Long = -1L
@@ -577,6 +584,7 @@ class PlayerViewModel @Inject constructor(
         currentPreferredSourceName = preferredSourceName?.trim()?.takeIf { it.isNotBlank() }
         currentPreferredBingeGroup = preferredBingeGroup?.trim()?.takeIf { it.isNotBlank() }
         currentIsLiveStreamPlayback = isLiveStreamPlayback
+        autoPlayMinimumQuality = 0
         playbackSessionStartTime = System.currentTimeMillis()
         playbackDiag(
             "loadMedia type=$mediaType id=$mediaId season=$seasonNumber episode=$episodeNumber " +
@@ -650,6 +658,10 @@ class PlayerViewModel @Inject constructor(
             val preferredAudioLanguage = resolvePreferredAudioLanguage()
             val frameRateMatchingMode = resolveFrameRateMatchingMode()
             val prefs = context.settingsDataStore.data.first()
+            // A manually selected URL is explicit consent to that source's quality.
+            autoPlayMinimumQuality = if (providedStreamUrl.isNullOrBlank()) {
+                minQualityThreshold(prefs[profileManager.profileStringKey("auto_play_min_quality")] ?: "Any")
+            } else 0
             val subSize = prefs[profileManager.profileStringKey("subtitle_size")] ?: "Medium"
             val subSizePct = prefs[profileManager.profileIntKey("subtitle_size_pct")] ?: when (subSize.lowercase()) {
                 "small" -> 80
@@ -1119,7 +1131,21 @@ class PlayerViewModel @Inject constructor(
                 var isFirstEmission = true
                 var sourceEmptyReported = false
 
-                progressiveFlow.collect { progressive ->
+                var pluginSearchStarted = false
+                val playerSources = mergePlayerSourceDiscovery(
+                    addons = progressiveFlow,
+                    pluginBatches = pluginManager.executeScrapersStreaming(
+                        tmdbId = mediaId.toString(),
+                        mediaType = if (mediaType == MediaType.MOVIE) "movie" else "tv",
+                        season = seasonNumber,
+                        episode = episodeNumber
+                    ).map { (_, results) ->
+                        pluginSearchStarted = true
+                        results.orEmpty().map { it.toStreamSource() }
+                    },
+                    onPluginFailure = { Log.w(TAG, "Player plugin source discovery failed", it) }
+                )
+                playerSources.collect { progressive ->
                     if (progressive.isFinal) {
                         primaryStreamResolutionFinal = true
                     }
@@ -1136,25 +1162,28 @@ class PlayerViewModel @Inject constructor(
                         preferredLanguage
                     )
                     lastMergedStreams = mergedStreams
+                    val autoplayStreams = eligiblePlayerAutoplayStreams(mergedStreams, autoPlayMinimumQuality)
 
                     val supplementalSourcesStillLoading =
                         homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
-                    val errorMessage = if (
-                        progressive.isFinal &&
-                        mergedStreams.isEmpty() &&
-                        !hasHomeServerConnections &&
-                        !supplementalSourcesStillLoading &&
-                        _uiState.value.selectedStreamUrl == null
-                    ) {
-                        if (streamingAddonCount == 0) {
-                            PlayerMessage.Res(R.string.player_error_no_streaming_addons)
-                        } else {
-                            PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
+                    val availability = playerAutoplayAvailability(
+                        streams = mergedStreams,
+                        minimumQuality = autoPlayMinimumQuality,
+                        searchActive = !progressive.isFinal || supplementalSourcesStillLoading,
+                        hasSelection = !canStartAutoplay()
+                    )
+                    val errorMessage = when (availability) {
+                        PlayerAutoplayAvailability.SELECTED -> _uiState.value.error
+                        PlayerAutoplayAvailability.NO_MATCH -> PlayerMessage.Res(R.string.stream_no_sources_match)
+                        PlayerAutoplayAvailability.NO_SOURCES -> when {
+                            streamingAddonCount == 0 && !pluginSearchStarted && !hasHomeServerConnections ->
+                                PlayerMessage.Res(R.string.player_error_no_streaming_addons)
+                            hasHomeServerConnections -> PlayerMessage.Res(R.string.player_error_no_streams_media_servers)
+                            else -> PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
                         }
-                    } else {
-                        null
+                        else -> null
                     }
-                    if (errorMessage != null && !sourceEmptyReported) {
+                    if (errorMessage != null && !sourceEmptyReported && mergedStreams.isEmpty()) {
                         sourceEmptyReported = true
                         AppLogger.recordException(
                             throwable = IllegalStateException("Playback source list empty"),
@@ -1194,15 +1223,13 @@ class PlayerViewModel @Inject constructor(
 
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        isLoadingStreams = mergedStreams.isEmpty() &&
-                            (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
+                        isLoadingStreams = availability == PlayerAutoplayAvailability.SEARCHING,
                         sourceSearchActive = !progressive.isFinal || supplementalSourcesStillLoading,
                         streams = mergedStreams,
                         subtitles = filteredSubtitles,
                         error = errorMessage,
-                        isSetupError = progressive.isFinal &&
-                            mergedStreams.isEmpty() &&
-                            streamingAddonCount == 0 &&
+                        isSetupError = availability == PlayerAutoplayAvailability.NO_SOURCES &&
+                            streamingAddonCount == 0 && !pluginSearchStarted &&
                             !hasHomeServerConnections &&
                             !supplementalSourcesStillLoading,
                         streamProgress = if (progressive.isFinal) null else progressFraction,
@@ -1223,7 +1250,7 @@ class PlayerViewModel @Inject constructor(
                             stream.behaviorHints.notWebReady != true &&
                             !stream.url.isNullOrBlank()
                     }
-                    if (!autoplaySelected && mergedStreams.isNotEmpty() && autoplayDeferredJob == null) {
+                    if (!autoplaySelected && autoplayStreams.isNotEmpty() && autoplayDeferredJob == null && canStartAutoplay()) {
                         autoplayDeferredJob = launch {
                             delay(AUTOPLAY_QUALITY_WINDOW_MS)
                             if (!autoplaySelected) {
@@ -1239,7 +1266,7 @@ class PlayerViewModel @Inject constructor(
                                         preferredLanguage
                                     )
                                 }
-                                if (snapshot.isNotEmpty()) {
+                                if (eligiblePlayerAutoplayStreams(snapshot, autoPlayMinimumQuality).isNotEmpty()) {
                                     autoplaySelected = true
                                     Log.i(
                                         TAG,
@@ -1254,9 +1281,9 @@ class PlayerViewModel @Inject constructor(
                             }
                         }
                     }
-                    val autoplayTopStream = pickAutoplayTopStream(mergedStreams, preferredLanguage)
-                    val hasRequestedPreferredStream = hasRequestedPreferredStream(mergedStreams)
-                    val shouldSelectNow = !autoplaySelected && mergedStreams.isNotEmpty() && homeServerReadyForAutoplay && (
+                    val autoplayTopStream = pickAutoplayTopStream(autoplayStreams, preferredLanguage)
+                    val hasRequestedPreferredStream = hasRequestedPreferredStream(autoplayStreams)
+                    val shouldSelectNow = !autoplaySelected && autoplayStreams.isNotEmpty() && canStartAutoplay() && homeServerReadyForAutoplay && (
                         cacheHit ||
                             progressive.isFinal ||
                             hasCachedReadyStream ||
@@ -1277,7 +1304,7 @@ class PlayerViewModel @Inject constructor(
                             "autoplayNow streams=${mergedStreams.size} completed=$completed/$total final=${progressive.isFinal} " +
                                 "cached=$hasCachedReadyStream preferred=$hasRequestedPreferredStream top=${autoplayTopStream?.let { streamDiag(it) } ?: "none"}"
                         )
-                        autoplayTopStream?.let { selectStream(it) } ?: autoplaySelectBest(mergedStreams, preferredLanguage)
+                        autoplaySelectBest(autoplayStreams, preferredLanguage)
                     }
                 }
 
@@ -2132,7 +2159,11 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun autoplaySelectBest(streams: List<StreamSource>, preferredLanguage: String) {
-        val healthyStreams = sortStreamsByQualityAndSize(streams, preferredLanguage)
+        if (!canStartAutoplay()) return
+        val healthyStreams = sortStreamsByQualityAndSize(
+            eligiblePlayerAutoplayStreams(streams, autoPlayMinimumQuality), preferredLanguage
+        )
+        if (healthyStreams.isEmpty()) return
         val hasExplicitPreferred =
             !currentPreferredBingeGroup.isNullOrBlank() ||
                 !currentPreferredAddonId.isNullOrBlank() ||
@@ -2220,9 +2251,9 @@ class PlayerViewModel @Inject constructor(
     ): List<StreamSource> {
         return streams.sortedWith(
             compareBy<StreamSource> { streamRepository.getPlaybackHostHealthPenalty(it) }
-                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
-                .thenByDescending { qualityScore(it.quality) }
+                .thenByDescending { qualityScoreForAutoPlay(it) }
                 .thenByDescending { parseSize(it.size) }
+                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
                 .thenByDescending { playbackPriorityScore(it) }
                 .thenByDescending { if (it.behaviorHints?.cached == true) 1 else 0 }
                 .thenByDescending { streamLanguageScore(it, preferredLanguage) }
@@ -4882,6 +4913,9 @@ class PlayerViewModel @Inject constructor(
     private var primaryStreamResolutionFinal: Boolean = false
     private var lastTopPrewarmKey: String = ""
 
+    private fun canStartAutoplay(): Boolean = _uiState.value.selectedStream == null &&
+        _uiState.value.selectedStreamUrl.isNullOrBlank() && streamSelectionJob?.isActive != true
+
     private fun sourceLookupStillActive(currentJob: Job? = null): Boolean {
         val supplementalStillLoading =
             (homeServerAppendJob != null && homeServerAppendJob !== currentJob && homeServerAppendJob?.isActive == true) ||
@@ -4898,7 +4932,10 @@ class PlayerViewModel @Inject constructor(
                 isLoadingStreams = false,
                 sourceSearchActive = stillActive,
                 streamProgress = null,
-                streamLoadPhase = null
+                streamLoadPhase = null,
+                error = if (!stillActive && canStartAutoplay() &&
+                    eligiblePlayerAutoplayStreams(state.streams, autoPlayMinimumQuality).isEmpty()
+                ) PlayerMessage.Res(R.string.stream_no_sources_match) else state.error
             )
             return
         }
@@ -4967,14 +5004,15 @@ class PlayerViewModel @Inject constructor(
             streams = sortedStreams,
             isLoadingStreams = false,
             sourceSearchActive = sourceLookupStillActive(currentJob),
-            error = null,
+            error = _uiState.value.error.takeUnless { canStartAutoplay() },
             isSetupError = false,
             streamProgress = null,
             streamLoadPhase = null
         )
         prewarmTopStreams(sortedStreams, preferredLanguage)
         if (shouldAutoplayHomeServer) {
-            pickPreferredStream(sortedStreams, preferredLanguage)?.let { selectStream(it) }
+            autoplaySelectBest(sortedStreams, preferredLanguage)
+            finishSupplementalSourceLookupIfReady(currentJob, PlayerMessage.Res(R.string.player_error_no_streams_media_servers))
         }
     }
 
@@ -5029,14 +5067,15 @@ class PlayerViewModel @Inject constructor(
             streams = sortedStreams,
             isLoadingStreams = false,
             sourceSearchActive = sourceLookupStillActive(currentJob),
-            error = null,
+            error = _uiState.value.error.takeUnless { canStartAutoplay() },
             isSetupError = false,
             streamProgress = null,
             streamLoadPhase = null
         )
         prewarmTopStreams(sortedStreams, preferredLanguage)
         if (shouldAutoplayVod) {
-            pickPreferredStream(sortedStreams, preferredLanguage)?.let { selectStream(it) }
+            autoplaySelectBest(sortedStreams, preferredLanguage)
+            finishSupplementalSourceLookupIfReady(currentJob, PlayerMessage.Res(R.string.player_error_no_streams_other_source))
         }
     }
 

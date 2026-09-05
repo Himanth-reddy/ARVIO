@@ -4,7 +4,6 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusable
@@ -33,6 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -85,6 +88,7 @@ fun ChannelRow(
     variantCount: Int = 1,
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
+    displayQuality: Quality = channel.quality,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -122,10 +126,20 @@ fun ChannelRow(
                 focused = it.hasFocus
                 if (it.hasFocus) onFocused()
             }
-            .border(
-                width = animatedBorderWidth,
-                color = if (visuallyFocused) LiveColors.FocusRing else Color.Transparent,
-            )
+            .drawWithContent {
+                drawContent()
+                // Read animation state in drawing, not composition: channel
+                // text and logo layout should not rebuild for each border frame.
+                val stroke = animatedBorderWidth.toPx()
+                if (visuallyFocused && stroke > 0f) {
+                    drawRect(
+                        color = LiveColors.FocusRing,
+                        topLeft = Offset(stroke / 2f, stroke / 2f),
+                        size = Size((size.width - stroke).coerceAtLeast(0f), (size.height - stroke).coerceAtLeast(0f)),
+                        style = Stroke(stroke),
+                    )
+                }
+            }
             .background(if (visuallyFocused) LiveColors.PanelRaised else bg)
             .focusable()
             // Long-press / MENU opens the channel menu. This has to live in the PREVIEW
@@ -164,7 +178,7 @@ fun ChannelRow(
                     return@onPreviewKeyEvent true
                 }
                 if (ev.key == Key.Menu) {
-                    if (ev.type == KeyEventType.KeyDown) onLongPress(true)
+                    if (ev.type == KeyEventType.KeyDown) onLongPress(false)
                     return@onPreviewKeyEvent true
                 }
                 if (ev.type == KeyEventType.KeyDown) {
@@ -266,7 +280,11 @@ fun ChannelRow(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             horizontalAlignment = Alignment.End,
         ) {
-            SmallPillBadge(if (variantCount > 1) stringResource(R.string.live_label_quality_variants, channel.quality.label, variantCount) else channel.quality.label)
+            if (displayQuality != Quality.UNKNOWN) {
+                SmallPillBadge(if (variantCount > 1) stringResource(R.string.live_label_quality_variants, displayQuality.label, variantCount) else displayQuality.label)
+            } else if (variantCount > 1) {
+                SmallPillBadge(stringResource(R.string.live_label_sources, variantCount))
+            }
             SmallPillBadge(channel.lang)
         }
     }
