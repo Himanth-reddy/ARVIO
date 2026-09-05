@@ -160,6 +160,7 @@ import com.arflix.tv.ui.components.LoadingIndicator
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.ui.components.CardLayoutMode
+import com.arflix.tv.ui.components.DetailsTvHeroLayout
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.PersonModal
 import com.arflix.tv.ui.components.PosterCard
@@ -2084,16 +2085,12 @@ private fun DetailsContent(
         val isBrowsingRails = focusSectionForUi != null && focusSectionForUi != FocusSection.BUTTONS
 
         val shiftAmount = if (isCompactHeight) 135.dp else 175.dp
-        val heroOffsetY by animateDpAsState(
-            targetValue = if (isBrowsingRails) -shiftAmount else 0.dp,
+        val railExpansionProgress by animateFloatAsState(
+            targetValue = if (isBrowsingRails) 1f else 0f,
             animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-            label = "hero_offset_y"
+            label = "details_rail_expansion"
         )
-        val heroAlpha by animateFloatAsState(
-            targetValue = if (isBrowsingRails) 0.35f else 1f,
-            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-            label = "hero_alpha"
-        )
+        val heroAlpha = 1f - 0.65f * railExpansionProgress
 
         val minRestingRowHeight = if (hasPosterDetailRails) 226.dp else 210.dp
         val maxRestingRowHeight = if (hasPosterDetailRails) 246.dp else 226.dp
@@ -2107,386 +2104,385 @@ private fun DetailsContent(
         }
         val expandedRowHeight = restingRowHeight + shiftAmount
 
-        val contentRowHeight by animateDpAsState(
-            targetValue = if (isBrowsingRails) expandedRowHeight else restingRowHeight,
-            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-            label = "content_row_height"
-        )
         val contentRowBottomPadding = 0.dp
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .graphicsLayer {
-                    translationY = heroOffsetY.toPx()
-                    alpha = heroAlpha
-                }
-                .padding(
-                    top = heroTopPadding,
-                    start = heroStartPadding,
-                    end = heroEndPadding
-                )
+        DetailsTvHeroLayout(
+            restingRowsHeight = restingRowHeight,
+            expandedRowsHeight = expandedRowHeight,
+            expansionProgress = railExpansionProgress,
+            modifier = Modifier.fillMaxSize(),
         ) {
-            val showInCinema = remember(item.releaseDate, item.mediaType) {
-                isInCinema(item)
-            }
-            val inCinemaColor = Color(0xFF8AD5FF)
-            val logoHeight = if (isCompactHeight) 64.dp else 72.dp
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Column(
+                modifier = Modifier
+                    .graphicsLayer {
+                        alpha = heroAlpha
+                    }
+                    .padding(
+                        top = heroTopPadding,
+                        start = heroStartPadding,
+                        end = heroEndPadding
+                    )
             ) {
-                Box(
-                    modifier = Modifier.height(logoHeight),
-                    contentAlignment = Alignment.CenterStart
+                val showInCinema = remember(item.releaseDate, item.mediaType) {
+                    isInCinema(item)
+                }
+                val inCinemaColor = Color(0xFF8AD5FF)
+                val logoHeight = if (isCompactHeight) 64.dp else 72.dp
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Crossfade(
-                        targetState = logoUrl,
-                        animationSpec = tween(300, easing = FastOutSlowInEasing),
-                        label = "tv_logo_crossfade"
-                    ) { currentLogoUrl ->
-                        if (!currentLogoUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = currentLogoUrl,
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Fit,
-                                alignment = Alignment.CenterStart,
-                                modifier = Modifier
-                                    .height(logoHeight)
-                                    .width(320.dp)
-                            )
-                        } else {
+                    Box(
+                        modifier = Modifier.height(logoHeight),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Crossfade(
+                            targetState = logoUrl,
+                            animationSpec = tween(300, easing = FastOutSlowInEasing),
+                            label = "tv_logo_crossfade"
+                        ) { currentLogoUrl ->
+                            if (!currentLogoUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = currentLogoUrl,
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Fit,
+                                    alignment = Alignment.CenterStart,
+                                    modifier = Modifier
+                                        .height(logoHeight)
+                                        .width(320.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = item.title,
+                                    style = ArflixTypography.heroTitle.copy(
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+
+                    if (showInCinema) {
+                        Box(
+                            modifier = Modifier
+                                .background(inCinemaColor, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
                             Text(
-                                text = item.title,
-                                style = ArflixTypography.heroTitle.copy(
-                                    fontSize = 24.sp,
+                                text = stringResource(R.string.in_cinema),
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
                                 ),
-                                color = Color.White,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                color = Color.Black
                             )
                         }
                     }
                 }
 
-                if (showInCinema) {
-                    Box(
-                        modifier = Modifier
-                            .background(inCinemaColor, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.in_cinema),
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = Color.Black
-                        )
-                    }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val tvSeriesLabel = stringResource(R.string.details_label_tv_series)
+                val movieLabel = stringResource(R.string.movie)
+                val genreText = genres.take(2).map(::formatGenreName).joinToString(" / ").ifEmpty {
+                    if (item.mediaType == MediaType.TV) tvSeriesLabel else movieLabel
                 }
-            }
+                val displayDate = item.releaseDate?.takeIf { it.isNotEmpty() } ?: item.year
+                val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
+                val rating = imdbRatingFor(item)
+                val ratingValue = parseRatingValue(rating)
+                val hasRatingMetadata = ratingValue > 0f
+                val primaryNetworkLogo = item.primaryNetworkLogo?.takeIf { it.isNotBlank() }
+                val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
+                val hasBudgetMetadata = !budgetText.isNullOrBlank()
+                val hasSecondaryMetadata = primaryNetworkLogo != null ||
+                    hasRatingMetadata ||
+                    hasBudgetMetadata
+                val overviewMaxHeight = if (isCompactHeight) 58.dp else 68.dp
 
-            Spacer(modifier = Modifier.height(8.dp))
+                val separatorStyle = ArflixTypography.caption.copy(
+                    fontSize = 13.sp,
+                    shadow = textShadow
+                )
 
-            val tvSeriesLabel = stringResource(R.string.details_label_tv_series)
-            val movieLabel = stringResource(R.string.movie)
-            val genreText = genres.take(2).map(::formatGenreName).joinToString(" / ").ifEmpty {
-                if (item.mediaType == MediaType.TV) tvSeriesLabel else movieLabel
-            }
-            val displayDate = item.releaseDate?.takeIf { it.isNotEmpty() } ?: item.year
-            val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
-            val rating = imdbRatingFor(item)
-            val ratingValue = parseRatingValue(rating)
-            val hasRatingMetadata = ratingValue > 0f
-            val primaryNetworkLogo = item.primaryNetworkLogo?.takeIf { it.isNotBlank() }
-            val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
-            val hasBudgetMetadata = !budgetText.isNullOrBlank()
-            val hasSecondaryMetadata = primaryNetworkLogo != null ||
-                hasRatingMetadata ||
-                hasBudgetMetadata
-            val overviewMaxHeight = if (isCompactHeight) 58.dp else 68.dp
-
-            val separatorStyle = ArflixTypography.caption.copy(
-                fontSize = 13.sp,
-                shadow = textShadow
-            )
-
-            Column(
-                modifier = Modifier.width(420.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                Column(
+                    modifier = Modifier.width(420.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = genreText,
-                        style = ArflixTypography.caption.copy(
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            shadow = textShadow
-                        ),
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-
-                    if (displayDate.isNotEmpty()) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
-                        Text(
-                            text = displayDate,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White,
-                            maxLines = 1
-                        )
-                    }
-
-                    if (hasDuration) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
-                        Text(
-                            text = item.duration,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White,
-                            maxLines = 1
-                        )
-                    }
-
-                    item.contentRating?.let { contentRating ->
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
-                        Text(
-                            text = contentRating,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White,
-                            maxLines = 1
-                        )
-                    }
-                }
-
-                if (hasSecondaryMetadata) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (primaryNetworkLogo != null) {
-                            val networkLogoRequest = remember(primaryNetworkLogo, context) {
-                                ImageRequest.Builder(context)
-                                    .data(primaryNetworkLogo)
-                                    .bitmapConfig(Bitmap.Config.ARGB_8888)
-                                    .allowRgb565(false)
-                                    .build()
-                            }
-                            AsyncImage(
-                                model = networkLogoRequest,
-                                imageLoader = metadataLogoImageLoader,
-                                contentDescription = stringResource(R.string.details_cd_primary_provider),
-                                contentScale = ContentScale.Fit,
-                                alignment = Alignment.CenterStart,
-                                modifier = Modifier
-                                    .height(16.dp)
-                                    .width(52.dp)
-                            )
+                        Text(
+                            text = genreText,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                shadow = textShadow
+                            ),
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
 
-                            if (hasRatingMetadata || hasBudgetMetadata) {
-                                Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
-                            }
-                        }
-
-                        if (hasRatingMetadata) {
-                            DetailsImdbSvgRatingBadge(
-                                rating = rating,
-                                imageLoader = metadataLogoImageLoader,
-                                ratingFontSize = 13,
-                                logoWidth = 28.dp,
-                                logoHeight = 14.dp,
-                                textShadow = textShadow
-                            )
-
-                            if (hasBudgetMetadata) {
-                                Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
-                            }
-                        }
-
-                        if (hasBudgetMetadata) {
+                        if (displayDate.isNotEmpty()) {
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
                             Text(
-                                text = "${stringResource(R.string.budget)} $budgetText",
+                                text = displayDate,
                                 style = ArflixTypography.caption.copy(
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
                                     shadow = textShadow
                                 ),
-                                color = Color.White.copy(alpha = 0.74f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false)
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                        }
+
+                        if (hasDuration) {
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
+                            Text(
+                                text = item.duration,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                        }
+
+                        item.contentRating?.let { contentRating ->
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.6f))
+                            Text(
+                                text = contentRating,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White,
+                                maxLines = 1
                             )
                         }
                     }
-                }
 
-                if (externalRatings.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(7.dp))
-                    MdbExternalRatingsRow(
-                        ratings = externalRatings,
-                        centered = false,
-                        textShadow = textShadow
-                    )
-                }
-            }
+                    if (hasSecondaryMetadata) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (primaryNetworkLogo != null) {
+                                val networkLogoRequest = remember(primaryNetworkLogo, context) {
+                                    ImageRequest.Builder(context)
+                                        .data(primaryNetworkLogo)
+                                        .bitmapConfig(Bitmap.Config.ARGB_8888)
+                                        .allowRgb565(false)
+                                        .build()
+                                }
+                                AsyncImage(
+                                    model = networkLogoRequest,
+                                    imageLoader = metadataLogoImageLoader,
+                                    contentDescription = stringResource(R.string.details_cd_primary_provider),
+                                    contentScale = ContentScale.Fit,
+                                    alignment = Alignment.CenterStart,
+                                    modifier = Modifier
+                                        .height(16.dp)
+                                        .width(52.dp)
+                                )
 
-            Spacer(modifier = Modifier.height(10.dp))
+                                if (hasRatingMetadata || hasBudgetMetadata) {
+                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
+                                }
+                            }
 
-            val displayOverview = item.overview
+                            if (hasRatingMetadata) {
+                                DetailsImdbSvgRatingBadge(
+                                    rating = rating,
+                                    imageLoader = metadataLogoImageLoader,
+                                    ratingFontSize = 13,
+                                    logoWidth = 28.dp,
+                                    logoHeight = 14.dp,
+                                    textShadow = textShadow
+                                )
 
-            Box(
-                modifier = Modifier
-                    .width(420.dp)
-                    .heightIn(max = overviewMaxHeight)
-            ) {
-                Text(
-                    text = displayOverview,
-                    style = ArflixTypography.body.copy(
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Normal,
-                        lineHeight = 16.sp,
-                        shadow = textShadow
-                    ),
-                    color = Color.White.copy(alpha = 0.9f),
-                    maxLines = 4,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+                                if (hasBudgetMetadata) {
+                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
+                                }
+                            }
 
-            // Space before action buttons (flexible slot for future in-between items)
-            Spacer(modifier = Modifier.height(14.dp))
+                            if (hasBudgetMetadata) {
+                                Text(
+                                    text = "${stringResource(R.string.budget)} $budgetText",
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White.copy(alpha = 0.74f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+                        }
+                    }
 
-            val buttonWatched = if (item.mediaType == MediaType.TV) {
-                episodes.getOrNull(episodeIndex)?.isWatched ?: item.isWatched
-            } else {
-                item.isWatched
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val playButtonLabel = if (!playLabel.isNullOrBlank()) {
-                    playLabel
-                } else {
-                    stringResource(R.string.play)
-                }
-                Box(modifier = Modifier.clickable { onButtonClick(0) }) {
-                    PremiumActionButton(
-                        icon = Icons.Default.PlayArrow,
-                        text = playButtonLabel,
-                        isPrimary = true,
-                        isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 0
-                    )
-                }
-                Box(modifier = Modifier.clickable { onButtonClick(1) }) {
-                    PremiumActionButton(
-                        icon = Icons.Default.List,
-                        text = stringResource(R.string.sources),
-                        isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 1,
-                        isIconOnly = true
-                    )
-                }
-                Box(modifier = Modifier
-                    .clickable(enabled = hasTrailer) { onButtonClick(2) }
-                    .graphicsLayer { alpha = if (hasTrailer) 1f else 0.4f }
-                ) {
-                    PremiumActionButton(
-                        icon = Icons.Default.Movie,
-                        text = stringResource(R.string.trailer),
-                        isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 2,
-                        isIconOnly = true
-                    )
-                }
-                Box(modifier = Modifier.clickable { onButtonClick(3) }) {
-                    PremiumActionButton(
-                        icon = if (buttonWatched) Icons.Default.Check else Icons.Default.Visibility,
-                        text = if (buttonWatched) stringResource(R.string.watched) else stringResource(R.string.details_btn_mark_watched),
-                        isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 3,
-                        isActive = buttonWatched,
-                        isIconOnly = true
-                    )
-                }
-                Box(modifier = Modifier.clickable { onButtonClick(4) }) {
-                    PremiumActionButton(
-                        icon = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        text = stringResource(R.string.watchlist),
-                        isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 4,
-                        isIconOnly = true,
-                        isActive = isInWatchlist
-                    )
-                }
-
-                // "View Collection" button — only shown when this movie belongs to a TMDB collection
-                if (hasCollectionAction) {
-                    Box(modifier = Modifier.clickable { onButtonClick(5) }) {
-                        PremiumActionButton(
-                            icon = Icons.Default.Star,
-                            text = stringResource(R.string.view_collection),
-                            isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 5,
-                            isIconOnly = true
+                    if (externalRatings.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(7.dp))
+                        MdbExternalRatingsRow(
+                            ratings = externalRatings,
+                            centered = false,
+                            textShadow = textShadow
                         )
                     }
                 }
-            }
-        }
 
-        DetailsTvRows(
-            modifier = Modifier.align(Alignment.BottomStart),
-            item = item,
-            episodes = episodes,
-            totalSeasons = totalSeasons,
-            currentSeason = currentSeason,
-            cast = cast,
-            reviews = reviews,
-            similar = similar,
-            similarLogoUrls = similarLogoUrls,
-            collectionItems = collectionItems,
-            collectionName = collectionName,
-            collectionIndex = collectionIndex,
-            focusedSection = focusedSection,
-            focusSectionForUi = focusSectionForUi,
-            episodeIndex = episodeIndex,
-            ratingsIndex = ratingsIndex,
-            seasonIndex = seasonIndex,
-            castIndex = castIndex,
-            reviewIndex = reviewIndex,
-            similarIndex = similarIndex,
-            seasonProgress = seasonProgress,
-            usePosterCards = usePosterCards,
-            showEpisodeRatings = showEpisodeRatings,
-            spoilerBlurEnabled = spoilerBlurEnabled,
-            isSeasonLoading = isSeasonLoading,
-            contentRowHeight = contentRowHeight,
-            contentRowBottomPadding = contentRowBottomPadding,
-            configuration = configuration,
-            contentHasFocus = contentHasFocus,
-            onSeasonClick = onSeasonClick,
-            onEpisodeClick = onEpisodeClick,
-            onCastClick = onCastClick,
-            onSimilarClick = onSimilarClick,
-            onCollectionClick = onCollectionClick
-        )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                val displayOverview = item.overview
+
+                Box(
+                    modifier = Modifier
+                        .width(420.dp)
+                        .heightIn(max = overviewMaxHeight)
+                ) {
+                    Text(
+                        text = displayOverview,
+                        style = ArflixTypography.body.copy(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Normal,
+                            lineHeight = 16.sp,
+                            shadow = textShadow
+                        ),
+                        color = Color.White.copy(alpha = 0.9f),
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Space before action buttons (flexible slot for future in-between items)
+                Spacer(modifier = Modifier.height(14.dp))
+
+                val buttonWatched = if (item.mediaType == MediaType.TV) {
+                    episodes.getOrNull(episodeIndex)?.isWatched ?: item.isWatched
+                } else {
+                    item.isWatched
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val playButtonLabel = if (!playLabel.isNullOrBlank()) {
+                        playLabel
+                    } else {
+                        stringResource(R.string.play)
+                    }
+                    Box(modifier = Modifier.clickable { onButtonClick(0) }) {
+                        PremiumActionButton(
+                            icon = Icons.Default.PlayArrow,
+                            text = playButtonLabel,
+                            isPrimary = true,
+                            isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 0
+                        )
+                    }
+                    Box(modifier = Modifier.clickable { onButtonClick(1) }) {
+                        PremiumActionButton(
+                            icon = Icons.Default.List,
+                            text = stringResource(R.string.sources),
+                            isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 1,
+                            isIconOnly = true
+                        )
+                    }
+                    Box(modifier = Modifier
+                        .clickable(enabled = hasTrailer) { onButtonClick(2) }
+                        .graphicsLayer { alpha = if (hasTrailer) 1f else 0.4f }
+                    ) {
+                        PremiumActionButton(
+                            icon = Icons.Default.Movie,
+                            text = stringResource(R.string.trailer),
+                            isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 2,
+                            isIconOnly = true
+                        )
+                    }
+                    Box(modifier = Modifier.clickable { onButtonClick(3) }) {
+                        PremiumActionButton(
+                            icon = if (buttonWatched) Icons.Default.Check else Icons.Default.Visibility,
+                            text = if (buttonWatched) stringResource(R.string.watched) else stringResource(R.string.details_btn_mark_watched),
+                            isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 3,
+                            isActive = buttonWatched,
+                            isIconOnly = true
+                        )
+                    }
+                    Box(modifier = Modifier.clickable { onButtonClick(4) }) {
+                        PremiumActionButton(
+                            icon = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            text = stringResource(R.string.watchlist),
+                            isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 4,
+                            isIconOnly = true,
+                            isActive = isInWatchlist
+                        )
+                    }
+
+                    // "View Collection" button — only shown when this movie belongs to a TMDB collection
+                    if (hasCollectionAction) {
+                        Box(modifier = Modifier.clickable { onButtonClick(5) }) {
+                            PremiumActionButton(
+                                icon = Icons.Default.Star,
+                                text = stringResource(R.string.view_collection),
+                                isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 5,
+                                isIconOnly = true
+                            )
+                        }
+                    }
+                }
+            }
+
+            DetailsTvRows(
+                modifier = Modifier,
+                item = item,
+                episodes = episodes,
+                totalSeasons = totalSeasons,
+                currentSeason = currentSeason,
+                cast = cast,
+                reviews = reviews,
+                similar = similar,
+                similarLogoUrls = similarLogoUrls,
+                collectionItems = collectionItems,
+                collectionName = collectionName,
+                collectionIndex = collectionIndex,
+                focusedSection = focusedSection,
+                focusSectionForUi = focusSectionForUi,
+                episodeIndex = episodeIndex,
+                ratingsIndex = ratingsIndex,
+                seasonIndex = seasonIndex,
+                castIndex = castIndex,
+                reviewIndex = reviewIndex,
+                similarIndex = similarIndex,
+                seasonProgress = seasonProgress,
+                usePosterCards = usePosterCards,
+                showEpisodeRatings = showEpisodeRatings,
+                spoilerBlurEnabled = spoilerBlurEnabled,
+                isSeasonLoading = isSeasonLoading,
+                contentRowBottomPadding = contentRowBottomPadding,
+                configuration = configuration,
+                contentHasFocus = contentHasFocus,
+                onSeasonClick = onSeasonClick,
+                onEpisodeClick = onEpisodeClick,
+                onCastClick = onCastClick,
+                onSimilarClick = onSimilarClick,
+                onCollectionClick = onCollectionClick
+            )
+        }
     }
 }
 
@@ -2517,7 +2513,6 @@ private fun DetailsTvRows(
     showEpisodeRatings: Boolean,
     spoilerBlurEnabled: Boolean,
     isSeasonLoading: Boolean = false,
-    contentRowHeight: Dp,
     contentRowBottomPadding: Dp,
     configuration: android.content.res.Configuration,
     contentHasFocus: Boolean,
@@ -2623,7 +2618,6 @@ private fun DetailsTvRows(
         state = contentScrollState,
         modifier = modifier
             .fillMaxWidth()
-            .height(contentRowHeight)
             .padding(start = 24.dp, bottom = contentRowBottomPadding)
             .arvioManualBringIntoViewBoundary()
             .arvioDpadFocusGroup(enableFocusRestorer = false)
