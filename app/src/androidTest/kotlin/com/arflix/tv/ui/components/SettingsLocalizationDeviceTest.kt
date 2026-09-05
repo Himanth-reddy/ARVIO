@@ -17,6 +17,8 @@ import com.arflix.tv.ui.screens.tv.live.FullscreenHud
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.localizedAppContext
+import java.util.Locale
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -26,6 +28,11 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 class SettingsLocalizationDeviceTest(private val language: String) {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    private val originalLocale = Locale.getDefault()
+
+    @After fun restoreLocale() {
+        Locale.setDefault(originalLocale)
+    }
 
     companion object {
         @JvmStatic
