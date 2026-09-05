@@ -18,9 +18,9 @@ class PortugueseLocalizationDeviceTest {
         assertEquals("Salvar lista", context.getString(R.string.settings_save_playlist))
     }
 
-    @Test fun genericPortugueseHasTranslatedFallback() = preservingLocale {
-        val context = localizedAppContext(InstrumentationRegistry.getInstrumentation().targetContext, "pt-AO")
-        assertEquals("Configura\u00e7\u00f5es", context.getString(R.string.settings))
+    @Test fun europeanPortugueseKeepsRegionalWordingAndUsesFallback() = preservingLocale {
+        val context = localizedAppContext(InstrumentationRegistry.getInstrumentation().targetContext, "pt-PT")
+        assertEquals("Defini\u00e7\u00f5es", context.getString(R.string.settings))
         assertEquals("Salvar portal", context.getString(R.string.settings_save_portal))
     }
 
