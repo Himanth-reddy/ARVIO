@@ -11310,7 +11310,7 @@ val TMDB_LANGUAGES = listOf(
     "fa-IR" to "Persian (Farsi)",
     "pl-PL" to "Polish (Polski)",
     "pt-PT" to "Portuguese (Portugues)",
-    "pt-BR" to "Portuguese - Brazil",
+    "pt-BR" to "Português (Brasil)",
     "pa-IN" to "Punjabi",
     "ro-RO" to "Romanian (Romana)",
     "ru-RU" to "Russian",
