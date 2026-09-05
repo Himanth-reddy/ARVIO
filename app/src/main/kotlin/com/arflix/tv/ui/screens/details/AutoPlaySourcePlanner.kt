@@ -138,5 +138,8 @@ internal fun shouldWaitForAutoPlaySources(
 ): Boolean {
     if (elapsedMs >= AUTOPLAY_MAX_WAIT_MS) return false
     if (selectedStream == null) return isLoadingStreams
-    return elapsedMs < AUTOPLAY_TOP_TIER_SETTLE_MS && isLoadingStreams
+    if (qualityScoreForAutoPlay(selectedStream) >= TOP_TIER_QUALITY_SCORE) {
+        return elapsedMs < AUTOPLAY_TOP_TIER_SETTLE_MS
+    }
+    return isLoadingStreams
 }
