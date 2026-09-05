@@ -4,6 +4,7 @@ package com.arflix.tv.ui.screens.player
 
 import com.arflix.tv.ui.screens.player.mobile.ArvioMobilePlayer
 import com.arflix.tv.ui.screens.player.mobile.MobileIconButton
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -3490,94 +3491,16 @@ fun PlayerScreen(
             )
         }
 
-        // Loading screen overlay - keep visible until player is fully started.
-        if (!isTouchDevice && (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(50f),
-                contentAlignment = Alignment.Center
-            ) {
-                if (uiState.backdropUrl != null) {
-                    AsyncImage(
-                        model = uiState.backdropUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.7f))
-                    )
-                }
-
-                if (isTouchDevice) {
-                    val layoutDirection = LocalLayoutDirection.current
-                    val systemBarsInsets = WindowInsets.systemBars.asPaddingValues()
-                    val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
-
-                    val startInset = maxOf(
-                        systemBarsInsets.calculateStartPadding(layoutDirection),
-                        cutoutInsets.calculateStartPadding(layoutDirection)
-                    )
-                    val endInset = maxOf(
-                        systemBarsInsets.calculateEndPadding(layoutDirection),
-                        cutoutInsets.calculateEndPadding(layoutDirection)
-                    )
-                    val maxHorizontalPadding = maxOf(startInset, endInset, 24.dp)
-                    val topSafePadding = maxOf(
-                        systemBarsInsets.calculateTopPadding() + 8.dp,
-                        cutoutInsets.calculateTopPadding() + 12.dp,
-                        16.dp
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(
-                                top = topSafePadding,
-                                start = maxHorizontalPadding
-                            )
-                            .zIndex(52f)
-                    ) {
-                        MobileIconButton(
-                            icon = Icons.Default.Close,
-                            contentDescription = "Close",
-                            onClick = onExitPlayer
-                        )
-                    }
-                }
-
-                PulsingLogo(
-                    logoUrl = uiState.logoUrl,
-                    title = uiState.title,
-                    progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
-                    isTouchDevice = isTouchDevice,
-                    // streamLoadPhase covers source discovery; startupPhase takes over from
-                    // stream selection ("Loading subtitles…"/"Loading video stream…") until the
-                    // first frame renders; switchNotice overlays both for 2.5s on failover.
-                    // Unlike the percentage ring, the phase text is not gated on
-                    // showLoadingStats — status feedback should always be visible.
-                    phaseLabel = switchNotice
-                        ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
-                            ?.let { phaseRes ->
-                                // Name the addons still being queried so a chronically slow one
-                                // identifies itself to the user ("Loading subtitles… (bla)").
-                                val pending = uiState.pendingSubtitleAddons
-                                if (phaseRes == R.string.player_phase_loading_subtitles && pending.isNotEmpty()) {
-                                    val shown = pending.take(2).joinToString(", ")
-                                    val more = pending.size - 2
-                                    stringResource(
-                                        R.string.player_phase_loading_subtitles_detail,
-                                        "$shown${if (more > 0) " +$more" else ""}"
-                                    )
-                                } else stringResource(phaseRes)
-                            }
-                        ?: uiState.streamLoadPhase?.localizedText()
-                )
-            }
-        }
+        PlayerLoadingOverlay(
+            uiState = uiState,
+            hasPlaybackStarted = hasPlaybackStarted,
+            isTouchDevice = isTouchDevice,
+            isInPipMode = isInPipMode,
+            showSourceMenu = showSourceMenu,
+            onExitPlayer = onExitPlayer,
+            startupPhase = startupPhase,
+            switchNotice = switchNotice
+        )
 
         // Buffering indicator - only show after playback has started (mid-stream buffering)
         // Initial buffering is handled by the main loading screen above
@@ -4887,6 +4810,109 @@ fun PlayerScreen(
             )
         }
     }
+    }
+}
+
+@Composable
+internal fun PlayerLoadingOverlay(
+    uiState: PlayerUiState,
+    hasPlaybackStarted: Boolean,
+    isTouchDevice: Boolean,
+    isInPipMode: Boolean,
+    showSourceMenu: Boolean,
+    onExitPlayer: () -> Unit,
+    startupPhase: Int? = null,
+    switchNotice: String? = null
+) {
+    if (!isInPipMode && !showSourceMenu && uiState.error == null &&
+        (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("playerLoadingOverlay")
+                .zIndex(50f),
+            contentAlignment = Alignment.Center
+        ) {
+            if (uiState.backdropUrl != null) {
+                AsyncImage(
+                    model = uiState.backdropUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.7f))
+                )
+            }
+
+            if (isTouchDevice) {
+                val layoutDirection = LocalLayoutDirection.current
+                val systemBarsInsets = WindowInsets.systemBars.asPaddingValues()
+                val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+
+                val startInset = maxOf(
+                    systemBarsInsets.calculateStartPadding(layoutDirection),
+                    cutoutInsets.calculateStartPadding(layoutDirection)
+                )
+                val endInset = maxOf(
+                    systemBarsInsets.calculateEndPadding(layoutDirection),
+                    cutoutInsets.calculateEndPadding(layoutDirection)
+                )
+                val maxHorizontalPadding = maxOf(startInset, endInset, 24.dp)
+                val topSafePadding = maxOf(
+                    systemBarsInsets.calculateTopPadding() + 8.dp,
+                    cutoutInsets.calculateTopPadding() + 12.dp,
+                    16.dp
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(
+                            top = topSafePadding,
+                            start = maxHorizontalPadding
+                        )
+                        .zIndex(52f)
+                ) {
+                    MobileIconButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.close),
+                        onClick = onExitPlayer
+                    )
+                }
+            }
+
+            PulsingLogo(
+                logoUrl = uiState.logoUrl,
+                title = uiState.title,
+                progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
+                isTouchDevice = isTouchDevice,
+                // streamLoadPhase covers source discovery; startupPhase takes over from
+                // stream selection ("Loading subtitles…"/"Loading video stream…") until the
+                // first frame renders; switchNotice overlays both for 2.5s on failover.
+                // Unlike the percentage ring, the phase text is not gated on
+                // showLoadingStats — status feedback should always be visible.
+                phaseLabel = switchNotice
+                    ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
+                        ?.let { phaseRes ->
+                            // Name the addons still being queried so a chronically slow one
+                            // identifies itself to the user ("Loading subtitles… (bla)").
+                            val pending = uiState.pendingSubtitleAddons
+                            if (phaseRes == R.string.player_phase_loading_subtitles && pending.isNotEmpty()) {
+                                val shown = pending.take(2).joinToString(", ")
+                                val more = pending.size - 2
+                                stringResource(
+                                    R.string.player_phase_loading_subtitles_detail,
+                                    "$shown${if (more > 0) " +$more" else ""}"
+                                )
+                            } else stringResource(phaseRes)
+                        }
+                    ?: uiState.streamLoadPhase?.localizedText()
+            )
+        }
     }
 }
 

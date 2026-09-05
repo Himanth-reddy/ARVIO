@@ -17,6 +17,7 @@ import com.arflix.tv.ui.components.catalogueRowLayoutPreferencePrefixFor
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
 import com.arflix.tv.ui.components.profileCatalogueRowLayoutModeKey
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.IPTV_FAVORITES_ON_HOME
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.ACCENT_COLOR_KEY
@@ -619,7 +620,7 @@ class CloudSyncRepository @Inject constructor(
                     CloudProfileSettings(
                         defaultSubtitle = prefs[defaultSubtitleKeyFor(profile.id)] ?: "Off",
                         defaultAudioLanguage = prefs[defaultAudioLanguageKeyFor(profile.id)] ?: "Auto (Original)",
-                        contentLanguage = prefs[contentLanguageKeyFor(profile.id)] ?: "en-US",
+                        contentLanguage = resolveAppLanguage(prefs, profile.id),
 
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: false,
                         trailerSoundEnabled = prefs[trailerSoundEnabledKeyFor(profile.id)] ?: false,

@@ -45,7 +45,7 @@ import com.arflix.tv.data.repository.sync.TrackingFeature
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.DeviceType
-import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.detectDeviceType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -1179,9 +1179,7 @@ class HomeViewModel @Inject constructor(
     private suspend fun applyContentLanguageFromPrefs(): String {
         val prefs = context.settingsDataStore.data.first()
         val profileId = profileManager.getProfileId()
-        val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
-        val language = prefs[profileManager.profileStringKeyFor(profileId, "content_language")]
-            ?: fallbackLanguage
+        val language = resolveAppLanguage(prefs, profileId)
         mediaRepository.contentLanguage = language
         return language
     }
