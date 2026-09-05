@@ -49,13 +49,12 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import com.arflix.tv.R
+import com.arflix.tv.navigation.Screen
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
-
-import com.arflix.tv.navigation.Screen
 
 internal enum class AppBottomBarMode {
     STANDARD,

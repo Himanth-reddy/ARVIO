@@ -116,4 +116,24 @@ class AppBottomBarResponsiveLayoutTest {
 
         assertThat(showBar).isFalse()
     }
+
+    @Test
+    fun unresolvedDestinationHidesBottomBar() {
+        assertThat(shouldShowBottomBar(true, null, false)).isFalse()
+    }
+
+    @Test
+    fun settingsDestinationPatternShowsBottomBar() {
+        assertThat(shouldShowBottomBar(
+            true,
+            "settings?autoCloudAuth={autoCloudAuth}&initialSection={initialSection}&installPackUrl={installPackUrl}",
+            false
+        )).isTrue()
+    }
+
+    @Test
+    fun liveTvGuideShowsBarButFullscreenPlaybackHidesIt() {
+        assertThat(shouldShowBottomBar(true, "tv", false)).isTrue()
+        assertThat(shouldShowBottomBar(true, "tv", true)).isFalse()
+    }
 }
