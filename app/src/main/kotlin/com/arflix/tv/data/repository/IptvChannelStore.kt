@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.arflix.tv.data.model.DrmInfo
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.data.model.PlaylistGroupKey
 import com.google.gson.Gson
 
 /**
@@ -231,7 +232,8 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         playlistId: String?,
         groupTitle: String?,
         offset: Int,
-        limit: Int
+        limit: Int,
+        excludedGroups: Set<String> = emptySet(),
     ): List<IptvChannel> {
         if (sourceKey.isBlank()) return emptyList()
         fun query(normalizedGroup: Boolean): List<IptvChannel> {
@@ -245,6 +247,9 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
                 if (byGroup) {
                     if (normalizedGroup) append(" AND trim(group_title) = ?") else append(" AND group_title = ?")
                 }
+                excludedGroups.forEach { _ ->
+                    append(" AND NOT (trim(group_title) = ? AND (id LIKE ? OR id LIKE ?))")
+                }
                 append(" ORDER BY ord")
                 if (limit >= 0) append(" LIMIT ").append(limit).append(" OFFSET ").append(offset.coerceAtLeast(0))
             }
@@ -255,6 +260,12 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
                     add("stalker:${playlistId}:%")
                 }
                 if (byGroup) add(if (normalizedGroup) groupTitle!!.trim() else groupTitle!!)
+                excludedGroups.forEach { rawKey ->
+                    val key = PlaylistGroupKey(rawKey)
+                    add(key.groupName.trim())
+                    add("${key.playlistId}:%")
+                    add("stalker:${key.playlistId}:%")
+                }
             }.toTypedArray()
             return readableDatabase.rawQuery(sql, args).use { cursor ->
                 val out = ArrayList<IptvChannel>(if (limit in 1..100_000) limit else cursor.count)

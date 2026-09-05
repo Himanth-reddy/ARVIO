@@ -177,6 +177,7 @@ class TvViewModel @Inject constructor(
     private val currentChannelEpgRefreshAt = LinkedHashMap<String, Long>()
     private val epgNetworkRefreshLock = Any()
     private val epgNetworkRefreshInFlight = LinkedHashSet<String>()
+    private val epgNetworkAttemptAt = LinkedHashMap<String, Long>()
 
     private data class VisibleEpgDrain(
         val ids: List<String>,
@@ -207,10 +208,12 @@ class TvViewModel @Inject constructor(
         observeEpgVodActionsPreference()
         viewModelScope.launch {
             try {
-                runCatching { iptvRepository.warmupFromCacheOnly() }
-                // Try fast non-blocking in-memory read first; fall back to mutex-guarded disk read
                 val cached = iptvRepository.getMemoryCachedSnapshot()
-                    ?: iptvRepository.getCachedSnapshotOrNull()
+                    ?: iptvRepository.getPagedStartupSnapshotOrNull()
+                    ?: run {
+                        runCatching { iptvRepository.warmupFromCacheOnly() }
+                        iptvRepository.getMemoryCachedSnapshot() ?: iptvRepository.getCachedSnapshotOrNull()
+                    }
                 if (cached != null) {
                 val config = iptvRepository.observeConfig().first()
                 // The observeConfigAndFavorites() coroutine may have already read fresh
@@ -520,7 +523,8 @@ class TvViewModel @Inject constructor(
                         System.err.println(
                             "[TV] Keeping last known IPTV snapshot after refresh failure: ${error.message.orEmpty()}"
                         )
-                        pendingForcedReload = true
+                        // Retain the usable cache; a failed refresh must not recursively
+                        // start another forced download in invokeOnCompletion below.
                         _uiState.value = currentState.copy(
                             isLoading = false,
                             error = error.message ?: context.getString(R.string.tv_failed_load_iptv),
@@ -869,11 +873,19 @@ class TvViewModel @Inject constructor(
             return emptySet()
         }
         return synchronized(epgNetworkRefreshLock) {
+            val now = System.currentTimeMillis()
             channelIds
                 .asSequence()
                 .filter { it.isNotBlank() }
+                .filter { now - (epgNetworkAttemptAt[it] ?: 0L) >= 120_000L }
                 .filter { epgNetworkRefreshInFlight.add(it) }
+                .onEach { epgNetworkAttemptAt[it] = now }
                 .toSet()
+                .also {
+                    while (epgNetworkAttemptAt.size > 2_000) {
+                        epgNetworkAttemptAt.remove(epgNetworkAttemptAt.keys.first())
+                    }
+                }
         }
     }
 

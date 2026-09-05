@@ -615,7 +615,8 @@ class IptvRepository @Inject constructor(
     private val startupShortEpgChannelLimit = 1200
     private val fullCatchupHistoryChannelLimit = 4
     private val xtreamShortEpgBatchSize = 1024
-    private val xtreamShortEpgConcurrency = 64
+    private val xtreamShortEpgConcurrency = 2
+    private val guideRequestBudget = IptvGuideRequestBudget()
 
     // Per-channel `get_short_epg` fallback (portals whose bulk EPG actions return
     // nothing, e.g. get_simple_data_table/get_epg_info both empty - confirmed
@@ -2803,7 +2804,25 @@ class IptvRepository @Inject constructor(
      * fall back to disk — it only reads volatile in-memory fields.
      * Use this when you need a fast, contention-free read (e.g., on navigation).
      */
+    suspend fun getPagedStartupSnapshotOrNull(): IptvSnapshot? = withContext(Dispatchers.IO) {
+        val config = observeConfig().first()
+        val key = epgIndexKey(profileManager.getProfileIdSync(), config)
+        // Never read another profile's active store while ownership is changing.
+        if (key != currentEpgIndexKey) return@withContext null
+        val channels = channelStore.window(key, 0, 240)
+        if (channels.isEmpty()) return@withContext null
+        IptvSnapshot(
+            channels = channels, grouped = buildGroupedChannels(channels),
+            favoriteChannels = observeFavoriteChannels().first(),
+            favoriteGroups = observeFavoriteGroups().first(),
+            hiddenGroups = observeHiddenGroups().first(),
+            groupOrder = observeGroupOrder().first(), sortOrder = config.sortOrder,
+            loadedAt = Instant.ofEpochMilli(channelStore.updatedAtMs(key)),
+        )
+    }
+
     suspend fun getMemoryCachedSnapshot(): IptvSnapshot? {
+        if (cacheOwnerProfileId != profileManager.getProfileIdSync()) return null
         val channels = cachedChannels
         if (channels.isEmpty()) return null
         val favoriteGroups = observeFavoriteGroups().first()
@@ -2949,8 +2968,8 @@ class IptvRepository @Inject constructor(
     fun pagedChannelCount(playlistId: String?, groupTitle: String?): Int =
         runCatching { channelStore.countForPlaylistGroup(currentEpgIndexKey, playlistId, groupTitle) }.getOrDefault(0)
 
-    fun pagedChannelWindow(playlistId: String?, groupTitle: String?, offset: Int, limit: Int): List<IptvChannel> =
-        runCatching { channelStore.windowForPlaylistGroup(currentEpgIndexKey, playlistId, groupTitle, offset, limit) }.getOrDefault(emptyList())
+    fun pagedChannelWindow(playlistId: String?, groupTitle: String?, offset: Int, limit: Int, excludedGroups: Set<String> = emptySet()): List<IptvChannel> =
+        runCatching { channelStore.windowForPlaylistGroup(currentEpgIndexKey, playlistId, groupTitle, offset, limit, excludedGroups) }.getOrDefault(emptyList())
 
     /**
      * Number of channels in the paged store.
@@ -6482,6 +6501,17 @@ class IptvRepository @Inject constructor(
         url: String,
         type: Type,
         client: OkHttpClient = iptvHttpClient
+    ): T? = if (client === xtreamGuideHttpClient || client === xtreamCatchupGuideHttpClient) {
+        guideRequestBudget.request(url) { requestJsonUnbudgeted<T>(url, type, client, guideRequest = true) }
+    } else {
+        requestJsonUnbudgeted(url, type, client)
+    }
+
+    private suspend fun <T> requestJsonUnbudgeted(
+        url: String,
+        type: Type,
+        client: OkHttpClient,
+        guideRequest: Boolean = false,
     ): T? = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder()
             .url(url)
@@ -6507,6 +6537,9 @@ class IptvRepository @Inject constructor(
                     return
                 }
                 response.use {
+                    if (guideRequest) {
+                        guideRequestBudget.onResponse(url, it.code, it.header("Retry-After")?.toLongOrNull())
+                    }
                     if (!it.isSuccessful) {
                         continuation.resume(null)
                         return
@@ -7336,10 +7369,7 @@ class IptvRepository @Inject constructor(
         allowUnboundedFallback: Boolean = true,
         onStreamProcessed: (Int, Boolean) -> Unit = { _, _ -> }
     ): List<XtreamEpgListing> {
-        // Concurrency bumped 20 → 32 so a 25k-channel sweep finishes inside
-        // the enlarged 180s budget. Providers typically tolerate this; any
-        // over-limit request simply fails and the fallback per-channel call
-        // handles it silently.
+        // The repository-wide budget also covers overlapping viewport and catch-up requests.
         val distinctStreamIds = streamIds.distinct()
         if (distinctStreamIds.isEmpty()) return emptyList()
         val gate = Semaphore(xtreamShortEpgConcurrency)
@@ -7363,7 +7393,7 @@ class IptvRepository @Inject constructor(
                                         client = xtreamGuideHttpClient
                                     )
                                     listings = resp?.epgListings
-                                    if (listings.isNullOrEmpty() && allowUnboundedFallback) {
+                                    if (resp != null && listings.isNullOrEmpty() && allowUnboundedFallback) {
                                         val fallbackUrl = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
                                             "&password=${creds.password}&action=get_short_epg&stream_id=$sid"
                                         resp = requestJson(
@@ -7373,7 +7403,7 @@ class IptvRepository @Inject constructor(
                                         )
                                         listings = resp?.epgListings
                                     }
-                                    if (listings.isNullOrEmpty() && allowUnboundedFallback) {
+                                    if (resp != null && listings.isNullOrEmpty() && allowUnboundedFallback) {
                                         val simpleUrl = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
                                             "&password=${creds.password}&action=get_simple_data_table&stream_id=$sid"
                                         val simpleResp: JsonObject? = requestJson(
@@ -7397,7 +7427,10 @@ class IptvRepository @Inject constructor(
                                             System.err.println("[EPG] Sample response for stream_id=$sid: channelId=${sample.channelId} epgId=${sample.epgId} streamId=${sample.streamId} start=${sample.start} startTs=${sample.startTimestamp} title=${sample.title?.take(40)}")
                                         }
                                     }
-                                } catch (_: Exception) { hadError = true }
+                                } catch (error: Exception) {
+                                    if (error is kotlinx.coroutines.CancellationException) throw error
+                                    hadError = true
+                                }
                                 onStreamProcessed(sid, hadError)
                             }
                         }
@@ -7453,7 +7486,8 @@ class IptvRepository @Inject constructor(
                                 if (listings.isNotEmpty()) {
                                     listingsResult.addAll(listings)
                                 }
-                            } catch (_: Exception) {
+                            } catch (error: Exception) {
+                                if (error is kotlinx.coroutines.CancellationException) throw error
                                 hadError = true
                             }
                             onStreamProcessed(sid, hadError)

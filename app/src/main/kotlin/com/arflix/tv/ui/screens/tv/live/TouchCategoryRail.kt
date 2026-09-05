@@ -186,7 +186,7 @@ private fun rememberTouchRailItems(
     }.distinctBy { it.id }.toMutableList()
 
     val selected = tree.byId(selectedId)
-    if (selected != null && base.none { it.id == selectedId }) {
+    if (selected != null && tree.hidden.categories.none { it.id == selectedId } && base.none { it.id == selectedId }) {
         base.add(0, TouchCategoryRailItem(selected.id, liveCategoryLabel(selected.label), selected.count))
     }
 

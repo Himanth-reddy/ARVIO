@@ -53,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -241,7 +242,6 @@ fun CategorySidebar(
             }
             appendSection("top", tree.top)
             appendSection("global", tree.global.categories)
-            appendSection("hidden", tree.hidden.categories)
             appendSection("countries", tree.countries.categories)
             appendSection("adult", tree.adult.categories)
             playlistSections.forEach { section ->
@@ -291,6 +291,7 @@ fun CategorySidebar(
     ) {
         if (isTouchDevice || !expanded || !categoriesLoaded || userChoseSearch) return@LaunchedEffect
         if (LiveTvStartup.shouldFocusSearch(focusSearchSignal)) return@LaunchedEffect
+        if (activeMenu != null || (categoryHasHadFocus && sidebarHasFocus && !searchHasFocus)) return@LaunchedEffect
         claimingCategoryFocus = true
         try {
             // requestFocus() in the Compose version used by ARVIO does not
@@ -456,7 +457,7 @@ fun CategorySidebar(
             state = listState,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            itemsIndexed(tree.top, key = { index, cat -> "top:${cat.id}:$index" }) { index, cat ->
+            itemsIndexed(tree.top.distinctBy { it.id }, key = { _, cat -> "top:${cat.id}" }) { index, cat ->
                 val isAllGroup = cat.id == "all" && cat.children.isNotEmpty()
                 val isOpen = isAllGroup && expandedAll
                 SidebarRow(
@@ -544,8 +545,8 @@ fun CategorySidebar(
                     }
                     if (expanded && section.id in expandedPlaylistIds) {
                         itemsIndexed(
-                            section.categories,
-                            key = { index, cat -> "playlist:${section.id}:${cat.id}:$index" },
+                            section.categories.distinctBy { it.id },
+                            key = { _, cat -> "playlist:${section.id}:${cat.id}" },
                         ) { _, cat ->
                             SidebarRow(
                                 label = liveCategoryLabel(cat.label),
@@ -565,7 +566,7 @@ fun CategorySidebar(
                 }
             } else if (tree.global.categories.isNotEmpty()) {
                 item { SectionHeader(liveSectionLabel(tree.global.label), expanded) }
-                itemsIndexed(tree.global.categories, key = { index, cat -> "global:${cat.id}:$index" }) { _, cat ->
+                itemsIndexed(tree.global.categories.distinctBy { it.id }, key = { _, cat -> "global:${cat.id}" }) { _, cat ->
                     SidebarRow(
                         label = liveCategoryLabel(cat.label),
                         count = cat.count,
@@ -582,31 +583,9 @@ fun CategorySidebar(
                     )
                 }
             }
-            if (tree.hidden.categories.isNotEmpty()) {
-                item { SectionHeader(liveSectionLabel(tree.hidden.label), expanded) }
-                itemsIndexed(tree.hidden.categories, key = { index, cat -> "hidden:${cat.id}:$index" }) { _, cat ->
-                    SidebarRow(
-                        label = liveCategoryLabel(cat.label),
-                        count = cat.count,
-                        icon = Icons.Filled.VisibilityOff,
-                        active = false,
-                        expanded = expanded,
-                        focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onCategoryFocused() },
-                        locked = isCategoryLocked(cat),
-                        onLongClick = {
-                            openCategoryMenu(cat, hidden = true)
-                        },
-                        onClick = {
-                            val groupName = cat.playlistGroupName ?: return@SidebarRow
-                            onUnhideCategory(cat.playlistId, groupName)
-                        },
-                    )
-                }
-            }
             if (tree.countries.categories.isNotEmpty()) {
                 item { SectionHeader(liveSectionLabel(tree.countries.label), expanded) }
-                itemsIndexed(tree.countries.categories, key = { index, country -> "country:${country.id}:$index" }) { _, country ->
+                itemsIndexed(tree.countries.categories.distinctBy { it.id }, key = { _, country -> "country:${country.id}" }) { _, country ->
                     val isExpanded = expandedCountry == country.id
                     SidebarRow(
                         label = liveCategoryLabel(country.label),
@@ -708,12 +687,10 @@ private fun SearchEntry(
                 } else when (ev.key) {
                     Key.DirectionUp -> {
                         onMoveUp()
-                        focusManager.moveFocus(FocusDirection.Up)
                         true
                     }
                     Key.DirectionDown -> {
                         onMoveDown()
-                        focusManager.moveFocus(FocusDirection.Down)
                         true
                     }
                     Key.DirectionCenter, Key.Enter -> {
@@ -821,6 +798,8 @@ private fun SidebarRow(
 ) {
     var focused by remember { mutableStateOf(false) }
     var selectPressed by remember { mutableStateOf(false) }
+    val currentClick by rememberUpdatedState(onClick)
+    val currentLongClick by rememberUpdatedState(onLongClick)
     var longPressTriggered by remember { mutableStateOf(false) }
     var longPressJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
@@ -914,10 +893,10 @@ private fun SidebarRow(
                     }
                 }
                 .focusable()
-                .pointerInput(onClick, onLongClick) {
+                .pointerInput(Unit) {
                     detectTapGestures(
-                        onTap = { onClick() },
-                        onLongPress = { onLongClick?.invoke() },
+                        onTap = { currentClick() },
+                        onLongPress = { currentLongClick?.invoke() },
                     )
                 }
                 .padding(horizontal = 6.dp),
