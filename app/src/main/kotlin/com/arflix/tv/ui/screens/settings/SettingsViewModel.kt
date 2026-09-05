@@ -66,6 +66,7 @@ import com.arflix.tv.updater.UpdatePreferences
 import com.arflix.tv.updater.VersionUtils
 import com.arflix.tv.util.AuthEmailValidator
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.IPTV_EPG_VOD_ACTIONS_ENABLED_KEY
 import com.arflix.tv.util.IPTV_VOD_SEARCH_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
@@ -535,7 +536,7 @@ class SettingsViewModel @Inject constructor(
             val deviceModeOverride = prefs[com.arflix.tv.util.DEVICE_MODE_OVERRIDE_KEY] ?: "auto"
             val skipProfileSelection = prefs[com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY] ?: false
             val oledBlackBackground = prefs[com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY] ?: false
-            val contentLang = prefs[contentLanguageKey()] ?: com.arflix.tv.util.defaultAppLanguage()
+            val contentLang = resolveAppLanguage(prefs, loadProfileId)
             // Apply content language to MediaRepository immediately
             mediaRepository.contentLanguage = contentLang
             var autoPlay = prefs[autoPlayNextKey()] ?: true

@@ -1538,4 +1538,13 @@
     <string name="discord_connecting">Conectando...</string>
     <string name="discord_waiting_approval">Aguardando aprovação...</string>
     <string name="discord_qr_instructions">1. Escaneie o código QR no seu celular\n2. Toque em \'Autorizar\' no Discord\n3. Conecta automaticamente</string>
+    <string name="settings_save_playlist">Salvar lista</string>
+    <string name="settings_source_type">Tipo de fonte</string>
+    <string name="settings_source_m3u">M3U</string>
+    <string name="settings_source_xtream">Xtream Codes</string>
+    <string name="settings_source_stalker">Portal Stalker</string>
+    <string name="settings_save_portal">Salvar portal</string>
+    <string name="settings_stalker_desc">Portal Ministra / Stalker com autenticação por endereço MAC.</string>
+    <string name="settings_content_to_import">Conteúdo a importar</string>
+    <string name="settings_label_m3u_url">URL da lista M3U</string>
 </resources>

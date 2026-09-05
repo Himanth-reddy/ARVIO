@@ -2,12 +2,15 @@ package com.arflix.tv.util
 
 import android.content.Context
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.os.Build
 import android.os.LocaleList
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.res.stringResource
+import androidx.core.os.ConfigurationCompat
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.R
 import java.util.Locale
@@ -16,28 +19,47 @@ val LocalAppLanguage = staticCompositionLocalOf { "en-US" }
 val LAST_APP_LANGUAGE_KEY = stringPreferencesKey("last_app_language")
 
 fun defaultAppLanguage(): String {
-    val current = Locale.getDefault()
-    val language = current.language.lowercase()
-    val country = current.country.uppercase()
+    // Locale.getDefault() is changed by the app's own language override.
+    val systemLocale = ConfigurationCompat.getLocales(Resources.getSystem().configuration)[0]
+    return defaultAppLanguage(systemLocale ?: Locale.US)
+}
+
+internal fun defaultAppLanguage(systemLocale: Locale): String {
+    val language = systemLocale.language.lowercase(Locale.ROOT)
+    val country = systemLocale.country.uppercase(Locale.ROOT)
     return when {
         language == "pt" && country == "PT" -> "pt-PT"
         language == "pt" -> "pt-BR"
-        language == "nl" -> "nl"
-        language == "fr" -> "fr"
-        language == "es" -> "es"
-        language == "de" -> "de"
-        language == "it" -> "it"
-        language == "ru" -> "ru"
-        language == "tr" -> "tr"
-        language == "ar" -> "ar"
-        language == "hi" -> "hi"
-        language == "zh" && country in listOf("TW", "HK", "MO") -> "zh-TW"
+        language == "nl" -> "nl-NL"
+        language == "fr" -> "fr-FR"
+        language == "es" -> "es-ES"
+        language == "de" -> "de-DE"
+        language == "it" -> "it-IT"
+        language == "ru" -> "ru-RU"
+        language == "tr" -> "tr-TR"
+        language == "ar" -> "ar-SA"
+        language == "hi" -> "hi-IN"
+        language == "zh" && systemLocale.script == "Hans" -> "zh-CN"
+        language == "zh" && (systemLocale.script == "Hant" || country in setOf("TW", "HK", "MO")) -> "zh-TW"
         language == "zh" -> "zh-CN"
-        language == "ja" -> "ja"
-        language == "ko" -> "ko"
-        language == "pl" -> "pl"
+        language == "ja" -> "ja-JP"
+        language == "ko" -> "ko-KR"
+        language == "pl" -> "pl-PL"
         else -> "en-US"
     }
+}
+
+fun resolveAppLanguage(
+    preferences: Preferences,
+    profileId: String?,
+    systemDefault: () -> String = ::defaultAppLanguage
+): String {
+    val profileLanguage = profileId?.takeIf { it.isNotBlank() }?.let {
+        preferences[stringPreferencesKey("profile_${it}_content_language")]
+    }
+    return profileLanguage?.takeIf { it.isNotBlank() }
+        ?: preferences[LAST_APP_LANGUAGE_KEY]?.takeIf { it.isNotBlank() }
+        ?: systemDefault()
 }
 
 fun appLocale(languageTag: String): Locale {

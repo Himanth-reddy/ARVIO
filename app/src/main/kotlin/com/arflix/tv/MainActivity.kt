@@ -72,7 +72,7 @@ import com.arflix.tv.util.ACCENT_COLOR_KEY
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.LocalHasTouchScreen
 import com.arflix.tv.util.LocalAppLanguage
-import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.util.deviceHasTouchScreen
 import com.arflix.tv.util.findActivity
@@ -294,17 +294,16 @@ class MainActivity : ComponentActivity() {
             val activeProfileId by remember {
                 profileRepository.get().activeProfileId
             }.collectAsStateWithLifecycle(initialValue = null)
+            val initialAppLanguage = remember {
+                getSharedPreferences("app_locale", Context.MODE_PRIVATE)
+                    .getString("locale_tag", null)?.takeIf { it.isNotBlank() }
+                    ?: com.arflix.tv.util.defaultAppLanguage()
+            }
             val appLanguage by remember(activeProfileId) {
                 this@MainActivity.settingsDataStore.data.map { prefs ->
-                    val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: com.arflix.tv.util.defaultAppLanguage()
-                    val profileId = activeProfileId
-                    if (profileId.isNullOrBlank()) {
-                        fallbackLanguage
-                    } else {
-                        prefs[stringPreferencesKey("profile_${profileId}_content_language")] ?: fallbackLanguage
-                    }
+                    resolveAppLanguage(prefs, activeProfileId)
                 }
-            }.collectAsStateWithLifecycle(initialValue = com.arflix.tv.util.defaultAppLanguage())
+            }.collectAsStateWithLifecycle(initialValue = initialAppLanguage)
             LaunchedEffect(appLanguage) {
                 mediaRepository.get().contentLanguage = appLanguage
             }
