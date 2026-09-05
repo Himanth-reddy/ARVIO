@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -225,22 +226,19 @@ import androidx.core.content.ContextCompat
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
+import com.arflix.tv.ui.screens.player.preview.SeekInteraction
+import com.arflix.tv.ui.screens.player.preview.SeekSurface
+import com.arflix.tv.ui.screens.player.preview.SeekPhase
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewCapability
+import com.arflix.tv.ui.screens.player.preview.nativePreviewCacheIdentity
 import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
-import com.arflix.tv.ui.screens.player.preview.fitSeekPreviewAspectRatio
-import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
-import com.arflix.tv.ui.screens.player.preview.seekPreviewDisplayAspectRatio
 
 private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
-private const val CONTROLS_SEEK_COMMIT_DELAY_MS = 700L
-private const val QUICK_SEEK_COMMIT_DELAY_MS = 160L
-private const val CONSTRAINED_SEEK_COMMIT_DELAY_MS = 60L
 private const val QUICK_SEEK_DISMISS_DELAY_MS = 2_200L
-private const val SEEK_PREVIEW_DEBOUNCE_MS = 16L
+private const val SEEK_PREVIEW_DEBOUNCE_MS = 60L
 private const val SEEK_PREVIEW_TIMEOUT_MS = 4_500L
-private const val QUICK_SEEK_PREVIEW_THRESHOLD_MS = 20_000L
-private const val QUICK_SEEK_PREVIEW_COMMIT_GRACE_MS = 850L
 
 private fun isSafePlaybackHeader(name: String, value: String): Boolean {
     return name.isNotBlank() &&
@@ -419,14 +417,12 @@ fun PlayerScreen(
     var nextEpisodeTransitionInProgress by remember { mutableStateOf(false) }
 
     // Direct D-pad seek state, separate from the full controls overlay.
-    var showSkipOverlay by remember { mutableStateOf(false) }
-    var lastSkipTime by remember { mutableLongStateOf(0L) }
-    var skipPreviewPosition by remember { mutableLongStateOf(0L) }
-    var quickSeekOriginPosition by remember { mutableLongStateOf(0L) }
-    var quickSeekCommitJob by remember { mutableStateOf<Job?>(null) }
-    var isControlScrubbing by remember { mutableStateOf(false) }
-    var scrubPreviewPosition by remember { mutableLongStateOf(0L) }
-    var controlsSeekJob by remember { mutableStateOf<Job?>(null) }
+    var seekInteraction by remember { mutableStateOf(SeekInteraction()) }
+    val showSkipOverlay = seekInteraction.quickVisible
+    val lastSkipTime = seekInteraction.lastInputMs
+    val skipPreviewPosition = seekInteraction.targetMs
+    val isControlScrubbing = seekInteraction.browsing && seekInteraction.surface != SeekSurface.Quick
+    val scrubPreviewPosition = seekInteraction.targetMs
 
     // Volume state
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: android.media.AudioManager::class.java.getDeclaredConstructor().newInstance() }
@@ -458,7 +454,7 @@ fun PlayerScreen(
     var showSourceMenu by remember { mutableStateOf(false) }
     var trackbarFocused by remember { mutableStateOf(false) }
     var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
-    var controlsSeekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var unavailablePreviewTarget by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
     // a 10-second countdown lets the user stop watching or immediately Continue. On timeout we
     // advance to the next episode. Gated on the existing autoPlayNext profile setting —
@@ -1532,129 +1528,92 @@ fun PlayerScreen(
             }
     }
 
-    LaunchedEffect(
-        uiState.selectedStreamUrl,
-        uiState.streamSelectionNonce,
-        duration,
-        isLiveStream,
-    ) {
+    val allowSecondarySeekPreviewDecoder = playbackMemoryClassMb >= 192
+    val previewStatus by seekPreviewProvider.status.collectAsState()
+    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
+        seekInteraction = SeekInteraction()
         seekPreviewFrame = null
-        controlsSeekPreviewFrame = null
+    }
+    LaunchedEffect(
+        uiState.selectedStreamUrl, uiState.streamSelectionNonce, duration, isLiveStream,
+        uiState.selectedStream?.preview,
+    ) {
         val url = uiState.selectedStreamUrl
         val selected = uiState.selectedStream
-        val headers = selected
-            ?.behaviorHints
-            ?.proxyHeaders
-            ?.request
-            .orEmpty()
-            .safePlaybackHeaders()
+        val headers = selected?.behaviorHints?.proxyHeaders?.request.orEmpty().safePlaybackHeaders()
         val lowerUrl = url?.lowercase().orEmpty()
-        val adaptive = url != null && (
-            isLikelyHlsPlaybackUrl(url, selected) ||
-                lowerUrl.contains(".mpd") ||
-                lowerUrl.contains("/dash") ||
-                lowerUrl.contains("format=dash")
-            )
         seekPreviewProvider.configure(
             url?.let {
                 SeekPreviewSource(
                     url = it,
                     headers = baseRequestHeaders + headers,
                     cacheIdentity = buildSeekPreviewCacheIdentity(
-                        mediaType = mediaType,
-                        mediaId = mediaId,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        stream = selected,
+                        mediaType, mediaId, seasonNumber, episodeNumber, selected,
                     ),
                     durationMs = duration,
                     isLive = isLiveStream,
-                    isAdaptive = adaptive,
+                    isAdaptive = isLikelyHlsPlaybackUrl(it, selected) ||
+                        lowerUrl.contains(".mpd") || lowerUrl.contains("/dash") ||
+                        lowerUrl.contains("format=dash"),
+                    allowExtraction = allowSecondarySeekPreviewDecoder,
+                    maxWidthPx = if (isConstrainedPlaybackDevice) 480 else 640,
+                    preview = selected?.preview,
                 )
             }
         )
     }
 
-    val quickSeekPreviewBucket = quantizeSeekPreviewPosition(skipPreviewPosition, duration)
-    val allowSecondarySeekPreviewDecoder =
-        !isConstrainedPlaybackDevice &&
-            (deviceType.isTouchDevice() || !isLikelyHeavyStream(uiState.selectedStream))
-
-    val resolveSeekPreviewFrame: suspend (Long) -> SeekPreviewFrame? = { previewBucket ->
-        seekPreviewProvider.memoryFrameAt(previewBucket)
-            ?.takeIf { it.positionMs == previewBucket }
-            ?: seekPreviewProvider.cachedFrameAt(previewBucket)
-                ?.takeIf { it.positionMs == previewBucket }
-            ?: if (allowSecondarySeekPreviewDecoder) {
-                withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
-                    seekPreviewProvider.frameAt(previewBucket)
-                }?.takeIf { it.positionMs == previewBucket }
-            } else {
-                null
-            }
+    val controlsPreviewPosition = if (isControlScrubbing || seekInteraction.phase == SeekPhase.Exiting) scrubPreviewPosition else currentPosition
+    val previewTarget = if (seekInteraction.phase != SeekPhase.Idle) seekInteraction.targetMs else currentPosition
+    val previewRequested = !isCasting && !isLiveStream && hasPlaybackStarted && duration > 0L &&
+        seekInteraction.browsing
+    val previewAvailable = previewStatus.capability != SeekPreviewCapability.UNAVAILABLE &&
+        unavailablePreviewTarget != (previewStatus.sourceGeneration to previewTarget)
+    val showQuickSeekPreview = seekInteraction.previewSession &&
+        seekInteraction.surface == SeekSurface.Quick && previewAvailable
+    val previewFrameForTarget = seekPreviewFrame?.takeIf {
+        seekPreviewProvider.matchesTarget(it, previewTarget)
+    }
+    LaunchedEffect(previewRequested, previewTarget, previewFrameForTarget) {
+        if (previewRequested && previewFrameForTarget != null) {
+            android.util.Log.i("SeekPreviewUi", "display target=$previewTarget actual=${previewFrameForTarget.positionMs} origin=${previewFrameForTarget.origin}")
+        }
     }
 
-    val showQuickSeekPreview = showSkipOverlay &&
-        abs(skipPreviewPosition - quickSeekOriginPosition) >= QUICK_SEEK_PREVIEW_THRESHOLD_MS
+    // Keep the previous bitmap owned until its replacement is ready, but never display it
+    // under a different timestamp. A cancelled request cannot publish into the next target.
     LaunchedEffect(
-        showQuickSeekPreview,
-        quickSeekPreviewBucket,
-        uiState.selectedStreamUrl,
-        uiState.streamSelectionNonce,
-        hasPlaybackStarted,
-        isCasting,
+        previewRequested, previewTarget, previewStatus.sourceGeneration,
+        uiState.selectedStreamUrl, uiState.streamSelectionNonce,
     ) {
-        if (!showQuickSeekPreview || !hasPlaybackStarted || isCasting || duration <= 0L) {
-            seekPreviewFrame = null
-            return@LaunchedEffect
+        if (!previewRequested) return@LaunchedEffect
+        unavailablePreviewTarget = null
+        seekPreviewProvider.memoryFrameAt(previewTarget)?.let { frame ->
+            if (seekPreviewProvider.matchesTarget(frame, previewTarget)) seekPreviewFrame = frame
         }
-        seekPreviewFrame = seekPreviewProvider.memoryFrameAt(quickSeekPreviewBucket)
-            ?.takeIf { it.positionMs == quickSeekPreviewBucket }
+        if (seekPreviewProvider.matchesTarget(seekPreviewFrame, previewTarget)) return@LaunchedEffect
         delay(SEEK_PREVIEW_DEBOUNCE_MS)
-        val frame = resolveSeekPreviewFrame(quickSeekPreviewBucket)
-        if (frame != null && frame.positionMs == quickSeekPreviewBucket) {
+        val frame = seekPreviewProvider.cachedFrameAt(previewTarget)
+            ?: withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) { seekPreviewProvider.frameAt(previewTarget) }
+        if (frame != null && seekPreviewProvider.matchesTarget(frame, previewTarget)) {
             seekPreviewFrame = frame
+        } else {
+            unavailablePreviewTarget = previewStatus.sourceGeneration to previewTarget
         }
     }
 
-    val controlsPreviewPosition = if (isControlScrubbing) scrubPreviewPosition else currentPosition
-    val controlsPreviewBucket = quantizeSeekPreviewPosition(controlsPreviewPosition, duration)
-    LaunchedEffect(
-        trackbarFocused,
-        isControlScrubbing,
-        controlsPreviewBucket,
-        showControls,
-        uiState.selectedStreamUrl,
-        uiState.streamSelectionNonce,
-        hasPlaybackStarted,
-        isCasting,
-    ) {
-        if (
-            (!trackbarFocused && !isControlScrubbing) ||
-            !showControls ||
-            !hasPlaybackStarted ||
-            isCasting ||
-            isLiveStream ||
-            duration <= 0L
-        ) {
-            controlsSeekPreviewFrame = null
+    // Warm only after playback is stable. Foreground requests preempt this bounded work.
+    LaunchedEffect(hasPlaybackStarted, isBuffering, isPlaying, seekInteraction.phase, previewStatus.sourceGeneration) {
+        if (!hasPlaybackStarted || isBuffering || !isPlaying || seekInteraction.browsing || isLiveStream) {
             return@LaunchedEffect
         }
-        controlsSeekPreviewFrame = seekPreviewProvider.memoryFrameAt(controlsPreviewBucket)
-            ?.takeIf { it.positionMs == controlsPreviewBucket }
-        delay(SEEK_PREVIEW_DEBOUNCE_MS)
-        resolveSeekPreviewFrame(controlsPreviewBucket)
-            ?.takeIf { it.positionMs == controlsPreviewBucket }
-            ?.let { frame ->
-                controlsSeekPreviewFrame = frame
-            }
+        if (uiState.selectedStream?.preview == null &&
+            (isConstrainedPlaybackDevice || isLikelyHeavyStream(uiState.selectedStream))) return@LaunchedEffect
+        delay(2_000L)
+        if (!playerReleased && exoPlayer.totalBufferedDuration >= 15_000L) {
+            seekPreviewProvider.warmAround(exoPlayer.currentPosition)
+        }
     }
-
-    // Preview decoding is intentionally demand-driven. Background extraction on the same
-    // single-threaded retriever used to queue several nearby frames ahead of the frame selected
-    // by the user, so the video seek completed before its thumbnail. Rendered-screen captures
-    // also labelled the current image as a future position and produced cropped/incorrect cards.
-    // Exact memory and disk hits remain instant; a cold arbitrary source request starts first.
 
     DisposableEffect(lifecycleOwner, exoPlayer) {
         val observer = LifecycleEventObserver { _, event ->
@@ -1709,129 +1668,81 @@ fun PlayerScreen(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
-    val commitQuickSeekNow: () -> Unit = commitQuickSeek@{
-        val pendingJob = quickSeekCommitJob ?: return@commitQuickSeek
-        pendingJob.cancel()
-        quickSeekCommitJob = null
-        if (!playerReleased) exoPlayer.seekTo(skipPreviewPosition)
-    }
-
-    val closeQuickSeekOverlay: (Boolean) -> Unit = { commitPending ->
-        if (commitPending) {
-            commitQuickSeekNow()
-        } else {
-            quickSeekCommitJob?.cancel()
-            quickSeekCommitJob = null
+    val finishSeek: (Boolean) -> Unit = finishSeek@{ commit ->
+        val interaction = seekInteraction
+        if (interaction.phase == SeekPhase.Idle || interaction.phase == SeekPhase.Exiting) return@finishSeek
+        seekPreviewProvider.cancelPending()
+        if (interaction.browsing) {
+            if (isCasting) {
+                if (commit) castManager.seekTo(interaction.targetMs)
+            } else if (!playerReleased) {
+                if (commit) {
+                    exoPlayer.seekTo(interaction.targetMs)
+                    currentPosition = interaction.targetMs
+                }
+                exoPlayer.playWhenReady = interaction.resumeAfterBrowse
+                android.util.Log.i("SeekPreviewUi", "finish commit=$commit target=${interaction.targetMs} resume=${interaction.resumeAfterBrowse}")
+            }
         }
-        showSkipOverlay = false
-        skipPreviewPosition = 0L
-        quickSeekOriginPosition = 0L
-        seekPreviewFrame = null
+        seekInteraction = interaction.finish()
     }
-
-    val queueQuickSeek: (Long) -> Unit = queueQuickSeek@{ deltaMs ->
+    val closeQuickSeekOverlay: (Boolean) -> Unit = { finishSeek(it) }
+    val stepSeek: (SeekSurface, Long) -> Unit = stepSeek@{ surface, deltaMs ->
         if (isCasting) {
             if (deltaMs > 0L) castManager.skipForward(deltaMs) else castManager.skipBack(-deltaMs)
-            return@queueQuickSeek
+            return@stepSeek
         }
-        if (playerReleased || duration <= 0L) return@queueQuickSeek
-
-        val now = System.currentTimeMillis()
-        val continuing = showSkipOverlay && now - lastSkipTime < QUICK_SEEK_DISMISS_DELAY_MS
-        if (!continuing) {
-            val originPosition = exoPlayer.currentPosition.coerceIn(0L, duration)
-            quickSeekOriginPosition = originPosition
-            skipPreviewPosition = originPosition
-            seekPreviewFrame = null
+        if (playerReleased || duration <= 0L) return@stepSeek
+        val previous = seekInteraction
+        val next = previous.step(
+            surface, deltaMs, exoPlayer.currentPosition, duration, exoPlayer.playWhenReady,
+            android.os.SystemClock.elapsedRealtime(),
+        )
+        if (next.browsing && !previous.browsing) exoPlayer.pause()
+        if (next.phase == SeekPhase.QuickSkip) {
+            exoPlayer.seekTo(next.targetMs)
+            currentPosition = next.targetMs
         }
-        val targetPosition = (skipPreviewPosition + deltaMs).coerceIn(0L, duration)
-        skipPreviewPosition = targetPosition
-        val targetBucket = quantizeSeekPreviewPosition(targetPosition, duration)
-        val wantsPreview = abs(targetPosition - quickSeekOriginPosition) >=
-            QUICK_SEEK_PREVIEW_THRESHOLD_MS
-        seekPreviewFrame = if (wantsPreview) {
-            seekPreviewProvider.memoryFrameAt(targetBucket)
-                ?.takeIf { it.positionMs == targetBucket }
-        } else {
-            null
+        seekInteraction = next
+        if (next.browsing && !previous.browsing && surface == SeekSurface.Quick) {
+            runCatching { containerFocusRequester.requestFocus() }
         }
-        lastSkipTime = now
-        showSkipOverlay = true
-
-        quickSeekCommitJob?.cancel()
-        quickSeekCommitJob = coroutineScope.launch {
-            if (wantsPreview && allowSecondarySeekPreviewDecoder) {
-                val deadline = System.currentTimeMillis() + QUICK_SEEK_PREVIEW_COMMIT_GRACE_MS
-                while (
-                    showSkipOverlay &&
-                    skipPreviewPosition == targetPosition &&
-                    seekPreviewFrame?.positionMs != targetBucket &&
-                    System.currentTimeMillis() < deadline
-                ) {
-                    delay(16L)
-                }
-            } else {
-                delay(
-                    if (allowSecondarySeekPreviewDecoder) {
-                        QUICK_SEEK_COMMIT_DELAY_MS
-                    } else {
-                        CONSTRAINED_SEEK_COMMIT_DELAY_MS
-                    }
-                )
-            }
-            if (!playerReleased && skipPreviewPosition == targetPosition) {
-                exoPlayer.seekTo(targetPosition)
-            }
-            quickSeekCommitJob = null
+        android.util.Log.i("SeekPreviewUi", "input phase=${next.phase} target=${next.targetMs} surface=$surface")
+        seekPreviewProvider.memoryFrameAt(next.targetMs)?.let { frame ->
+            if (seekPreviewProvider.matchesTarget(frame, next.targetMs)) seekPreviewFrame = frame
         }
     }
-
-    val queueControlsSeek: (Long) -> Unit = queueSeek@{ deltaMs ->
+    val queueQuickSeek: (Long) -> Unit = { stepSeek(SeekSurface.Quick, it) }
+    val queueControlsSeek: (Long) -> Unit = { stepSeek(SeekSurface.Controls, it) }
+    val skipWithoutPreview: (Long) -> Unit = { delta ->
+        if (seekInteraction.browsing) finishSeek(false)
         if (isCasting) {
-            if (deltaMs > 0) castManager.skipForward(deltaMs)
-            else castManager.skipBack(-deltaMs)
-            return@queueSeek
+            if (delta > 0L) castManager.skipForward(delta) else castManager.skipBack(-delta)
+        } else if (!playerReleased && duration > 0L) {
+            val target = (exoPlayer.currentPosition + delta).coerceIn(0L, duration)
+            exoPlayer.seekTo(target)
+            currentPosition = target
         }
-        if (playerReleased) return@queueSeek
-        val basePosition = if (isControlScrubbing) {
-            scrubPreviewPosition
-        } else {
-            exoPlayer.currentPosition.coerceAtLeast(0L)
-        }
-        val unclamped = (basePosition + deltaMs).coerceAtLeast(0L)
-        val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
-        scrubPreviewPosition = targetPosition
-        val targetBucket = quantizeSeekPreviewPosition(targetPosition, duration)
-        controlsSeekPreviewFrame = seekPreviewProvider.memoryFrameAt(targetBucket)
-            ?.takeIf { it.positionMs == targetBucket }
-        isControlScrubbing = true
-        controlsSeekJob?.cancel()
-        controlsSeekJob = coroutineScope.launch {
-            delay(
-                if (allowSecondarySeekPreviewDecoder) {
-                    CONTROLS_SEEK_COMMIT_DELAY_MS
-                } else {
-                    CONSTRAINED_SEEK_COMMIT_DELAY_MS
-                }
+    }
+    val commitControlsSeekNow: () -> Unit = { finishSeek(true) }
+    val dragSeek: (Long) -> Unit = { position ->
+        if (!playerReleased && duration > 0L) {
+            val previous = seekInteraction
+            seekInteraction = previous.dragTo(
+                position, if (isCasting) currentPosition else exoPlayer.currentPosition,
+                duration, exoPlayer.playWhenReady,
             )
-            if (!playerReleased) {
-                exoPlayer.seekTo(scrubPreviewPosition)
-            }
-            isControlScrubbing = false
+            if (!isCasting && !previous.browsing) exoPlayer.pause()
         }
     }
+    val latestDragSeek by rememberUpdatedState(dragSeek)
+    val latestFinishSeek by rememberUpdatedState(finishSeek)
+    val latestQuickSeek by rememberUpdatedState(queueQuickSeek)
 
-    val commitControlsSeekNow: () -> Unit = commitSeek@{
-        if (isCasting) {
-            castManager.seekTo(scrubPreviewPosition)
-            isControlScrubbing = false
-            return@commitSeek
-        }
-        if (playerReleased) return@commitSeek
-        if (isControlScrubbing) {
-            controlsSeekJob?.cancel()
-            exoPlayer.seekTo(scrubPreviewPosition)
-            isControlScrubbing = false
+    LaunchedEffect(seekInteraction.phase) {
+        if (seekInteraction.phase == SeekPhase.Exiting) {
+            delay(150L)
+            seekInteraction = seekInteraction.afterExit()
         }
     }
 
@@ -2423,8 +2334,8 @@ fun PlayerScreen(
     }
 
     // Auto-hide controls and return focus to container
-    LaunchedEffect(showControls, isPlaying, isCasting) {
-        if (showControls && isPlaying && !isCasting && !showSubtitleMenu && !showSourceMenu && !showSubtitleSettings) {
+    LaunchedEffect(showControls, isPlaying, isCasting, seekInteraction.phase) {
+        if (showControls && isPlaying && !isCasting && !seekInteraction.browsing && !showSubtitleMenu && !showSourceMenu && !showSubtitleSettings) {
             delay(5000)
             showControls = false
             // Return focus to container so it can receive key events
@@ -2460,8 +2371,8 @@ fun PlayerScreen(
     }
 
     // Auto-hide skip overlay and reset - use lastSkipTime as key to restart on each skip
-    LaunchedEffect(lastSkipTime) {
-        if (showSkipOverlay && lastSkipTime > 0) {
+    LaunchedEffect(lastSkipTime, seekInteraction.phase) {
+        if (seekInteraction.phase == SeekPhase.QuickSkip && lastSkipTime > 0) {
             delay(QUICK_SEEK_DISMISS_DELAY_MS)
             closeQuickSeekOverlay(true)
         }
@@ -2554,7 +2465,7 @@ fun PlayerScreen(
             }
 
             // Buffering watchdog - detect long buffering but do not force a source error popup.
-            if (isBuffering && hasPlaybackStarted) {
+            if (isBuffering && hasPlaybackStarted && exoPlayer.playWhenReady && !seekInteraction.browsing) {
                 if (bufferingStartTime == null) {
                     bufferingStartTime = loopNowMs
                 } else {
@@ -2825,8 +2736,6 @@ fun PlayerScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            controlsSeekJob?.cancel()
-            quickSeekCommitJob?.cancel()
             playerReleasedAtomic.set(true)
             playerReleased = true
             if (!nextEpisodeTransitionInProgress) {
@@ -2959,6 +2868,8 @@ fun PlayerScreen(
     ) {
         if (showSkipOverlay) {
             closeQuickSeekOverlay(false)
+        } else if (seekInteraction.browsing) {
+            finishSeek(false)
         } else if (showControls) {
             showControls = false
         } else {
@@ -3006,19 +2917,22 @@ fun PlayerScreen(
                     Modifier.pointerInput(isCasting) {
                         detectTapGestures(
                             onTap = {
-                                if (uiState.error == null && !showSubtitleMenu && !showSourceMenu) {
-                                    showControls = !showControls
+                                if (latestUiState.error == null && !showSubtitleMenu && !showSourceMenu) {
+                                    if (seekInteraction.quickVisible) latestFinishSeek(true)
+                                    else showControls = !showControls
                                 }
                             },
                             onDoubleTap = { offset ->
-                                if (uiState.error == null && !showSubtitleMenu && !showSourceMenu) {
+                                if (latestUiState.error == null && !showSubtitleMenu && !showSourceMenu) {
                                     val halfWidth = size.width / 2
                                     if (offset.x < halfWidth) {
                                         // Double-tap left side: rewind 10 seconds
-                                        queueControlsSeek(-10_000L)
+                                        showControls = false
+                                        latestQuickSeek(-10_000L)
                                     } else {
                                         // Double-tap right side: forward 10 seconds
-                                        queueControlsSeek(10_000L)
+                                        showControls = false
+                                        latestQuickSeek(10_000L)
                                     }
                                 }
                             }
@@ -3030,6 +2944,8 @@ fun PlayerScreen(
             )
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
+                    if (event.nativeKeyEvent.repeatCount > 0 &&
+                        event.key in listOf(Key.Enter, Key.DirectionCenter, Key.MediaPlayPause)) return@onKeyEvent true
                     // Fire TV / Bluetooth media remote keys. These must be handled at the
                     // top of the key handler so they work regardless of which overlay
                     // (error, menus, post-episode prompt) is currently visible. Previously
@@ -3038,16 +2954,19 @@ fun PlayerScreen(
                     // stick remote that has dedicated FF/RW/Play buttons. Issue #68 (part).
                     when (event.key) {
                         Key.MediaPlayPause -> {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            if (seekInteraction.browsing) finishSeek(true)
+                            else if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                             showControls = true
                             return@onKeyEvent true
                         }
                         Key.MediaPlay -> {
+                            if (seekInteraction.browsing) finishSeek(true)
                             exoPlayer.play()
                             showControls = true
                             return@onKeyEvent true
                         }
                         Key.MediaPause -> {
+                            if (seekInteraction.browsing) finishSeek(false)
                             exoPlayer.pause()
                             showControls = true
                             return@onKeyEvent true
@@ -3058,13 +2977,13 @@ fun PlayerScreen(
                             return@onKeyEvent true
                         }
                         Key.MediaRewind -> {
-                            queueControlsSeek(-10_000L)
-                            showControls = true
+                            showControls = false
+                            queueQuickSeek(-10_000L)
                             return@onKeyEvent true
                         }
                         Key.MediaFastForward -> {
-                            queueControlsSeek(10_000L)
-                            showControls = true
+                            showControls = false
+                            queueQuickSeek(10_000L)
                             return@onKeyEvent true
                         }
                         Key.MediaNext -> {
@@ -3130,6 +3049,8 @@ fun PlayerScreen(
                     ) {
                         if (showSkipOverlay) {
                             closeQuickSeekOverlay(false)
+                        } else if (seekInteraction.browsing) {
+                            finishSeek(false)
                         } else if (showControls) {
                             showControls = false
                         } else {
@@ -3386,7 +3307,7 @@ fun PlayerScreen(
                             val skipVisible = uiState.activeSkipInterval != null && !uiState.skipIntervalDismissed
                             // When hidden, prefer focusing the skip button (if present) instead of showing controls.
                             if (!showControls) {
-                                if (showSkipOverlay) closeQuickSeekOverlay(true)
+                                if (showSkipOverlay) closeQuickSeekOverlay(false)
                                 if (skipVisible && event.key == Key.DirectionUp) {
                                     coroutineScope.launch {
                                         delay(40)
@@ -3414,7 +3335,8 @@ fun PlayerScreen(
                             true
                         }
                         Key.Spacebar -> {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            if (seekInteraction.browsing) finishSeek(true)
+                            else if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                             showControls = true
                             true
                         }
@@ -3562,7 +3484,7 @@ fun PlayerScreen(
 
         // Skip intro/recap overlay — only after playback has started to avoid showing
         // on the loading screen (background art + pulsing logo).
-        if (hasPlaybackStarted) {
+        if (hasPlaybackStarted && !seekInteraction.browsing) {
             val activeSkip = uiState.activeSkipInterval
             SkipIntroButton(
                 interval = activeSkip,
@@ -3830,7 +3752,7 @@ fun PlayerScreen(
                 ) {
                     AnimatedVisibility(
                         visible =
-                            (trackbarFocused || isControlScrubbing) &&
+                            isControlScrubbing && previewAvailable &&
                                 duration > 0L &&
                                 !isCasting &&
                                 !isLiveStream,
@@ -3859,7 +3781,7 @@ fun PlayerScreen(
                                     .width(previewWidth)
                                     .height(previewHeight),
                             ) {
-                                val frame = controlsSeekPreviewFrame
+                                val frame = previewFrameForTarget
                                 if (frame != null) {
                                     SeekPreviewCard(
                                         frame = frame,
@@ -4000,7 +3922,7 @@ fun PlayerScreen(
                             PlayerIconButton(icon = Icons.Default.Replay10, contentDescription = stringResource(R.string.player_cd_rewind),
                                 focusRequester = rewindButtonFocusRequester, size = midBtn, iconSize = midIcon,
                                 onFocusChanged = {},
-                                onClick = { queueControlsSeek(-10_000L) },
+                                onClick = { skipWithoutPreview(-10_000L) },
                                 onLeftKey = { sourceButtonFocusRequester.requestFocus() },
                                 onRightKey = { playButtonFocusRequester.requestFocus() },
                                 onDownKey = { trackbarFocusRequester.requestFocus() })
@@ -4035,7 +3957,7 @@ fun PlayerScreen(
                             PlayerIconButton(icon = Icons.Default.Forward10, contentDescription = stringResource(R.string.player_cd_forward),
                                 focusRequester = forwardButtonFocusRequester, size = midBtn, iconSize = midIcon,
                                 onFocusChanged = {},
-                                onClick = { queueControlsSeek(10_000L) },
+                                onClick = { skipWithoutPreview(10_000L) },
                                 onLeftKey = { playButtonFocusRequester.requestFocus() },
                                 onRightKey = { aspectButtonFocusRequester.requestFocus() },
                                 onDownKey = { trackbarFocusRequester.requestFocus() })
@@ -4106,7 +4028,7 @@ fun PlayerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = formatTime(if (isControlScrubbing) scrubPreviewPosition else currentPosition),
+                            text = formatTime(controlsPreviewPosition),
                             style = ArflixTypography.label.copy(fontSize = if (isTouchDevice) 12.sp else 13.sp),
                             color = Color.White.copy(alpha = 0.9f),
                             maxLines = 1,
@@ -4114,9 +4036,8 @@ fun PlayerScreen(
                         )
 
                         // Trackbar
-                        val trackbarHeight by animateFloatAsState(if (trackbarFocused) 8f else if (isTouchDevice) 6f else 4f, label = "trackbarHeight")
                         var trackbarWidthPx by remember { mutableIntStateOf(0) }
-                        Box(
+                        BoxWithConstraints(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(if (isTouchDevice) 28.dp else 20.dp)
@@ -4124,13 +4045,8 @@ fun PlayerScreen(
                                 .focusRequester(trackbarFocusRequester)
                                 .onFocusChanged { state ->
                                     trackbarFocused = state.isFocused
-                                    if (state.isFocused && !isControlScrubbing) {
-                                        scrubPreviewPosition = currentPosition
-                                        val bucket = quantizeSeekPreviewPosition(currentPosition, duration)
-                                        controlsSeekPreviewFrame = seekPreviewProvider.memoryFrameAt(bucket)
-                                            ?.takeIf { it.positionMs == bucket }
-                                    }
-                                    if (!state.isFocused && isControlScrubbing) commitControlsSeekNow()
+                                    if (!state.isFocused && seekInteraction.browsing &&
+                                        seekInteraction.surface == SeekSurface.Controls) finishSeek(false)
                                 }
                                 .focusable()
                                 .pointerInput(duration, isCasting) {
@@ -4138,39 +4054,18 @@ fun PlayerScreen(
                                         onDragStart = { offset ->
                                             if (duration > 0L && trackbarWidthPx > 0) {
                                                 trackbarFocusRequester.requestFocus()
-                                                val target = (
-                                                    (offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration
-                                                ).toLong()
-                                                scrubPreviewPosition = target
-                                                isControlScrubbing = true
+                                                latestDragSeek(
+                                                    ((offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration).toLong()
+                                                )
                                             }
                                         },
-                                        onDragEnd = {
-                                            if (isControlScrubbing) {
-                                                if (isCasting) {
-                                                    castManager.seekTo(scrubPreviewPosition)
-                                                } else if (!playerReleased) {
-                                                    exoPlayer.seekTo(scrubPreviewPosition)
-                                                }
-                                                isControlScrubbing = false
-                                            }
-                                        },
-                                        onDragCancel = {
-                                            if (isControlScrubbing) {
-                                                if (isCasting) {
-                                                    castManager.seekTo(scrubPreviewPosition)
-                                                } else if (!playerReleased) {
-                                                    exoPlayer.seekTo(scrubPreviewPosition)
-                                                }
-                                                isControlScrubbing = false
-                                            }
-                                        },
-                                        onHorizontalDrag = { _, dragAmount ->
+                                        onDragEnd = { latestFinishSeek(true) },
+                                        onDragCancel = { latestFinishSeek(false) },
+                                        onHorizontalDrag = { change, dragAmount ->
                                             if (duration > 0L && trackbarWidthPx > 0) {
+                                                change.consume()
                                                 val delta = (dragAmount / trackbarWidthPx * duration).toLong()
-                                                scrubPreviewPosition =
-                                                    (scrubPreviewPosition + delta).coerceIn(0L, duration)
-                                                isControlScrubbing = true
+                                                latestDragSeek(seekInteraction.targetMs + delta)
                                             }
                                         }
                                     )
@@ -4207,7 +4102,7 @@ fun PlayerScreen(
                                                 true
                                             }
                                             Key.Enter, Key.DirectionCenter -> { commitControlsSeekNow(); true }
-                                            Key.DirectionUp -> { playButtonFocusRequester.requestFocus(); true }
+                                            Key.DirectionUp -> { finishSeek(false); playButtonFocusRequester.requestFocus(); true }
                                             Key.DirectionDown -> true
                                             else -> false
                                         }
@@ -4219,12 +4114,20 @@ fun PlayerScreen(
                             // Visible thin bar centered in the larger touch target
                             val barHeight = if (trackbarFocused) 8.dp else if (isTouchDevice) 6.dp else 4.dp
                             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Color.White.copy(alpha = if (trackbarFocused) 0.25f else 0.15f), RoundedCornerShape(3.dp)))
-                            val frac = if (duration > 0) ((if (isControlScrubbing) scrubPreviewPosition else currentPosition).toFloat() / duration.toFloat()).coerceIn(0f, 1f) else progress
+                            val frac = if (duration > 0) (controlsPreviewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else progress
                             Box(modifier = Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center), contentAlignment = Alignment.CenterStart) {
                             Box(modifier = Modifier.fillMaxWidth(frac).fillMaxHeight().background(
                                 if (trackbarFocused) playerAccent else playerAccent.copy(alpha = 0.8f), RoundedCornerShape(3.dp)
                             ))
                             }
+                            val knobSize = if (isTouchDevice) 12.dp else 14.dp
+                            Box(
+                                modifier = Modifier.align(Alignment.CenterStart)
+                                    .offset(x = (maxWidth * frac - knobSize / 2f)
+                                        .coerceIn(0.dp, (maxWidth - knobSize).coerceAtLeast(0.dp)))
+                                    .size(knobSize)
+                                    .background(Color.White, CircleShape)
+                            )
                         }
 
                         Spacer(modifier = Modifier.width(8.dp))
@@ -4498,18 +4401,17 @@ fun PlayerScreen(
                     .coerceIn(0.dp, (maxWidth - knobSize).coerceAtLeast(0.dp))
 
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(previewHeight),
-                    ) {
+                    if (showQuickSeekPreview) {
+                      Box(
+                        modifier = Modifier.fillMaxWidth().height(previewHeight),
+                      ) {
                         Box(
                             modifier = Modifier
                                 .offset(x = previewOffset)
                                 .width(previewWidth)
                                 .height(previewHeight),
                         ) {
-                            val frame = seekPreviewFrame
+                            val frame = previewFrameForTarget
                             if (frame != null) {
                                 SeekPreviewCard(
                                     frame = frame,
@@ -4519,9 +4421,9 @@ fun PlayerScreen(
                                 SeekPreviewPlaceholder(modifier = Modifier.fillMaxSize())
                             }
                         }
+                      }
+                      Spacer(modifier = Modifier.height(16.dp))
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -4547,7 +4449,10 @@ fun PlayerScreen(
                                 .background(Color.White, CircleShape)
                         )
                     }
-
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(formatTime(previewPosition), color = Color.White, style = ArflixTypography.label)
+                        Text(formatTime(duration), color = Color.White.copy(alpha = 0.65f), style = ArflixTypography.label)
+                    }
                 }
             }
         }
@@ -6530,7 +6435,7 @@ private fun SeekPreviewPlaceholder(modifier: Modifier = Modifier) {
             .clip(shape),
         contentAlignment = Alignment.Center,
     ) {
-        LoadingIndicator(size = 24.dp, color = Color.White, strokeWidth = 2.dp)
+        Box(Modifier.width(32.dp).height(2.dp).background(Color.White.copy(alpha = 0.35f)))
     }
 }
 
@@ -6542,7 +6447,7 @@ private fun buildSeekPreviewCacheIdentity(
     stream: StreamSource?,
 ): String = buildString {
     // Bump when preview rendering changes so malformed frames from older builds are not reused.
-    append("v4|")
+    append("v5|")
     append(mediaType.name).append('|').append(mediaId)
     append('|').append(seasonNumber ?: 0).append('|').append(episodeNumber ?: 0)
     if (stream != null) {
@@ -6554,8 +6459,7 @@ private fun buildSeekPreviewCacheIdentity(
         append('|').append(stream.source)
         if (stream.infoHash.isNullOrBlank() && stream.behaviorHints?.videoHash.isNullOrBlank()) {
             append('|').append(
-                runCatching { Uri.parse(stream.url).path.orEmpty() }
-                    .getOrDefault("")
+                stream.preview?.let(::nativePreviewCacheIdentity) ?: stream.url
             )
         }
     }
