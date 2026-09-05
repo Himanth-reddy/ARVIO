@@ -122,6 +122,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -417,19 +418,6 @@ fun PlayerScreen(
         }
     }
 
-    var isExiting by remember { mutableStateOf(false) }
-
-    // Synchronously restore orientation when leaving the player to prevent landscape stall on previous screen
-    val onExitPlayer: () -> Unit = remember(activity, onBack, previousOrientation) {
-        {
-            if (!isExiting) {
-                isExiting = true
-                activity?.requestedOrientation = previousOrientation
-                onBack()
-            }
-        }
-    }
-
     // Initialize Cast SDK once on mobile entry. No-op on TV (CastState.NotAvailable).
     DisposableEffect(deviceType) {
         castManager.initialize(isMobile = deviceType.isTouchDevice())
@@ -603,10 +591,6 @@ fun PlayerScreen(
             pendingNextSourceName,
             pendingNextBingeGroup
         )
-    }
-    val cancelNextEpisodePrompt: () -> Unit = {
-        showNextEpisodePrompt = false
-        onExitPlayer()
     }
     var currentAspectRatioMode by remember { mutableStateOf(AspectRatioMode.AUTO) }
     val playerResizeMode = currentAspectRatioMode.resizeMode
@@ -1739,11 +1723,27 @@ fun PlayerScreen(
         onDispose { playerEngine.release() }
     }
 
-    // Immediately pause video playback when exit is triggered
-    LaunchedEffect(isExiting) {
-        if (isExiting) {
-            runCatching { exoPlayer.pause() }
+    val exitTransition = rememberPlayerExitTransition(
+        animateExit = deviceType.isTouchDevice(),
+        pause = { if (!playerReleased) exoPlayer.pause() },
+        leave = {
+            activity?.requestedOrientation = previousOrientation
+            onBack()
         }
+    )
+    val onExitPlayer: () -> Unit = exitTransition::requestExit
+    val cancelNextEpisodePrompt: () -> Unit = {
+        showNextEpisodePrompt = false
+        onExitPlayer()
+    }
+    DisposableEffect(exoPlayer, exitTransition) {
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (playWhenReady && exitTransition.isExiting && !playerReleased) exoPlayer.pause()
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
     }
 
     // Observe audio delay & route to video offset renderer
@@ -2008,8 +2008,8 @@ fun PlayerScreen(
 
     // Update player when stream URL changes. Attach currently-known external subtitle tracks once,
     // then switch subtitle tracks via track overrides (no media source rebuild needed).
-    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
-        if (playerReleased) return@LaunchedEffect
+    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce, exitTransition.isExiting) {
+        if (playerReleased || exitTransition.isExiting) return@LaunchedEffect
         val url = uiState.selectedStreamUrl
         if (BuildConfig.DEBUG) {
         }
@@ -3017,6 +3017,7 @@ fun PlayerScreen(
             .background(Color.Black)
             .focusRequester(containerFocusRequester)
             .focusable()
+            .onPreviewKeyEvent { exitTransition.isExiting }
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     if (event.nativeKeyEvent.repeatCount > 0 &&
@@ -4794,21 +4795,7 @@ fun PlayerScreen(
             }
         }
 
-        // Unified black exit scrim overlay during player exit transition
-        val exitAlpha by animateFloatAsState(
-            targetValue = if (isExiting) 1f else 0f,
-            animationSpec = animTween(180, easing = FastOutSlowInEasing),
-            label = "playerExitScrim"
-        )
-
-        if (exitAlpha > 0f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = exitAlpha))
-                    .zIndex(100f)
-            )
-        }
+        PlayerExitScrim(exitTransition)
     }
     }
 }
