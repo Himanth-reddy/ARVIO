@@ -125,10 +125,13 @@ import androidx.compose.material3.Icon
 import com.arflix.tv.ui.components.LoadingIndicator
 import com.arflix.tv.ui.components.MobileSettingsCategory
 import com.arflix.tv.ui.components.MobileSettingsRow
+import com.arflix.tv.ui.components.IptvPlaylistModal
+import com.arflix.tv.ui.components.IptvSourceType
 import com.arflix.tv.ui.components.QrCodeImage
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType as ComponentToastType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -470,15 +473,6 @@ fun SettingsScreen(
     var customAddonUrl by remember { mutableStateOf("") }
     var showIptvInput by remember { mutableStateOf(false) }
     var editingIptvIndex by remember { mutableIntStateOf(-1) }
-    var iptvEditName by remember { mutableStateOf("") }
-    var iptvEditUrl by remember { mutableStateOf("") }
-    var iptvEditEpg by remember { mutableStateOf("") }
-    var iptvEditEnabled by remember { mutableStateOf(true) }
-    var iptvEditImportLiveTv by remember { mutableStateOf(true) }
-    var iptvEditImportVod by remember { mutableStateOf(true) }
-    var iptvEditImportSeries by remember { mutableStateOf(true) }
-    var iptvEditXtreamUser by remember { mutableStateOf("") }
-    var iptvEditXtreamPass by remember { mutableStateOf("") }
     var showStalkerInput by remember { mutableStateOf(false) }
     var stalkerEditPortal by remember { mutableStateOf("") }
     var stalkerEditMac by remember { mutableStateOf("") }
@@ -535,9 +529,9 @@ fun SettingsScreen(
                 // Reset row + (bulk-toggle row) + category rows.
                 groups.size + (firstIptvGroupIndex(uiState.iptvSelectedPlaylistId.orEmpty(), groups, stalkerIds) - 1)
             } else {
-                // Add-M3U + M3U rows + Add-Stalker + Stalker rows + order + VOD search
+                // Add-Playlist + M3U rows + Stalker rows + order + VOD search
                 // + EPG actions + favorites-on-home + refresh + clear
-                7 + uiState.iptvPlaylists.size + uiState.iptvStalkerPortals.size
+                6 + uiState.iptvPlaylists.size + uiState.iptvStalkerPortals.size
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
@@ -712,44 +706,9 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(uiState.iptvPlaylists, showIptvInput, editingIptvIndex) {
+    LaunchedEffect(showIptvInput) {
         if (!showIptvInput) {
             editingIptvIndex = -1
-            iptvEditName = ""
-            iptvEditUrl = ""
-            iptvEditEpg = ""
-            iptvEditEnabled = true
-            iptvEditXtreamUser = ""
-            iptvEditXtreamPass = ""
-            iptvEditImportLiveTv = true
-            iptvEditImportVod = true
-            iptvEditImportSeries = true
-        } else {
-            val playlist = uiState.iptvPlaylists.getOrNull(editingIptvIndex)
-            iptvEditName = playlist?.name ?: "List ${editingIptvIndex + 2}".takeIf { editingIptvIndex >= 0 } ?: "List ${uiState.iptvPlaylists.size + 1}"
-            // When editing, try to extract Xtream credentials from the saved URL
-            // (normalizeIptvInput converts "host user pass" to a full get.php URL)
-            val savedUrl = playlist?.m3uUrl ?: ""
-            val xtreamUri = try { android.net.Uri.parse(savedUrl) } catch (_: Exception) { null }
-            val xtreamUser = xtreamUri?.getQueryParameter("username") ?: ""
-            val xtreamPass = xtreamUri?.getQueryParameter("password") ?: ""
-            val isXtreamUrl = savedUrl.contains("get.php") && xtreamUser.isNotBlank() && xtreamPass.isNotBlank()
-            if (isXtreamUrl) {
-                // Show just the host:port for Xtream URLs
-                val baseUrl = "${xtreamUri!!.scheme}://${xtreamUri.host}${if (xtreamUri.port > 0) ":${xtreamUri.port}" else ""}"
-                iptvEditUrl = baseUrl
-                iptvEditXtreamUser = xtreamUser
-                iptvEditXtreamPass = xtreamPass
-            } else {
-                iptvEditUrl = savedUrl
-                iptvEditXtreamUser = ""
-                iptvEditXtreamPass = ""
-            }
-            iptvEditEpg = playlist?.settingsEpgInput().orEmpty()
-            iptvEditEnabled = playlist?.enabled ?: true
-            iptvEditImportLiveTv = playlist?.importLiveTv ?: true
-            iptvEditImportVod = playlist?.importVod ?: true
-            iptvEditImportSeries = playlist?.importSeries ?: true
         }
     }
 
@@ -882,15 +841,15 @@ fun SettingsScreen(
                                 Zone.CONTENT -> {
                                     val m3uCount = uiState.iptvPlaylists.size
                                     val stalkerCount = uiState.iptvStalkerPortals.size
-                                    val stalkerStart = m3uCount + 2
-                                    val stalkerEnd = m3uCount + 1 + stalkerCount
+                                    val stalkerStart = m3uCount + 1
+                                    val stalkerEnd = m3uCount + stalkerCount
                                     if (currentSection == "stremio" && contentFocusIndex < stremioAddons.size && addonActionIndex > 0) {
                                         addonActionIndex--
                                     } else if (currentSection == "iptv" &&
                                         iptvActionIndex > 0 &&
                                         (
                                             showIptvCategoriesSettings && contentFocusIndex > 0 ||
-                                                !showIptvCategoriesSettings && (contentFocusIndex in 1..m3uCount || contentFocusIndex in stalkerStart..stalkerEnd)
+                                                !showIptvCategoriesSettings && (contentFocusIndex in 1..m3uCount || (stalkerCount > 0 && contentFocusIndex in stalkerStart..stalkerEnd))
                                             )
                                     ) {
                                         iptvActionIndex--
@@ -931,8 +890,8 @@ fun SettingsScreen(
                                     val stalkerIds = uiState.iptvStalkerPortals.map { it.id }.toSet()
                                     val m3uCount = uiState.iptvPlaylists.size
                                     val stalkerCount = uiState.iptvStalkerPortals.size
-                                    val stalkerStart = m3uCount + 2
-                                    val stalkerEnd = m3uCount + 1 + stalkerCount
+                                    val stalkerStart = m3uCount + 1
+                                    val stalkerEnd = m3uCount + stalkerCount
                                     if (currentSection == "stremio" &&
                                         contentFocusIndex in 0 until stremioAddons.size &&
                                         addonActionIndex < focusedStremioAddonMaxAction
@@ -942,7 +901,7 @@ fun SettingsScreen(
                                         iptvActionIndex++
                                     } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..m3uCount && iptvActionIndex < iptvRowMaxAction()) {
                                         iptvActionIndex++
-                                    } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in stalkerStart..stalkerEnd && iptvActionIndex < iptvRowMaxAction()) {
+                                    } else if (currentSection == "iptv" && !showIptvCategoriesSettings && stalkerCount > 0 && contentFocusIndex in stalkerStart..stalkerEnd && iptvActionIndex < iptvRowMaxAction()) {
                                         iptvActionIndex++
                                     } else if (currentSection == "catalogs" && contentFocusIndex > 1 && catalogActionIndex < 5) {
                                         catalogActionIndex++
@@ -1109,8 +1068,8 @@ fun SettingsScreen(
                                             } else {
                                                 val m3uCount = uiState.iptvPlaylists.size
                                                 val stalkerCount = uiState.iptvStalkerPortals.size
-                                                val stalkerStart = m3uCount + 2
-                                                val stalkerEnd = m3uCount + 1 + stalkerCount
+                                                val stalkerStart = m3uCount + 1
+                                                val stalkerEnd = m3uCount + stalkerCount
                                                 when {
                                                     contentFocusIndex == 0 -> {
                                                         editingIptvIndex = -1
@@ -1149,15 +1108,7 @@ fun SettingsScreen(
                                                             }
                                                         }
                                                     }
-                                                    contentFocusIndex == m3uCount + 1 -> {
-                                                        // Add Stalker portal
-                                                        stalkerEditId = null
-                                                        stalkerEditPortal = ""
-                                                        stalkerEditMac = ""
-                                                        stalkerEditName = ""
-                                                        showStalkerInput = true
-                                                    }
-                                                    contentFocusIndex in stalkerStart..stalkerEnd -> {
+                                                    stalkerCount > 0 && contentFocusIndex in stalkerStart..stalkerEnd -> {
                                                         val sIdx = contentFocusIndex - stalkerStart
                                                         val portal = uiState.iptvStalkerPortals.getOrNull(sIdx)
                                                         if (portal != null) {
@@ -1177,7 +1128,7 @@ fun SettingsScreen(
                                                             }
                                                         }
                                                     }
-                                                    contentFocusIndex == m3uCount + stalkerCount + 2 -> {
+                                                    contentFocusIndex == m3uCount + stalkerCount + 1 -> {
                                                         val next = when (uiState.iptvSortOrder) {
                                                             "provider" -> "number"
                                                             "number" -> "name"
@@ -1185,19 +1136,19 @@ fun SettingsScreen(
                                                         }
                                                         viewModel.setIptvSortOrder(next)
                                                     }
-                                                    contentFocusIndex == m3uCount + stalkerCount + 3 -> {
+                                                    contentFocusIndex == m3uCount + stalkerCount + 2 -> {
                                                         viewModel.setVodSearchEnabled(!uiState.vodSearchEnabled)
                                                     }
-                                                    contentFocusIndex == m3uCount + stalkerCount + 4 -> {
+                                                    contentFocusIndex == m3uCount + stalkerCount + 3 -> {
                                                         viewModel.setEpgVodActionsEnabled(!uiState.epgVodActionsEnabled)
                                                     }
-                                                    contentFocusIndex == m3uCount + stalkerCount + 5 -> {
+                                                    contentFocusIndex == m3uCount + stalkerCount + 4 -> {
                                                         viewModel.setIptvFavoritesOnHome(!uiState.iptvFavoritesOnHome)
                                                     }
-                                                    contentFocusIndex == m3uCount + stalkerCount + 6 -> {
+                                                    contentFocusIndex == m3uCount + stalkerCount + 5 -> {
                                                         viewModel.refreshIptv(force = true)
                                                     }
-                                                    contentFocusIndex == m3uCount + stalkerCount + 7 -> {
+                                                    contentFocusIndex == m3uCount + stalkerCount + 6 -> {
                                                         viewModel.clearIptvConfig()
                                                     }
                                                 }
@@ -1409,6 +1360,20 @@ fun SettingsScreen(
                 onSubtitleAiQrClick = { viewModel.startAiKeyServer() },
                 onAddIptvClick = { editingIptvIndex = -1; showIptvInput = true },
                 onEditIptvClick = { idx -> editingIptvIndex = idx; showIptvInput = true },
+                onAddStalkerPortal = {
+                    stalkerEditId = null
+                    stalkerEditPortal = ""
+                    stalkerEditMac = ""
+                    stalkerEditName = ""
+                    showStalkerInput = true
+                },
+                onEditStalkerPortal = { portal ->
+                    stalkerEditId = portal.id
+                    stalkerEditPortal = portal.portalUrl
+                    stalkerEditMac = portal.macAddress
+                    stalkerEditName = portal.name
+                    showStalkerInput = true
+                },
                 onAddCatalogClick = { showCatalogInput = true },
                 onImportCatalogPackClick = { showCatalogPackInput = true },
                 onRenameCatalogClick = { catalog ->
@@ -2065,132 +2030,127 @@ fun SettingsScreen(
                 }
             )
         }
-        if (showIptvInput) {
-            InputModal(
-                title = if (editingIptvIndex >= 0) stringResource(R.string.settings_edit_tv_playlist) else stringResource(R.string.settings_add_tv_playlist),
-                supportingText = stringResource(R.string.settings_iptv_epg_note),
-                fields = listOf(
-                    InputField(
-                        label = stringResource(R.string.settings_label_playlist_name),
-                        value = iptvEditName,
-                        onValueChange = { iptvEditName = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_label_m3u_or_xtream),
-                        value = iptvEditUrl,
-                        placeholder = stringResource(R.string.settings_ph_provider_host),
-                        onValueChange = { iptvEditUrl = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_label_xtream_user),
-                        value = iptvEditXtreamUser,
-                        placeholder = stringResource(R.string.settings_ph_plain_m3u),
-                        onValueChange = { iptvEditXtreamUser = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_label_xtream_pass),
-                        value = iptvEditXtreamPass,
-                        placeholder = stringResource(R.string.settings_ph_plain_m3u),
-                        isSecret = true,
-                        onValueChange = { iptvEditXtreamPass = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_label_epg_sources),
-                        value = iptvEditEpg,
-                        placeholder = "https://provider.com/xmltv.xml\nhttps://backup.com/epg.xml.gz",
-                        helper = stringResource(R.string.settings_helper_epg_one_per_line),
-                        singleLine = false,
-                        onValueChange = { iptvEditEpg = it }
-                    )
-                ),
-                toggleFields = listOf(
-                    ToggleField(
-                        label = stringResource(R.string.live),
-                        value = iptvEditImportLiveTv,
-                        onValueChange = { iptvEditImportLiveTv = it }
-                    ),
-                    ToggleField(
-                        label = stringResource(R.string.movies),
-                        value = iptvEditImportVod,
-                        onValueChange = { iptvEditImportVod = it }
-                    ),
-                    ToggleField(
-                        label = stringResource(R.string.series),
-                        value = iptvEditImportSeries,
-                        onValueChange = { iptvEditImportSeries = it }
-                    )
-                ),
-                onConfirm = {
-                    // Build the m3uUrl: if Xtream credentials are provided, combine as "host user pass"
-                    val hasXtream = iptvEditXtreamUser.isNotBlank() && iptvEditXtreamPass.isNotBlank()
-                    val finalM3uUrl = if (hasXtream) {
-                        "${iptvEditUrl.trim()} ${iptvEditXtreamUser.trim()} ${iptvEditXtreamPass.trim()}"
+        if (showIptvInput || showStalkerInput) {
+            val editingPlaylist = if (showIptvInput && editingIptvIndex in uiState.iptvPlaylists.indices) {
+                uiState.iptvPlaylists[editingIptvIndex]
+            } else null
+            val isEditingStalker = showStalkerInput && stalkerEditId != null
+            val isEditingIptv = showIptvInput && editingPlaylist != null
+            val isEditing = isEditingStalker || isEditingIptv
+
+            val resolvedInitialName = when {
+                showStalkerInput -> stalkerEditName
+                editingPlaylist != null -> editingPlaylist.name
+                else -> ""
+            }
+
+            val sourceInfo = if (showStalkerInput) {
+                ResolvedIptvSource(IptvSourceType.STALKER, stalkerEditPortal, "", "")
+            } else if (editingPlaylist != null) {
+                val rawUrl = editingPlaylist.m3uUrl.trim()
+                val parts = rawUrl.split("\\s+".toRegex()).filter { it.isNotBlank() }
+                if (parts.size == 3 && !rawUrl.contains("get.php")) {
+                    ResolvedIptvSource(IptvSourceType.XTREAM, parts[0], parts[1], parts[2])
+                } else {
+                    val uri = try { android.net.Uri.parse(rawUrl) } catch (_: Exception) { null }
+                    val u = uri?.getQueryParameter("username").orEmpty()
+                    val p = uri?.getQueryParameter("password").orEmpty()
+                    if ((rawUrl.contains("get.php") || rawUrl.contains("player_api.php")) && u.isNotBlank() && p.isNotBlank()) {
+                        val base = "${uri!!.scheme}://${uri.host}${if (uri.port > 0) ":${uri.port}" else ""}"
+                        ResolvedIptvSource(IptvSourceType.XTREAM, base, u, p)
                     } else {
-                        iptvEditUrl
+                        ResolvedIptvSource(IptvSourceType.M3U, rawUrl, "", "")
                     }
-                    // Auto-derive EPG for Xtream if not provided
-                    val finalEpgUrl = if (hasXtream && iptvEditEpg.isBlank()) {
-                        "${iptvEditUrl.trim()} ${iptvEditXtreamUser.trim()} ${iptvEditXtreamPass.trim()}"
-                    } else {
-                        iptvEditEpg
-                    }
-                    val finalEpgUrls = splitSettingsEpgInput(finalEpgUrl)
-                    val updated = uiState.iptvPlaylists.toMutableList()
-                    val entry = com.arflix.tv.data.repository.IptvPlaylistEntry(
-                        id = updated.getOrNull(editingIptvIndex)?.id ?: "list_${editingIptvIndex + 2}".takeIf { editingIptvIndex >= 0 } ?: "list_${updated.size + 1}",
-                        name = iptvEditName,
-                        m3uUrl = finalM3uUrl,
-                        epgUrl = finalEpgUrls.firstOrNull().orEmpty(),
-                        enabled = iptvEditEnabled,
-                        epgUrls = finalEpgUrls,
-                        importLiveTv = iptvEditImportLiveTv,
-                        importVod = iptvEditImportVod,
-                        importSeries = iptvEditImportSeries
-                    )
-                    if (editingIptvIndex in updated.indices) updated[editingIptvIndex] = entry else updated.add(entry)
-                    viewModel.saveIptvPlaylists(updated)
-                    showIptvInput = false
-                },
-                onDismiss = {
-                    showIptvInput = false
                 }
-            )
-        }
-        if (showStalkerInput) {
-            val isEditing = stalkerEditId != null
-            InputModal(
-                title = stringResource(if (isEditing) R.string.settings_cd_edit_stalker_config else R.string.settings_add_stalker_portal_button),
-                fields = listOf(
-                    InputField(
-                        label = stringResource(R.string.settings_stalker_portal_name_label),
-                        value = stalkerEditName,
-                        placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
-                        onValueChange = { stalkerEditName = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_stalker_label_portal_url),
-                        value = stalkerEditPortal,
-                        placeholder = stringResource(R.string.settings_stalker_ph_portal_url),
-                        onValueChange = { stalkerEditPortal = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_stalker_label_mac),
-                        value = stalkerEditMac,
-                        placeholder = stringResource(R.string.settings_stalker_ph_mac),
-                        onValueChange = { stalkerEditMac = it }
-                    )
-                ),
-                onConfirm = {
-                    val id = stalkerEditId
-                    if (id != null) {
-                        viewModel.onEditStalkerPortal(id, stalkerEditPortal, stalkerEditMac, stalkerEditName)
-                    } else {
-                        viewModel.onAddStalkerPortal(stalkerEditPortal, stalkerEditMac, stalkerEditName)
+            } else {
+                ResolvedIptvSource(IptvSourceType.M3U, "", "", "")
+            }
+
+            val resolvedEpg = editingPlaylist?.settingsEpgInput().orEmpty()
+
+            val resolvedMac = when {
+                showStalkerInput -> stalkerEditMac
+                else -> ""
+            }
+
+            val resolvedImportLiveTv = editingPlaylist?.importLiveTv ?: true
+            val resolvedImportVod = editingPlaylist?.importVod ?: true
+            val resolvedImportSeries = editingPlaylist?.importSeries ?: true
+            val playlistEnabled = editingPlaylist?.enabled ?: true
+
+            key(
+                if (showStalkerInput) "stalker_${stalkerEditId ?: "new"}"
+                else if (isEditingIptv) "iptv_${editingPlaylist.id}"
+                else "iptv_new"
+            ) {
+                IptvPlaylistModal(
+                    isEditing = isEditing,
+                    initialSourceType = sourceInfo.sourceType,
+                    initialName = resolvedInitialName,
+                    initialUrl = sourceInfo.url,
+                    initialXtreamUser = sourceInfo.xtreamUser,
+                    initialXtreamPass = sourceInfo.xtreamPass,
+                    initialEpg = resolvedEpg,
+                    initialMacAddress = resolvedMac,
+                    initialImportLiveTv = resolvedImportLiveTv,
+                    initialImportVod = resolvedImportVod,
+                    initialImportSeries = resolvedImportSeries,
+                    onSaveIptv = { name, url, xtreamUser, xtreamPass, epg, importLiveTv, importVod, importSeries ->
+                        val hasXtream = xtreamUser.isNotBlank() && xtreamPass.isNotBlank()
+                        val finalM3uUrl = if (hasXtream) {
+                            "${url.trim()} ${xtreamUser.trim()} ${xtreamPass.trim()}"
+                        } else {
+                            url.trim()
+                        }
+                        val finalEpgUrl = if (hasXtream && epg.isBlank()) {
+                            "${url.trim()} ${xtreamUser.trim()} ${xtreamPass.trim()}"
+                        } else {
+                            epg.trim()
+                        }
+                        val finalEpgUrls = splitSettingsEpgInput(finalEpgUrl)
+                        val updated = uiState.iptvPlaylists.toMutableList()
+                        val entry = com.arflix.tv.data.repository.IptvPlaylistEntry(
+                            id = editingPlaylist?.id ?: "list_${updated.size + 1}",
+                            name = name.trim(),
+                            m3uUrl = finalM3uUrl,
+                            epgUrl = finalEpgUrls.firstOrNull().orEmpty(),
+                            enabled = playlistEnabled,
+                            epgUrls = finalEpgUrls,
+                            importLiveTv = importLiveTv,
+                            importVod = importVod,
+                            importSeries = importSeries
+                        )
+                        if (editingPlaylist != null && editingIptvIndex in updated.indices) {
+                            updated[editingIptvIndex] = entry
+                        } else {
+                            updated.add(entry)
+                        }
+                        viewModel.saveIptvPlaylists(updated)
+                        showIptvInput = false
+                        showStalkerInput = false
+                        editingIptvIndex = -1
+                        stalkerEditId = null
+                    },
+                    onSaveStalker = { name, portalUrl, macAddress ->
+                        val id = stalkerEditId
+                        if (id != null) {
+                            viewModel.onEditStalkerPortal(id, portalUrl.trim(), macAddress.trim(), name.trim())
+                        } else {
+                            viewModel.onAddStalkerPortal(portalUrl.trim(), macAddress.trim(), name.trim())
+                        }
+                        showIptvInput = false
+                        showStalkerInput = false
+                        editingIptvIndex = -1
+                        stalkerEditId = null
+                    },
+                    onDismiss = {
+                        showIptvInput = false
+                        showStalkerInput = false
+                        editingIptvIndex = -1
+                        stalkerEditId = null
                     }
-                    showStalkerInput = false
-                },
-                onDismiss = { showStalkerInput = false }
-            )
+                )
+            }
         }
         if (showStalkerRename) {
             InputModal(
@@ -4002,6 +3962,8 @@ private fun MobileSettingsLayout(
     onAddIptvClick: () -> Unit,
     onConfigureStalkerClick: () -> Unit = {},
     onEditIptvClick: (Int) -> Unit,
+    onAddStalkerPortal: () -> Unit = {},
+    onEditStalkerPortal: (StalkerPortalEntry) -> Unit = {},
     onAddCatalogClick: () -> Unit,
     onImportCatalogPackClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
@@ -4123,6 +4085,8 @@ private fun MobileSettingsLayout(
                     onAddIptvClick = onAddIptvClick,
                     onConfigureStalkerClick = onConfigureStalkerClick,
                     onEditIptvClick = onEditIptvClick,
+                    onAddStalkerPortal = onAddStalkerPortal,
+                    onEditStalkerPortal = onEditStalkerPortal,
                     onAddCatalogClick = onAddCatalogClick,
                     onImportCatalogPackClick = onImportCatalogPackClick,
                     onRenameCatalogClick = onRenameCatalogClick,
@@ -4349,6 +4313,8 @@ private fun MobileSettingsSubPage(
     onAddIptvClick: () -> Unit,
     onConfigureStalkerClick: () -> Unit = {},
     onEditIptvClick: (Int) -> Unit,
+    onAddStalkerPortal: () -> Unit = {},
+    onEditStalkerPortal: (StalkerPortalEntry) -> Unit = {},
     onAddCatalogClick: () -> Unit,
     onImportCatalogPackClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
@@ -4366,11 +4332,6 @@ private fun MobileSettingsSubPage(
 ) {
 
     val scrollState = rememberScrollState()
-    var showStalkerInput by remember { mutableStateOf(false) }
-    var stalkerEditId by remember { mutableStateOf<String?>(null) }
-    var stalkerEditPortal by remember { mutableStateOf("") }
-    var stalkerEditMac by remember { mutableStateOf("") }
-    var stalkerEditName by remember { mutableStateOf("") }
     var showStalkerRename by remember { mutableStateOf(false) }
     var stalkerRenameId by remember { mutableStateOf("") }
     var stalkerRenameName by remember { mutableStateOf("") }
@@ -4755,8 +4716,8 @@ private fun MobileSettingsSubPage(
                     focusedActionIndex = 0,
                     onConfigure = onAddIptvClick,
                     stalkerPortals = uiState.iptvStalkerPortals,
-                    onAddStalkerPortal = { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true },
-                    onEditStalkerPortal = { portal -> stalkerEditId = portal.id; stalkerEditPortal = portal.portalUrl; stalkerEditMac = portal.macAddress; stalkerEditName = portal.name; showStalkerInput = true },
+                    onAddStalkerPortal = onAddStalkerPortal,
+                    onEditStalkerPortal = onEditStalkerPortal,
                     onToggleStalkerPortal = { id -> viewModel.onToggleStalkerPortal(id) },
                     onMoveStalkerPortalUp = { id -> viewModel.onMoveStalkerPortalUp(id) },
                     onMoveStalkerPortalDown = { id -> viewModel.onMoveStalkerPortalDown(id) },
@@ -4878,42 +4839,6 @@ private fun MobileSettingsSubPage(
         }
     }
 
-    if (showStalkerInput) {
-        val isEditing = stalkerEditId != null
-        InputModal(
-            title = stringResource(if (isEditing) R.string.settings_cd_edit_stalker_config else R.string.settings_add_stalker_portal_button),
-            fields = listOf(
-                InputField(
-                    label = stringResource(R.string.settings_stalker_portal_name_label),
-                    value = stalkerEditName,
-                    placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
-                    onValueChange = { stalkerEditName = it }
-                ),
-                InputField(
-                    label = stringResource(R.string.settings_stalker_label_portal_url),
-                    value = stalkerEditPortal,
-                    placeholder = stringResource(R.string.settings_stalker_ph_portal_url),
-                    onValueChange = { stalkerEditPortal = it }
-                ),
-                InputField(
-                    label = stringResource(R.string.settings_stalker_label_mac),
-                    value = stalkerEditMac,
-                    placeholder = stringResource(R.string.settings_stalker_ph_mac),
-                    onValueChange = { stalkerEditMac = it }
-                )
-            ),
-            onConfirm = {
-                val id = stalkerEditId
-                if (id != null) {
-                    viewModel.onEditStalkerPortal(id, stalkerEditPortal, stalkerEditMac, stalkerEditName)
-                } else {
-                    viewModel.onAddStalkerPortal(stalkerEditPortal, stalkerEditMac, stalkerEditName)
-                }
-                showStalkerInput = false
-            },
-            onDismiss = { showStalkerInput = false }
-        )
-    }
     if (showStalkerRename) {
         InputModal(
             title = stringResource(R.string.settings_stalker_rename_title),
@@ -7155,18 +7080,9 @@ private fun IptvSettings(
                     }
                 }
             }
-            MobileSettingsCategory(title = stringResource(R.string.settings_section_stalker_portals)) {
-                val stalkerFull = stalkerPortals.size >= 3
-                MobileSettingsRow(
-                    icon = Icons.Default.Add,
-                    title = stringResource(R.string.settings_add_stalker_portal_button),
-                    subtitle = if (stalkerPortals.isEmpty()) stringResource(R.string.settings_stalker_add_hint) else stringResource(R.string.settings_stalker_create_another),
-                    value = if (stalkerFull) stringResource(R.string.settings_badge_full_short) else "",
-                    isFocused = false,
-                    showDivider = stalkerPortals.isNotEmpty(),
-                    onClick = { if (!stalkerFull) onAddStalkerPortal() }
-                )
-                stalkerPortals.forEachIndexed { index, portal ->
+            if (stalkerPortals.isNotEmpty()) {
+                MobileSettingsCategory(title = stringResource(R.string.settings_section_stalker_portals)) {
+                    stalkerPortals.forEachIndexed { index, portal ->
                     val isSelected = selectedIndices.contains(index)
                     Column {
                         Row(
@@ -7217,7 +7133,8 @@ private fun IptvSettings(
                     }
                 }
             }
-            MobileSettingsCategory(title = stringResource(R.string.settings_section_options)) {
+        }
+        MobileSettingsCategory(title = stringResource(R.string.settings_section_options)) {
                 val sortDisplayValue = when (sortOrder) {
                     "number" -> stringResource(R.string.settings_iptv_order_number)
                     "name" -> stringResource(R.string.settings_iptv_order_name)
@@ -7333,71 +7250,62 @@ private fun IptvSettings(
                 Spacer(modifier = Modifier.height(10.dp))
             }
             Spacer(modifier = Modifier.height(6.dp))
-            // ── Stalker portals section (separate from M3U, decision #4) ──
-            val stalkerAddIndex = playlists.size + 1
-            val stalkerFull = stalkerPortals.size >= 3
-            SettingsRow(
-                icon = Icons.Default.Add,
-                title = stringResource(R.string.settings_add_stalker_portal_button),
-                subtitle = if (stalkerPortals.isEmpty()) stringResource(R.string.settings_stalker_add_hint) else stringResource(R.string.settings_stalker_create_another),
-                value = if (stalkerFull) stringResource(R.string.settings_badge_full) else stringResource(R.string.settings_badge_add),
-                isFocused = focusedIndex == stalkerAddIndex,
-                onClick = { if (!stalkerFull) onAddStalkerPortal() },
-                modifier = Modifier.settingsFocusSlot(stalkerAddIndex)
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            stalkerPortals.forEachIndexed { index, portal ->
-                val rowIndex = playlists.size + 2 + index
-                val focusRingColor = resolveAccentColor(fallback = Pink)
-                Row(modifier = Modifier.settingsFocusSlot(rowIndex).fillMaxWidth().background(if (focusedIndex == rowIndex) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)).border(width = if (focusedIndex == rowIndex) 2.dp else 0.dp, color = if (focusedIndex == rowIndex) focusRingColor else Color.Transparent, shape = RoundedCornerShape(12.dp)).clickable { onEditStalkerPortal(portal) }.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.LiveTv, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // ── Stalker portals section ──
+            if (stalkerPortals.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                stalkerPortals.forEachIndexed { index, portal ->
+                    val rowIndex = playlists.size + 1 + index
+                    val focusRingColor = resolveAccentColor(fallback = Pink)
+                    Row(modifier = Modifier.settingsFocusSlot(rowIndex).fillMaxWidth().background(if (focusedIndex == rowIndex) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)).border(width = if (focusedIndex == rowIndex) 2.dp else 0.dp, color = if (focusedIndex == rowIndex) focusRingColor else Color.Transparent, shape = RoundedCornerShape(12.dp)).clickable { onEditStalkerPortal(portal) }.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.LiveTv, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        CatalogActionChip(
+                            icon = Icons.Default.List,
+                            isFocused = focusedIndex == rowIndex && focusedActionIndex == 0,
+                            onClick = { onManageStalkerCategories(portal.id) }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        CatalogActionChip(
+                            icon = if (portal.enabled) Icons.Default.Check else Icons.Default.VisibilityOff,
+                            isFocused = focusedIndex == rowIndex && focusedActionIndex == 1,
+                            onClick = { onToggleStalkerPortal(portal.id) }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        CatalogActionChip(
+                            icon = Icons.Default.Edit,
+                            isFocused = focusedIndex == rowIndex && focusedActionIndex == 2,
+                            onClick = { onEditStalkerPortal(portal) }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        CatalogActionChip(
+                            icon = Icons.Default.ArrowUpward,
+                            isFocused = focusedIndex == rowIndex && focusedActionIndex == 3,
+                            onClick = { onMoveStalkerPortalUp(portal.id) }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        CatalogActionChip(
+                            icon = Icons.Default.ArrowDownward,
+                            isFocused = focusedIndex == rowIndex && focusedActionIndex == 4,
+                            onClick = { onMoveStalkerPortalDown(portal.id) }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        CatalogActionChip(
+                            icon = Icons.Default.Delete,
+                            isFocused = focusedIndex == rowIndex && focusedActionIndex == 5,
+                            isDestructive = true,
+                            onClick = { onRemoveStalkerPortal(portal.id) }
+                        )
                     }
-                    CatalogActionChip(
-                        icon = Icons.Default.List,
-                        isFocused = focusedIndex == rowIndex && focusedActionIndex == 0,
-                        onClick = { onManageStalkerCategories(portal.id) }
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(
-                        icon = if (portal.enabled) Icons.Default.Check else Icons.Default.VisibilityOff,
-                        isFocused = focusedIndex == rowIndex && focusedActionIndex == 1,
-                        onClick = { onToggleStalkerPortal(portal.id) }
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(
-                        icon = Icons.Default.Edit,
-                        isFocused = focusedIndex == rowIndex && focusedActionIndex == 2,
-                        onClick = { onEditStalkerPortal(portal) }
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(
-                        icon = Icons.Default.ArrowUpward,
-                        isFocused = focusedIndex == rowIndex && focusedActionIndex == 3,
-                        onClick = { onMoveStalkerPortalUp(portal.id) }
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(
-                        icon = Icons.Default.ArrowDownward,
-                        isFocused = focusedIndex == rowIndex && focusedActionIndex == 4,
-                        onClick = { onMoveStalkerPortalDown(portal.id) }
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(
-                        icon = Icons.Default.Delete,
-                        isFocused = focusedIndex == rowIndex && focusedActionIndex == 5,
-                        isDestructive = true,
-                        onClick = { onRemoveStalkerPortal(portal.id) }
-                    )
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
-                Spacer(modifier = Modifier.height(10.dp))
             }
             Spacer(modifier = Modifier.height(6.dp))
-            val trailingBase = playlists.size + stalkerPortals.size + 2
+            val trailingBase = playlists.size + stalkerPortals.size + 1
             SettingsRow(
                 icon = Icons.Default.List,
                 title = stringResource(R.string.settings_iptv_channel_order),
@@ -10221,7 +10129,14 @@ data class ToggleField(
     val onValueChange: (Boolean) -> Unit
 )
 
-private fun IptvPlaylistEntry.settingsEpgInput(): String {
+private data class ResolvedIptvSource(
+    val sourceType: IptvSourceType,
+    val url: String,
+    val xtreamUser: String,
+    val xtreamPass: String
+)
+
+internal fun IptvPlaylistEntry.settingsEpgInput(): String {
     return (epgUrls.orEmpty().ifEmpty { listOf(epgUrl) })
         .map { it.trim() }
         .filter { it.isNotBlank() }
@@ -11395,7 +11310,7 @@ val TMDB_LANGUAGES = listOf(
     "fa-IR" to "Persian (Farsi)",
     "pl-PL" to "Polish (Polski)",
     "pt-PT" to "Portuguese (Portugues)",
-    "pt-BR" to "Portuguese - Brazil",
+    "pt-BR" to "Português (Brasil)",
     "pa-IN" to "Punjabi",
     "ro-RO" to "Romanian (Romana)",
     "ru-RU" to "Russian",

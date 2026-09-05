@@ -40,6 +40,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -3663,22 +3665,20 @@ private fun DetailsImdbSvgRatingBadge(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun MdbExternalRatingsRow(
+internal fun MdbExternalRatingsRow(
     ratings: List<MdbExternalRating>,
     centered: Boolean,
     textShadow: Shadow
 ) {
-    Row(
+    FlowRow(
         horizontalArrangement = Arrangement.spacedBy(
             6.dp,
             if (centered) Alignment.CenterHorizontally else Alignment.Start
         ),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
         ratings.forEach { rating ->
             Row(

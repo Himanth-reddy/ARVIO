@@ -91,7 +91,7 @@ fun TouchCategoryRail(
             }
         }
 
-        itemsIndexed(items, key = { index, item -> "${item.id}#$index" }) { _, item ->
+        itemsIndexed(items, key = { _, item -> item.id }) { _, item ->
             val sectionId = item.playlistSectionId
             val isSectionHeader = sectionId != null
             val isSectionOpen = sectionId != null && sectionId in expandedPlaylistIds
@@ -186,7 +186,7 @@ private fun rememberTouchRailItems(
     }.distinctBy { it.id }.toMutableList()
 
     val selected = tree.byId(selectedId)
-    if (selected != null && base.none { it.id == selectedId }) {
+    if (selected != null && tree.hidden.categories.none { it.id == selectedId } && base.none { it.id == selectedId }) {
         base.add(0, TouchCategoryRailItem(selected.id, liveCategoryLabel(selected.label), selected.count))
     }
 
