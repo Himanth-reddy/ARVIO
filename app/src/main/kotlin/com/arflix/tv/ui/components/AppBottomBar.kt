@@ -55,6 +55,8 @@ import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
 
+import com.arflix.tv.navigation.Screen
+
 internal enum class AppBottomBarMode {
     STANDARD,
     LANDSCAPE_COMPACT,
@@ -110,6 +112,16 @@ internal fun appBottomBarSpec(mode: AppBottomBarMode): AppBottomBarSpec = when (
         indicatorSizeDp = 4,
         labelFontSizeSp = 10,
     )
+}
+
+internal fun shouldShowBottomBar(
+    isMobile: Boolean,
+    currentRoute: String?,
+    isFullscreenRoute: Boolean
+): Boolean {
+    if (!isMobile || currentRoute == null || isFullscreenRoute) return false
+    val isProfileOrLogin = currentRoute == Screen.ProfileSelection.route || currentRoute == Screen.Login.route
+    return !isProfileOrLogin
 }
 
 data class BottomBarItem(

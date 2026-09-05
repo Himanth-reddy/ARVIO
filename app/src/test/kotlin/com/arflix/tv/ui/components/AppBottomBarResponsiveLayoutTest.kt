@@ -61,4 +61,59 @@ class AppBottomBarResponsiveLayoutTest {
 
         assertThat(mode).isEqualTo(AppBottomBarMode.STANDARD)
     }
+
+    @Test
+    fun mobileFirstLaunchCloudConnectShowsBottomBar() {
+        val showBar = shouldShowBottomBar(
+            isMobile = true,
+            currentRoute = "settings?autoCloudAuth=true",
+            isFullscreenRoute = false
+        )
+
+        assertThat(showBar).isTrue()
+    }
+
+    @Test
+    fun mobileProfileSelectionHidesBottomBar() {
+        val showBar = shouldShowBottomBar(
+            isMobile = true,
+            currentRoute = com.arflix.tv.navigation.Screen.ProfileSelection.route,
+            isFullscreenRoute = false
+        )
+
+        assertThat(showBar).isFalse()
+    }
+
+    @Test
+    fun mobileLoginHidesBottomBar() {
+        val showBar = shouldShowBottomBar(
+            isMobile = true,
+            currentRoute = com.arflix.tv.navigation.Screen.Login.route,
+            isFullscreenRoute = false
+        )
+
+        assertThat(showBar).isFalse()
+    }
+
+    @Test
+    fun mobilePlayerFullscreenHidesBottomBar() {
+        val showBar = shouldShowBottomBar(
+            isMobile = true,
+            currentRoute = "player/movie/123",
+            isFullscreenRoute = true
+        )
+
+        assertThat(showBar).isFalse()
+    }
+
+    @Test
+    fun nonMobileDeviceHidesBottomBar() {
+        val showBar = shouldShowBottomBar(
+            isMobile = false,
+            currentRoute = "settings?autoCloudAuth=true",
+            isFullscreenRoute = false
+        )
+
+        assertThat(showBar).isFalse()
+    }
 }

@@ -60,6 +60,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.arflix.tv.ui.components.AppBottomBar
+import com.arflix.tv.ui.components.shouldShowBottomBar
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -636,8 +637,11 @@ fun ArflixApp(
     // the fullscreen IPTV player uses BackHandler to return to the guide.
     val isPlayerScreen = currentRoute?.startsWith("player") == true
     val isFullscreenRoute = isPlayerScreen || iptvFullscreen
-    val isProfileOrLogin = currentRoute == Screen.ProfileSelection.route || currentRoute == Screen.Login.route
-    val showBottomBar = isMobile && activeProfile != null && currentRoute != null && !isFullscreenRoute && !isProfileOrLogin
+    val showBottomBar = shouldShowBottomBar(
+        isMobile = isMobile,
+        currentRoute = currentRoute,
+        isFullscreenRoute = isFullscreenRoute
+    )
     val applySystemBarsPadding = isMobile && !isFullscreenRoute
 
     val isPlayerRoute = iptvFullscreen || currentRoute?.contains("player") == true
