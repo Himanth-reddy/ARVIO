@@ -26,6 +26,7 @@ class SubtitleTranslationManager(
 
     var isEnabled: Boolean = false
     var removeHearingImpaired: Boolean = true
+    @Volatile var removeSubtitleHearingImpaired: Boolean = false
 
     var onTranslatingChanged: ((Boolean) -> Unit)? = null
     var onBatchResult: ((success: Boolean, error: String?) -> Unit)? = null

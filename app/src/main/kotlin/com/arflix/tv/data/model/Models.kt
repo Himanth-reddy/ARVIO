@@ -223,7 +223,34 @@ data class StreamSource(
     val rawLabel: String? = null,
     // Original Stremio title. Some addons use it for source/indexer details
     // that are intentionally separate from behaviorHints.filename.
-    val addonTitle: String? = null
+    val addonTitle: String? = null,
+    // Explicit source metadata only; discovery is deferred until a preview is requested.
+    val preview: StreamPreviewMetadata? = null
+) : Serializable
+
+enum class StreamPreviewKind { JELLYFIN, PLEX, EMBY, WEBVTT, IMAGE_HLS, BIF }
+
+/**
+ * Identifies existing source-owned images, never a request to generate them. Server/item/version
+ * and account scope must survive playback URL rotation. Generic tracks must be explicitly supplied;
+ * no addon storyboard convention is inferred. Headers are secrets, not cache-key material.
+ */
+@Immutable
+data class StreamPreviewMetadata(
+    val kind: StreamPreviewKind,
+    val serverId: String = "",
+    val accountId: String = "",
+    val itemId: String = "",
+    val mediaSourceId: String = "",
+    val mediaVersion: String = "",
+    val mediaETag: String = "",
+    val serverUrl: String? = null,
+    val manifestUrl: String? = null,
+    val userId: String = "",
+    val headers: Map<String, String> = emptyMap(),
+    val durationMs: Long = 0L,
+    // Original media time = player time + offset. Resume alone does not change this offset.
+    val timelineOffsetMs: Long = 0L
 ) : Serializable
 
 /**

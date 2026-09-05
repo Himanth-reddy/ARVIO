@@ -191,7 +191,11 @@ private class TranslatingTextOutput(
 
         if (!manager.isEnabled) {
             lastCueGroup = cueGroup
-            delegate.onCues(cueGroup)
+            delegate.onCues(
+                if (manager.removeSubtitleHearingImpaired)
+                    CueGroup(cleanSdhCues(cues), cueGroup.presentationTimeUs)
+                else cueGroup
+            )
             return
         }
         if (cues.isEmpty()) {
@@ -251,7 +255,7 @@ private class TranslatingTextOutput(
     @Deprecated("Uses the deprecated Media3 callback.")
     override fun onCues(cues: List<Cue>) {
         if (!manager.isEnabled || cues.isEmpty()) {
-            delegate.onCues(cues)
+            delegate.onCues(if (manager.removeSubtitleHearingImpaired) cleanSdhCues(cues) else cues)
             return
         }
         val rawText = extractRawText(cues)
@@ -287,6 +291,16 @@ private class TranslatingTextOutput(
         text.replace(AiSubtitleRegexes.BRACKET_REGEX, "")
             .replace(AiSubtitleRegexes.MUSIC_REGEX, "")
             .trim()
+
+    private fun cleanSdhCues(cues: List<Cue>): List<Cue> = cues.mapNotNull { cue ->
+        val original = cue.text ?: return@mapNotNull cue
+        val cleaned = stripHearingImpaired(original.toString())
+        when {
+            cleaned.isBlank() -> null
+            cleaned == original.toString() -> cue
+            else -> cue.buildUpon().setText(cleaned).build()
+        }
+    }
 
     private fun buildTranslated(group: CueGroup, originalCues: List<Cue>, translatedText: String): CueGroup =
         CueGroup(applyTranslatedLinesToCues(originalCues, translatedText), group.presentationTimeUs)

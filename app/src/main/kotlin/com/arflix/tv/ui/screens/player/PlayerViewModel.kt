@@ -495,6 +495,7 @@ class PlayerViewModel @Inject constructor(
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
+    private val subtitleMenuCandidates = linkedMapOf<String, Subtitle>()
     private fun frameRateMatchingModeKey() = profileManager.profileStringKey("frame_rate_matching_mode")
     private fun autoPlayNextKey() = profileManager.profileBooleanKey("auto_play_next")
     private fun showLoadingStatsKey() = profileManager.profileBooleanKey("show_loading_stats")
@@ -634,6 +635,7 @@ class PlayerViewModel @Inject constructor(
         skipIntervalsJob?.cancel()
         currentImdbId = providedImdbId
         skipIntervals = emptyList()
+        subtitleMenuCandidates.clear()
         lastActiveSkipType = null
         activeSkipRequestKey = null
         _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervals = emptyList(), skipIntervalDismissed = false)
@@ -667,6 +669,7 @@ class PlayerViewModel @Inject constructor(
             }
             val filterSubLang = prefs[filterSubtitlesByLanguageKey()] ?: true
             val removeHi = prefs[profileManager.profileBooleanKey("subtitle_remove_hearing_impaired")] ?: false
+            translationManager.removeSubtitleHearingImpaired = removeHi
             val autoPlayNext = prefs[autoPlayNextKey()] ?: true
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val volumeBoostDb = prefs[profileManager.profileStringKey("volume_boost_db")]
@@ -705,6 +708,9 @@ class PlayerViewModel @Inject constructor(
             val audioNormalization = prefs[profileManager.profileBooleanKey("audio_normalization")] ?: false
 
             _uiState.value = PlayerUiState(
+                mediaType = mediaType,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber,
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
@@ -1344,6 +1350,22 @@ class PlayerViewModel @Inject constructor(
     /**
      * Fetch media metadata in background (non-blocking)
      */
+    private suspend fun loadPlayerSeasonEpisodes(mediaId: Int, displaySeason: Int): List<com.arflix.tv.data.model.Episode> {
+        val structure = if (isCurrentAnime()) animeMapper.resolveAnimeSeasonStructure(mediaId) else null
+        val identities = structure?.seasons?.get(displaySeason)
+            ?: return mediaRepository.getSeasonEpisodes(mediaId, displaySeason)
+        val bySeason = identities.map { it.tmdbSeason }.distinct().associateWith { season ->
+            mediaRepository.getSeasonEpisodes(mediaId, season).associateBy { it.episodeNumber }
+        }
+        return identities.mapNotNull { identity ->
+            bySeason[identity.tmdbSeason]?.get(identity.tmdbEpisode)?.copy(
+                seasonNumber = identity.displaySeason,
+                episodeNumber = identity.displayEpisode,
+                identity = identity,
+            )
+        }
+    }
+
     private suspend fun fetchMediaMetadata(mediaType: MediaType, mediaId: Int) {
         try {
             val details = if (mediaType == MediaType.TV) {
@@ -1383,7 +1405,13 @@ class PlayerViewModel @Inject constructor(
                     }.getOrNull()
                     currentEpisodeTitle = episodeDetails?.name?.takeIf { it.isNotBlank() }
                     overview = episodeDetails?.overview?.takeIf { it.isNotBlank() } ?: overview
-                    fetchedSeasonEpisodes = runCatching { mediaRepository.getSeasonEpisodes(mediaId, season) }.getOrDefault(emptyList())
+                    fetchedSeasonEpisodes = try {
+                        loadPlayerSeasonEpisodes(mediaId, season)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
                 }
             } else {
                 val movieDetails = details as com.arflix.tv.data.api.TmdbMovieDetails
@@ -1500,6 +1528,9 @@ class PlayerViewModel @Inject constructor(
     // Returns subs filtered to the preferred language(s) when the setting is enabled.
     // Tries primary language first; if nothing matches, tries secondary; falls back to full list.
     private suspend fun filterSubsByPreferredLanguage(subs: List<Subtitle>): List<Subtitle> {
+        subs.forEach { subtitle ->
+            subtitleMenuCandidates[subtitle.id.ifBlank { subtitle.url }] = subtitle
+        }
         val prefs = runCatching { context.settingsDataStore.data.first() }.getOrNull() ?: return subs
         val enabled = prefs[filterSubtitlesByLanguageKey()] ?: true
         if (!enabled) return subs
@@ -2470,6 +2501,7 @@ class PlayerViewModel @Inject constructor(
      * Select a stream for playback
      */
     fun selectStream(stream: StreamSource, resumePositionMs: Long? = null) {
+        subtitleMenuCandidates.entries.removeAll { it.value.isEmbedded }
         streamSelectionJob?.cancel()
         playbackErrorReportJob?.cancel()
         streamSelectionJob = viewModelScope.launch {
@@ -3080,10 +3112,16 @@ class PlayerViewModel @Inject constructor(
             context.settingsDataStore.edit { prefs ->
                 prefs[filterSubtitlesByLanguageKey()] = enabled
             }
+            val filtered = filterSubsByPreferredLanguage(subtitleMenuCandidates.values.toList())
+            val selected = _uiState.value.selectedSubtitle
+            _uiState.value = _uiState.value.copy(
+                subtitles = (filtered + listOfNotNull(selected)).distinctBy { it.id }
+            )
         }
     }
 
     fun setSubtitleRemoveHearingImpaired(enabled: Boolean) {
+        translationManager.removeSubtitleHearingImpaired = enabled
         _uiState.value = _uiState.value.copy(subtitleRemoveHearingImpaired = enabled)
         viewModelScope.launch {
             context.settingsDataStore.edit { prefs ->
@@ -4334,6 +4372,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun reloadStreams() {
+        val resumeTarget = lastKnownPositionMs.takeIf { it > 0L } ?: currentStartPositionMs
         mediaLoadJob?.cancel()
         _uiState.value = _uiState.value.copy(
             error = null,
@@ -4359,7 +4398,7 @@ class PlayerViewModel @Inject constructor(
             preferredAddonId = currentPreferredAddonId,
             preferredSourceName = currentPreferredSourceName,
             preferredBingeGroup = currentPreferredBingeGroup,
-            startPositionMs = currentStartPositionMs,
+            startPositionMs = resumeTarget,
             isLiveStreamPlayback = currentIsLiveStreamPlayback,
             forceRefresh = true,
             airDate = currentAirDate

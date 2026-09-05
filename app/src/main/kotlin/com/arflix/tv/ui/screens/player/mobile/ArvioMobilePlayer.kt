@@ -148,6 +148,7 @@ fun ArvioMobilePlayer(
     onSkipIntro: () -> Unit,
     onSkipOutro: () -> Unit,
     onPlayNextEpisode: () -> Unit,
+    canPlayNextEpisode: Boolean = false,
     onEnterPip: () -> Unit,
     onOpenCastChooser: () -> Unit,
     onRetryPlayback: () -> Unit,
@@ -180,6 +181,10 @@ fun ArvioMobilePlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val latestRewind10 by rememberUpdatedState(onRewind10)
+    val latestForward10 by rememberUpdatedState(onForward10)
+    val latestTogglePlayPause by rememberUpdatedState(onTogglePlayPause)
+    val latestCycleAspectRatio by rememberUpdatedState(onCycleAspectRatio)
     val activity = remember(context) { context.findActivity() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
 
@@ -405,16 +410,16 @@ fun ArvioMobilePlayer(
     }
 
     // Contextual Prompt Phase State (Intro / Outro / Up Next)
-    var dismissedIntro by remember { mutableStateOf(false) }
-    var dismissedOutro by remember { mutableStateOf(false) }
-    var dismissedUpNext by remember { mutableStateOf(false) }
+    var dismissedIntro by remember(uiState.selectedStreamUrl) { mutableStateOf(false) }
+    var dismissedOutro by remember(uiState.selectedStreamUrl) { mutableStateOf(false) }
+    var dismissedUpNext by remember(uiState.selectedStreamUrl) { mutableStateOf(false) }
 
     val activeSkip = uiState.activeSkipInterval
     val isIntroInterval = activeSkip != null && !uiState.skipIntervalDismissed && activeSkip.type.lowercase() in listOf("intro", "op", "mixed-op", "recap")
     val isOutroInterval = activeSkip != null && !uiState.skipIntervalDismissed && activeSkip.type.lowercase() in listOf("outro", "ed", "mixed-ed")
 
     val isTv = uiState.mediaType == MediaType.TV || uiState.seasonNumber != null || !uiState.episodeTitle.isNullOrBlank()
-    val nextEpisode = uiState.seasonEpisodes.firstOrNull { it.episodeNumber == (uiState.episodeNumber ?: 0) + 1 }
+    val nextEpisode = uiState.seasonEpisodes.takeIf { canPlayNextEpisode }?.firstOrNull { it.episodeNumber == (uiState.episodeNumber ?: 0) + 1 }
 
     // Reset dismiss flags when seeking backward before intervals
     LaunchedEffect(currentPositionMs, activeSkip) {
@@ -444,37 +449,7 @@ fun ArvioMobilePlayer(
         }
     }
 
-    var hasAutoAdvanced by remember(uiState.title, uiState.seasonNumber, uiState.episodeNumber) { mutableStateOf(false) }
-
-    // Auto-advance to next episode when Up Next countdown reaches 10s mark
-    LaunchedEffect(currentPositionMs, isOutroInterval, activeSkip, durationMs, isTv, nextEpisode, uiState.autoPlayNext, dismissedUpNext, hasPlaybackStarted) {
-        if (!hasPlaybackStarted || !isTv || nextEpisode == null || !uiState.autoPlayNext || dismissedUpNext || hasAutoAdvanced) return@LaunchedEffect
-        if (isOutroInterval && activeSkip != null) {
-            val upNextEndMs = (activeSkip.startMs + 10000L).coerceAtMost(activeSkip.endMs)
-            if (currentPositionMs >= upNextEndMs && currentPositionMs < (durationMs - 500L)) {
-                hasAutoAdvanced = true
-                onPlayNextEpisode()
-            }
-        } else if (durationMs > 20000L && currentPositionMs >= (durationMs - 5000L) && currentPositionMs < (durationMs - 500L)) {
-            hasAutoAdvanced = true
-            onPlayNextEpisode()
-        }
-    }
-
-    // Exit player on finish if Up Next was cancelled or no next episode
-    LaunchedEffect(currentPositionMs, durationMs, hasPlaybackStarted, isTv, nextEpisode, uiState.autoPlayNext, dismissedUpNext) {
-        if (durationMs > 0L && currentPositionMs >= (durationMs - 600L) && hasPlaybackStarted) {
-            if (isTv && nextEpisode != null && uiState.autoPlayNext && !dismissedUpNext) {
-                if (!hasAutoAdvanced) {
-                    hasAutoAdvanced = true
-                    onPlayNextEpisode()
-                }
-            } else {
-                onBack()
-            }
-        }
-    }
-
+    // Automatic progression belongs to the shared STATE_ENDED prompt, not timeline position.
     val promptState = remember(
         isIntroInterval,
         isOutroInterval,
@@ -517,7 +492,7 @@ fun ArvioMobilePlayer(
                     thumbnail = nextEpisode.stillPath,
                     countdownSeconds = countdownSeconds,
                     progress = progress,
-                    isAutoplay = uiState.autoPlayNext
+                    isAutoplay = false
                 )
             }
         } else if (!isOutroInterval && isTv && nextEpisode != null && !dismissedUpNext && durationMs > 20000L) {
@@ -533,7 +508,7 @@ fun ArvioMobilePlayer(
                     thumbnail = nextEpisode.stillPath,
                     countdownSeconds = countdownSeconds,
                     progress = progress,
-                    isAutoplay = uiState.autoPlayNext
+                    isAutoplay = false
                 )
             }
         }
@@ -628,7 +603,7 @@ fun ArvioMobilePlayer(
                                 if (tapCount >= 3) {
                                     tapCount = 0
                                     if (!isLocked && uiState.error == null && !anyPanelOpen) {
-                                        onCycleAspectRatio()
+                                        latestCycleAspectRatio()
                                     }
                                 } else {
                                     tapTimerJob = launch {
@@ -649,13 +624,13 @@ fun ArvioMobilePlayer(
                                             if (!isLocked && uiState.error == null && !anyPanelOpen) {
                                                 val screenWidth = size.width
                                                 if (offset.x < screenWidth * 0.42f) {
-                                                    onRewind10()
+                                                    latestRewind10()
                                                     doubleTapSeekLeftTrigger++
                                                 } else if (offset.x > screenWidth * 0.58f) {
-                                                    onForward10()
+                                                    latestForward10()
                                                     doubleTapSeekRightTrigger++
                                                 } else {
-                                                    onTogglePlayPause()
+                                                    latestTogglePlayPause()
                                                 }
                                             }
                                         }
@@ -959,6 +934,10 @@ fun ArvioMobilePlayer(
                             isScrubbing = false
                             onScrubPreviewPosition?.invoke(null)
                         }
+                    },
+                    onSeekCancel = {
+                        isScrubbing = false
+                        onScrubPreviewPosition?.invoke(null)
                     },
                     horizontalPadding = maxHorizontalPadding,
                     bottomPadding = bottomSafePadding,

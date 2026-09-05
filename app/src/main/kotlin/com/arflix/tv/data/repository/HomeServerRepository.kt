@@ -9,6 +9,8 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.ProxyHeaders
 import com.arflix.tv.data.model.StreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.model.StreamPreviewKind
+import com.arflix.tv.data.model.StreamPreviewMetadata
 import com.arflix.tv.util.SecureStorage
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
@@ -2232,6 +2234,7 @@ class HomeServerRepository @Inject constructor(
             size = formatBytes(sizeBytes),
             sizeBytes = sizeBytes.takeIf { it > 0L },
             url = url,
+            preview = previewMetadata(connection, item),
             behaviorHints = StreamBehaviorHints(
                 cached = true,
                 filename = name.ifBlank { item.name },
@@ -2248,6 +2251,38 @@ class HomeServerRepository @Inject constructor(
             ?: path.takeIf { it.isNotBlank() }
             ?: name.takeIf { it.isNotBlank() }
             ?: "$container|$sizeBytes|$videoWidth|$videoHeight"
+    }
+
+    private fun HomeServerMediaSource.previewMetadata(
+        connection: HomeServerConnection,
+        item: HomeServerItem
+    ): StreamPreviewMetadata? {
+        val kind = when (connection.serverKind) {
+            HomeServerKind.JELLYFIN -> StreamPreviewKind.JELLYFIN
+            HomeServerKind.PLEX -> StreamPreviewKind.PLEX
+            HomeServerKind.EMBY -> StreamPreviewKind.EMBY
+            else -> return null
+        }
+        if (id.isBlank() || item.id.isBlank()) return null
+        // Neither Emby's item-only BIF endpoint nor Plex multipart playback has a proven mapping
+        // to an alternate version/concatenated timeline here. Leave those sources unsupported.
+        if (kind == StreamPreviewKind.EMBY && item.mediaSources.size != 1) return null
+        if (kind == StreamPreviewKind.PLEX && previewPartCount != 1) return null
+        return StreamPreviewMetadata(
+            kind = kind,
+            serverId = catalogServerKey(connection),
+            accountId = listOf(profileManager.getProfileIdSync(), connection.connectionId, connection.userId)
+                .joinToString("|"),
+            itemId = item.id,
+            mediaSourceId = id,
+            mediaVersion = listOf(identityKey(), eTag, sizeBytes, previewDurationMs, videoWidth, videoHeight)
+                .joinToString("|"),
+            mediaETag = eTag,
+            serverUrl = connection.serverUrl,
+            userId = connection.userId,
+            headers = playbackHeaders(connection),
+            durationMs = previewDurationMs
+        )
     }
 
     private fun HomeServerMediaSource.playbackUrl(connection: HomeServerConnection, itemId: String): String? {
@@ -2557,6 +2592,8 @@ class HomeServerRepository @Inject constructor(
                 audioProfile = audioStream?.string("profile").orEmpty().ifBlank { parentMedia?.string("audioProfile").orEmpty() },
                 videoBitDepth = videoStream?.int("bitDepth") ?: parentMedia?.int("bitDepth") ?: int("bitDepth") ?: 0,
                 mediaIndex = mediaIndex,
+                previewDurationMs = long("duration") ?: parentMedia?.long("duration") ?: 0L,
+                previewPartCount = parentMedia?.array("Part")?.size ?: 1,
                 partIndex = partIndex
             )
         }
@@ -2573,6 +2610,7 @@ class HomeServerRepository @Inject constructor(
             sizeBytes = long("Size") ?: long("RunTimeTicks")?.let { 0L } ?: 0L,
             transcodingUrl = string("TranscodingUrl"),
             videoWidth = videoStream?.int("Width") ?: 0,
+            previewDurationMs = (long("RunTimeTicks") ?: 0L) / 10_000L,
             videoHeight = videoStream?.int("Height") ?: 0
         )
     }
@@ -2723,6 +2761,8 @@ class HomeServerRepository @Inject constructor(
         val audioProfile: String = "",
         val videoBitDepth: Int = 0,
         val mediaIndex: Int = 0,
+        val previewDurationMs: Long = 0L,
+        val previewPartCount: Int = 1,
         val partIndex: Int = 0
     )
 

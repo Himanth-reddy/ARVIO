@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -485,11 +486,16 @@ fun MobilePlayerBottomSection(
     onSeekStart: (Float) -> Unit,
     onSeekMove: (Float) -> Unit,
     onSeekEnd: () -> Unit,
+    onSeekCancel: () -> Unit,
     horizontalPadding: Dp = 24.dp,
     bottomPadding: Dp = 16.dp,
     modifier: Modifier = Modifier
 ) {
     var showTotalTimeMode by remember { mutableStateOf(false) }
+    val latestSeekStart by androidx.compose.runtime.rememberUpdatedState(onSeekStart)
+    val latestSeekMove by androidx.compose.runtime.rememberUpdatedState(onSeekMove)
+    val latestSeekEnd by androidx.compose.runtime.rememberUpdatedState(onSeekEnd)
+    val latestSeekCancel by androidx.compose.runtime.rememberUpdatedState(onSeekCancel)
 
     Column(
         modifier = modifier
@@ -608,30 +614,37 @@ fun MobilePlayerBottomSection(
                 modifier = Modifier
                     .weight(1f)
                     .height(36.dp)
+                    .testTag("mobile_player_scrubber")
                     .onSizeChanged { trackWidthPx = it.width }
                     .pointerInput(durationMs) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
-                            if (trackWidthPx > 0 && durationMs > 0L) {
-                                val initialPct = (down.position.x / trackWidthPx).coerceIn(0f, 1f)
-                                onSeekStart(initialPct)
-                                down.consume()
-                            }
+                            var seeking = trackWidthPx > 0 && durationMs > 0L
+                            try {
+                                if (seeking) {
+                                    val initialPct = (down.position.x / trackWidthPx).coerceIn(0f, 1f)
+                                    latestSeekStart(initialPct)
+                                    down.consume()
+                                }
 
-                            val pointerId = down.id
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                                if (!change.pressed) {
-                                    change.consume()
-                                    onSeekEnd()
-                                    break
+                                val pointerId = down.id
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                    if (!change.pressed) {
+                                        change.consume()
+                                        if (seeking) latestSeekEnd()
+                                        seeking = false
+                                        break
+                                    }
+                                    if (seeking) {
+                                        val currentPct = (change.position.x / trackWidthPx).coerceIn(0f, 1f)
+                                        latestSeekMove(currentPct)
+                                        change.consume()
+                                    }
                                 }
-                                if (trackWidthPx > 0 && durationMs > 0L) {
-                                    val currentPct = (change.position.x / trackWidthPx).coerceIn(0f, 1f)
-                                    onSeekMove(currentPct)
-                                    change.consume()
-                                }
+                            } finally {
+                                if (seeking) latestSeekCancel()
                             }
                         }
                     },

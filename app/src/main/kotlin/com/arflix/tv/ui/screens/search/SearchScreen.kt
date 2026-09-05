@@ -82,6 +82,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.ui.components.LoadingIndicator
+import com.arflix.tv.ui.components.movieGenreNameRes
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
@@ -103,6 +104,33 @@ import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
+
+/**
+ * Display-only localization of a TMDB genre chip label. [Genre.id] stays the key
+ * the filter is compared and queried by; the English [Genre.name] is the fallback
+ * for ids without a resource.
+ */
+@Composable
+private fun Genre.localizedName(): String {
+    val res = movieGenreNameRes(id)
+    return if (res != null) stringResource(res) else name
+}
+
+/**
+ * Display-only localization of the five discover row titles built in
+ * `SearchViewModel.buildRow`. The English title stays in [Category.title] because
+ * it is part of the category id used as the row's focus key — only the rendered
+ * label is translated. Same approach as `liveCategoryLabel` in `LiveCategory.kt`.
+ */
+@Composable
+private fun localizedDiscoverRowTitle(category: Category): String = when (category.title) {
+    "Trending" -> stringResource(R.string.search_row_trending)
+    "Popular This Year" -> stringResource(R.string.search_row_popular_this_year)
+    "Top Rated" -> stringResource(R.string.search_row_top_rated)
+    "New Releases" -> stringResource(R.string.search_row_new_releases)
+    "Hidden Gems" -> stringResource(R.string.search_row_hidden_gems)
+    else -> category.title
+}
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -205,7 +233,7 @@ fun SearchScreen(
         actionGenre?.let { genre ->
             DiscoverQuickFilter(
                 key = "genre_${genre.id}",
-                label = genre.name,
+                label = genre.localizedName(),
                 isSelected = uiState.selectedGenre?.id == genre.id,
                 onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
             )
@@ -213,7 +241,7 @@ fun SearchScreen(
         comedyGenre?.let { genre ->
             DiscoverQuickFilter(
                 key = "genre_${genre.id}",
-                label = genre.name,
+                label = genre.localizedName(),
                 isSelected = uiState.selectedGenre?.id == genre.id,
                 onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
             )
@@ -221,7 +249,7 @@ fun SearchScreen(
         horrorGenre?.let { genre ->
             DiscoverQuickFilter(
                 key = "genre_${genre.id}",
-                label = genre.name,
+                label = genre.localizedName(),
                 isSelected = uiState.selectedGenre?.id == genre.id,
                 onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
             )
@@ -229,7 +257,7 @@ fun SearchScreen(
         sciFiGenre?.let { genre ->
             DiscoverQuickFilter(
                 key = "genre_${genre.id}",
-                label = genre.name,
+                label = genre.localizedName(),
                 isSelected = uiState.selectedGenre?.id == genre.id,
                 onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
             )
@@ -985,7 +1013,7 @@ private fun RowsLayer(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                category.title,
+                                localizedDiscoverRowTitle(category),
                                 style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp),
                                 color = Color.White.copy(alpha = if (isCurrentRow) 0.9f else 0.5f)
                             )
