@@ -17,16 +17,18 @@
 - A delayed channel ID could disagree with the object actually focused when a user opened the channel menu.
 - The guide's Back handler could run while the channel popup remained open. Subsequent input then acted on the wrong layer.
 - Search could perform two focus moves for one Down key. Category structure refreshes could reclaim focus, and index-based category keys changed when reordering groups.
+- Hiding the focused category could hand focus to the channel grid while leaving the drawer open. The sidebar now restores focus after that category is actually removed.
 - Programme navigation tried to focus the next lazy row before it existed.
 - Empty-result retention kept removed favorites visible. Stale favorite IDs inflated the guide count and triggered repeated paging, sometimes leaving an empty EPG query window.
 - Rapid Down repeats grew the pending SQLite page repeatedly (144 to 2,640 rows in the device reproduction). Repeated requests now share one pending 192-row increment, and page requests no longer fight the viewport for ownership of the EPG window.
+- Remote row reveal restarted a long default scrolling spring, and border animation rebuilt channel content per frame. Reveal now scrolls only the clipped distance in 100 ms; border animation state is read in the drawing phase.
 - EPG concurrency was 64 per batch rather than a shared provider budget. Failed short-guide requests could fall through to additional endpoints. Cached playlist failures could trigger another forced reload, and delayed player retries outlived their original channel.
 
 ## Verification recorded
 
 ### Local tests
 
-The focused JVM suite covers:
+42 focused JVM tests passed on the latest-main integration build:
 
 - GuideNavigationTest (5, including repeated page request coalescing)
 - IptvGuideRequestBudgetTest (3)
@@ -44,7 +46,8 @@ Device: TCL Smart TV Pro, Android 14, 192 MiB app heap growth limit. Screenshots
 - Touch scrolling at a mobile viewport: appending rows and refreshing metadata preserved scroll position; a subsequent swipe advanced the list. Also passed on an Android 14 phone emulator.
 - Reordering a favorite retained focus on that channel.
 - Programme-row navigation and Back/menu isolation passed on the physical TV (two tests, 54.115 seconds).
-- The full seven-test physical TV suite passed in 174.048 seconds, including focused-favorite removal and touch category hiding. Final mobile emulator touch scrolling and category hiding passed (two tests, 8.351 seconds).
+- The full eight-test physical TV suite passed in 178.306 seconds, including focused-favorite removal, touch category hiding, and remote focus restoration after hiding a category. Mobile emulator touch scrolling and category hiding passed (two tests, 7.881 seconds).
+- After the final clipped-distance scrolling and drawing-phase border correction, all eight physical TV tests passed again in 133.153 seconds. Both mobile touch tests passed again in 7.995 seconds, and the latest-main release build plus all 42 JVM tests passed. Test-suite duration is not a frame-rate benchmark.
 
 ### Actual configured playlist
 
@@ -56,9 +59,20 @@ Recorded device log intervals on the cached path:
 - Favorites request 14:19:14.077; indexed EPG available 14:19:14.711 (634 ms including state/focus work); the database guide query itself took 37 ms.
 - A later two-channel query took 64 ms. Screenshots confirmed NPO 1 guide blocks and continuous live playback during menu operations.
 - Actual long-press menu: move NPO 1 above and below the temporary second favorite worked; focus stayed on NPO 1. The temporary added favorite was removed afterward.
+- Actual category menu: hid the small cartoon category, confirmed its removal from the guide, then restored it using Settings > TV > playlist categories. The user's original hidden groups were left unchanged.
 - Final-build cached entry at 14:52:57.839 reached first-paint data at 14:52:57.930 (91 ms). NPO 1 indexed guide was visible at 14:52:58.784 (945 ms after data initialization).
 
-The first rapid-scroll release measurement still recorded 8.02% deadline-missed frames (p50 15 ms, p95 36 ms). It exposed the repeated page-request bug above. This is not a claim of perfectly smooth 60 fps; the subsequent paging correction requires another device measurement.
+After page-request coalescing, 160 actual Down presses reached channel 161 and 20 Up presses returned to channel 141 with live playback continuing. Only 336 rows were loaded, instead of the previous repeated growth to 2,640. The subsequent 80 Down presses also continued without resetting.
+
+Frame measurements before the final drawing/animation correction were not yet smooth enough: 20.02% deadline-missed frames (p50 16 ms, p95 73 ms) during the first paced scroll and 19.83% in a repeat using native input injection. The stationary live-player baseline was 2.73%. These are device-run observations, not an isolated benchmark or a claim of 60 fps.
+
+The final release again reached channel 161 after 160 Down presses, with live playback still running. Its measurement was 21.25% deadline-missed frames (p50 21 ms, p95 69 ms, p99 101 ms; 3,883 frames). Therefore the final animation correction improved deterministic navigation/test duration but did NOT demonstrate an overall frame-rate improvement. The super-smooth performance target remains unpassed.
+
+Final cached TV entry: data initialization 15:54:41.720, first-paint data 15:54:41.967 (247 ms), NPO 1 indexed EPG 15:54:42.813 (1,093 ms after initialization; 12 ms for its query).
+
+## Remaining performance gate
+
+Before calling this a fully approved performance release, collect a system/frame trace while scrolling with and without the mini-player, separate key-injection overhead from app work, and identify the main-thread composition/layout/allocation cost. Optimize the measured hot path, then repeat the same channel sequence on the TCL and a mobile device. The functioning cached-guide path and action regressions are verified; perfectly smooth scrolling and complete EPG coverage are not.
 
 ## Provider test limitation
 
@@ -75,3 +89,7 @@ Sideload release keeps version 1.9.996 (311). No uninstall or data clear was use
 `9778d7533d4bc1aee80c1d2d7043fb22cba3b79cd11911d3b131c1316d5f17c1`
 
 Credentials and raw provider URLs are excluded from this document and test fixtures.
+
+## Latest-main integration
+
+The IPTV changes were also applied to `14543b97b` (including the newly merged player/details PRs). The signed sideload release and the 42-test focused JVM suite built successfully; a second assemble confirmed the final sources were up to date. Uncommitted player-preview work in the original worktree was left intact, not overwritten or mixed into this IPTV commit.

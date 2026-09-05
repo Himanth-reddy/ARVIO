@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.tv.live
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -196,15 +198,19 @@ fun EpgGrid(
     val scope = rememberCoroutineScope()
     suspend fun revealRow(rowIdx: Int) {
         val layout = channelListState.layoutInfo
+        val first = layout.visibleItemsInfo.firstOrNull() ?: return
         val row = layout.visibleItemsInfo.firstOrNull { it.index == rowIdx }
-        if (row == null || row.offset < layout.viewportStartOffset ||
-            row.offset + row.size > layout.viewportEndOffset
-        ) {
-            val first = layout.visibleItemsInfo.firstOrNull()?.index ?: 0
-            val visibleCount = layout.visibleItemsInfo.size.coerceAtLeast(1)
-            channelListState.animateScrollToItem(
-                if (rowIdx < first) rowIdx else (rowIdx - visibleCount + 2).coerceAtLeast(0)
-            )
+        // Rows have a fixed height. Reveal only the clipped portion instead of
+        // restarting a long item-to-item spring on every remote repeat.
+        val top = row?.offset ?: (first.offset + (rowIdx - first.index) * first.size)
+        val bottom = top + (row?.size ?: first.size)
+        val delta = when {
+            top < layout.viewportStartOffset -> top - layout.viewportStartOffset
+            bottom > layout.viewportEndOffset -> bottom - layout.viewportEndOffset
+            else -> 0
+        }
+        if (delta != 0) {
+            channelListState.animateScrollBy(delta.toFloat(), tween(durationMillis = 100))
         }
     }
     fun nearestProgramIndex(rowIdx: Int, anchorStartMin: Int): Int? {

@@ -11,6 +11,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -171,5 +172,29 @@ class GuideNavigationDeviceTest {
         compose.runOnIdle { assertEquals(setOf("test|News"), hidden.value) }
         compose.onNodeWithText("News").assertDoesNotExist()
         compose.onNodeWithText("Movies").assertIsDisplayed()
+    }
+
+    @Test fun hidingFocusedCategoryKeepsRemoteFocusInTheDrawer() {
+        val hidden = mutableStateOf(emptySet<String>())
+        compose.setContent {
+            val state = buildPagedStartupChannelState(
+                channels = rows.take(1).map { it.source }, totalChannelCount = 55_000,
+                playlistGroupCounts = listOf(Triple("test", "News", 54_990), Triple("test", "Movies", 10)),
+                favorites = emptySet(), recents = emptySet(), hiddenGroups = hidden.value)
+            CategorySidebar(tree = state.tree, selectedId = "all", expanded = true,
+                listState = rememberLazyListState(), onSelect = {}, onOpenSearch = {},
+                isTouchDevice = false,
+                onHideCategory = { playlist, group -> hidden.value = setOf("$playlist|$group") })
+        }
+        compose.onNode(isFocusable() and hasAnyDescendant(hasText("News")))
+            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            .assertIsFocused()
+        compose.onRoot().performKeyInput { pressKey(Key.Menu) }
+        compose.onNodeWithText("Hide category").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("News").assertDoesNotExist()
+        compose.onNode(isFocusable() and hasAnyDescendant(hasText("All Channels"))).assertIsFocused()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNode(isFocusable() and hasAnyDescendant(hasText("Movies"))).assertIsFocused()
     }
 }

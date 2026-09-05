@@ -145,6 +145,7 @@ fun CategorySidebar(
     var expandedAll by rememberSaveable { mutableStateOf(false) }
     var expandedPlaylistIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var activeMenu by remember { mutableStateOf<CategoryMenuState?>(null) }
+    var hiddenCategoryPendingFocus by remember { mutableStateOf<String?>(null) }
     var menuSelectArmed by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     val selectedCategoryFocusRequester = remember { FocusRequester() }
@@ -184,6 +185,7 @@ fun CategorySidebar(
             canLock = menu.canLock,
             canUnlock = menu.canUnlock,
             onHide = {
+                hiddenCategoryPendingFocus = menu.id
                 activeMenu = null
                 onHideCategory(menu.playlistId, menu.groupName)
             },
@@ -265,6 +267,30 @@ fun CategorySidebar(
     // both must be corrected.
     var userChoseSearch by remember { mutableStateOf(false) }
     var categoryHasHadFocus by remember { mutableStateOf(false) }
+
+    LaunchedEffect(categoryStructureKey, hiddenCategoryPendingFocus, selectedId) {
+        val hiddenId = hiddenCategoryPendingFocus ?: return@LaunchedEffect
+        if (isTouchDevice || !expanded) {
+            hiddenCategoryPendingFocus = null
+            return@LaunchedEffect
+        }
+        if (tree.byId(hiddenId) != null && tree.hidden.categories.none { it.id == hiddenId }) {
+            return@LaunchedEffect
+        }
+        // Removing the focused lazy row must not hand focus to the guide behind the drawer.
+        repeat(LiveTvStartup.INITIAL_FOCUS_ATTEMPTS) {
+            runCatching { selectedCategoryFocusRequester.requestFocus() }
+            delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+            if (sidebarHasFocus && !searchHasFocus) {
+                hiddenCategoryPendingFocus = null
+                return@LaunchedEffect
+            }
+            listState.scrollToItem(0)
+            runCatching { firstCategoryFocusRequester.requestFocus() }
+            delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+        }
+        hiddenCategoryPendingFocus = null
+    }
 
     LaunchedEffect(expanded) {
         if (!expanded) {
