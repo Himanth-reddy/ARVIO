@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.subtitles
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
@@ -8,6 +8,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 
 class SubtitleTranslationManager(
     private var service: SubtitleTranslationService,
@@ -24,6 +26,7 @@ class SubtitleTranslationManager(
 
     var isEnabled: Boolean = false
     var removeHearingImpaired: Boolean = true
+    @Volatile var removeSubtitleHearingImpaired: Boolean = false
 
     var onTranslatingChanged: ((Boolean) -> Unit)? = null
     var onBatchResult: ((success: Boolean, error: String?) -> Unit)? = null
@@ -44,7 +47,7 @@ class SubtitleTranslationManager(
     // Tracks texts currently queued but not yet translated, to avoid double-queuing the same text
     // from both the real-time path and preTranslateWindow racing on the same cue.
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<String>>()
-    @Volatile private var pendingCount = 0
+    private val pendingCount = AtomicInteger(0)
     private var hideTranslatingJob: Job? = null
 
     private data class PendingItem(val text: String, val deferred: CompletableDeferred<String>)
@@ -81,7 +84,17 @@ class SubtitleTranslationManager(
             }
 
             val texts = batch.map { it.text }
-            val result = service.translateBatch(texts, targetLanguage)
+            val result = try {
+                service.translateBatch(texts, targetLanguage)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TranslationResult(
+                    lines = emptyList(),
+                    success = false,
+                    errorMessage = e.message ?: "Translation error"
+                )
+            }
             if (!result.success) {
                 onBatchResult?.invoke(false, result.errorMessage)
                 // On error: complete deferreds with original text so the caller doesn't hang,
@@ -116,7 +129,7 @@ class SubtitleTranslationManager(
 
         val deferred = CompletableDeferred<String>()
         inFlight[text] = deferred
-        val depth = pendingCount++
+        val depth = pendingCount.getAndIncrement()
         if (depth == 0) {
             isTranslating = true
             onTranslatingChanged?.invoke(true)
@@ -125,11 +138,11 @@ class SubtitleTranslationManager(
         return try {
             deferred.await()
         } finally {
-            if (--pendingCount == 0) {
+            if (pendingCount.decrementAndGet() == 0) {
                 hideTranslatingJob?.cancel()
                 hideTranslatingJob = scope.launch {
                     delay(1500)
-                    if (pendingCount == 0) {
+                    if (pendingCount.get() == 0) {
                         isTranslating = false
                         onTranslatingChanged?.invoke(false)
                     }
@@ -141,9 +154,10 @@ class SubtitleTranslationManager(
     fun reset() {
         cache.clear()
         inFlight.clear()
-        pendingCount = 0
-        isTranslating = false
-        onTranslatingChanged?.invoke(false)
+        if (pendingCount.get() == 0) {
+            isTranslating = false
+            onTranslatingChanged?.invoke(false)
+        }
     }
 
     suspend fun preTranslateWindow(texts: List<String>) {

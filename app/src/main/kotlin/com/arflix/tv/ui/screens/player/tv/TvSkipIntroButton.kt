@@ -1,6 +1,6 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.tv
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -50,7 +50,7 @@ import kotlinx.coroutines.delay
  * Appears during active skip intervals (intro/recap/outro/OP/ED).
  */
 @Composable
-fun SkipIntroButton(
+fun TvSkipIntroButton(
     interval: SkipInterval?,
     dismissed: Boolean,
     controlsVisible: Boolean,

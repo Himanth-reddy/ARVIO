@@ -112,6 +112,29 @@ class SeekPreviewFrameProviderTest {
     }
 
     @Test
+    fun `hysteresis prevents bucket flipping from small jitter across boundaries`() {
+        val duration = 7_200_000L
+
+        // Initial scrub with uninitialized bucket (-1L)
+        val initialBucket = quantizeSeekPreviewPositionWithHysteresis(-1L, 20_000L, duration)
+        assertEquals(20_000L, initialBucket)
+
+        // Micro-tremor moving slightly forward past the 5s rounding midpoint (25_500ms):
+        // Normal quantize would jump to 30_000L, but hysteresis holds 20_000L
+        assertEquals(20_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 25_500L, duration))
+        assertEquals(20_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 27_000L, duration))
+
+        // Micro-tremor moving backwards (14_500ms):
+        // Normal quantize would jump to 10_000L, but hysteresis holds 20_000L
+        assertEquals(20_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 14_500L, duration))
+        assertEquals(20_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 13_000L, duration))
+
+        // Deliberate movement beyond the ±7,500ms hysteresis threshold switches buckets
+        assertEquals(30_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 28_000L, duration))
+        assertEquals(10_000L, quantizeSeekPreviewPositionWithHysteresis(20_000L, 12_000L, duration))
+    }
+
+    @Test
     fun `metadata round trip preserves actual timestamp instead of requested bucket`() {
         val metadata = PreviewMetadata("media-account-version", 30_000, 28_160, null, null, SeekPreviewOrigin.DECODER, SeekPreviewValidity.TIMESTAMP)
         val bytes = ByteArrayOutputStream().also { metadata.write(DataOutputStream(it)) }.toByteArray()

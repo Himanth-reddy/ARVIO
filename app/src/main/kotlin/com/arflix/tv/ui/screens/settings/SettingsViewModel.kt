@@ -11,8 +11,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.R
 import com.arflix.tv.server.AiKeyConfigServer
-import com.arflix.tv.ui.screens.player.SubtitleAiModel
 import com.arflix.tv.ui.screens.player.SubtitleFontOption
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.DeviceIpAddress
 import com.arflix.tv.util.DiagnosticsManager

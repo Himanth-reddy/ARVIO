@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.subtitles
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -398,8 +398,16 @@ object SubtitleSyncMatcher {
         return intersection.toDouble() / minOf(setA.size, setB.size)
     }
 
-    private fun tokens(text: String): Set<String> =
-        normalize(text).split(' ').filter { it.length >= 2 }.toSet()
+    private fun tokens(text: String): Set<String> {
+        val norm = normalize(text)
+        if (norm.isEmpty()) return emptySet()
+        return if (!norm.contains(' ')) {
+            if (norm.length == 1) setOf(norm)
+            else (0 until norm.length - 1).map { norm.substring(it, it + 2) }.toSet()
+        } else {
+            norm.split(' ').filter { it.length >= 2 }.toSet()
+        }
+    }
 
     private fun normalize(text: String): String {
         val sb = StringBuilder(text.length)

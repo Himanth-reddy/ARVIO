@@ -922,6 +922,8 @@
     <string name="player_cd_setup">Setup</string>
     <string name="player_cd_error">Error</string>
     <string name="player_addon_setup_required">Addon Setup Required</string>
+    <string name="player_addon_setup_hint">Configure and install video addons in Settings to stream content</string>
+    <string name="player_season_episode_short">S%1$d E%2$d</string>
     <string name="player_playback_error">Playback Error</string>
     <string name="player_error_generic">An unknown error occurred</string>
     <string name="player_phase_loading_stream">Loading video stream…</string>
