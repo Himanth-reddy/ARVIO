@@ -4349,6 +4349,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.PlayArrow,
                         title = stringResource(R.string.auto_play_next_title),
                         value = stringResource(if (uiState.autoPlayNext) R.string.on else R.string.off),
+                        toggleChecked = uiState.autoPlayNext,
                         isFocused = false,
                         onClick = { viewModel.setAutoPlayNext(!uiState.autoPlayNext) }
                     )
@@ -4356,6 +4357,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.PlayArrow,
                         title = stringResource(R.string.autoplay),
                         value = stringResource(if (uiState.autoPlaySingleSource) R.string.on else R.string.off),
+                        toggleChecked = uiState.autoPlaySingleSource,
                         isFocused = false,
                         onClick = { viewModel.setAutoPlaySingleSource(!uiState.autoPlaySingleSource) }
                     )
@@ -4370,6 +4372,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Movie,
                         title = stringResource(R.string.trailer_auto_play),
                         value = stringResource(if (uiState.trailerAutoPlay) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerAutoPlay,
                         isFocused = false,
                         onClick = { viewModel.setTrailerAutoPlay(!uiState.trailerAutoPlay) }
                     )
@@ -4377,6 +4380,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.VolumeUp,
                         title = stringResource(R.string.trailer_sound),
                         value = stringResource(if (uiState.trailerSoundEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerSoundEnabled,
                         isFocused = false,
                         onClick = { viewModel.setTrailerSoundEnabled(!uiState.trailerSoundEnabled) }
                     )
@@ -4391,6 +4395,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Movie,
                         title = stringResource(R.string.trailer_in_cards),
                         value = stringResource(if (uiState.trailerInCards) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerInCards,
                         isFocused = false,
                         onClick = { viewModel.setTrailerInCards(!uiState.trailerInCards) }
                     )
@@ -4406,6 +4411,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.dv_compat_title),
                         subtitle = stringResource(R.string.dv_compat_desc),
                         value = stringResource(if (uiState.dolbyVisionCompatEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.dolbyVisionCompatEnabled,
                         isFocused = false,
                         onClick = { viewModel.setDolbyVisionCompatEnabled(!uiState.dolbyVisionCompatEnabled) }
                     )
@@ -4423,6 +4429,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Person,
                         title = stringResource(R.string.skip_profile),
                         value = stringResource(if (uiState.skipProfileSelection) R.string.on else R.string.off),
+                        toggleChecked = uiState.skipProfileSelection,
                         isFocused = false,
                         onClick = { viewModel.setSkipProfileSelection(!uiState.skipProfileSelection) }
                     )
@@ -4486,6 +4493,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.subtitle_stylized),
                         subtitle = stringResource(R.string.subtitle_stylized_desc),
                         value = stringResource(if (uiState.subtitleStylized) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleStylized,
                         isToggle = true,
                         isFocused = false,
                         onClick = { viewModel.toggleSubtitleStylized() }
@@ -4496,6 +4504,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.ai_find_best_match_title),
                         subtitle = stringResource(R.string.ai_find_best_match_desc),
                         value = stringResource(if (uiState.subtitleAiFindBestMatch) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleAiFindBestMatch,
                         isToggle = true,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch) }
@@ -4505,6 +4514,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.subtitle_preload_title),
                         subtitle = stringResource(R.string.subtitle_preload_desc),
                         value = stringResource(if (uiState.subtitlePreloadEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitlePreloadEnabled,
                         isToggle = true,
                         isFocused = false,
                         onClick = { viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled) }
@@ -4514,6 +4524,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.filter_subtitles),
                         subtitle = stringResource(R.string.filter_subtitles_desc),
                         value = stringResource(if (uiState.filterSubtitlesByLanguage) R.string.on else R.string.off),
+                        toggleChecked = uiState.filterSubtitlesByLanguage,
                         isToggle = true,
                         isFocused = false,
                         showDivider = false,
@@ -4526,6 +4537,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.ai_subtitle_translation_title),
                         subtitle = stringResource(R.string.ai_subtitle_translation_desc),
                         value = stringResource(if (uiState.subtitleAiEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleAiEnabled,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleAiEnabled(!uiState.subtitleAiEnabled) }
                     )
@@ -4545,6 +4557,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.ai_auto_select_title),
                         subtitle = stringResource(R.string.ai_auto_select_desc),
                         value = stringResource(if (uiState.subtitleAiAutoSelect) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleAiAutoSelect,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleAiAutoSelect(!uiState.subtitleAiAutoSelect) }
                     )
@@ -4553,6 +4566,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.ai_remove_hi_title),
                         subtitle = stringResource(R.string.ai_remove_hi_desc),
                         value = stringResource(if (uiState.subtitleRemoveHearingImpaired) R.string.on else R.string.off),
+                        toggleChecked = uiState.subtitleRemoveHearingImpaired,
                         isFocused = false,
                         onClick = { viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired) }
                     )
@@ -4609,6 +4623,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.oled_black_background),
                         subtitle = stringResource(R.string.oled_black_background_desc),
                         value = stringResource(if (uiState.oledBlackBackground) R.string.on else R.string.off),
+                        toggleChecked = uiState.oledBlackBackground,
                         isFocused = false,
                         onClick = { viewModel.setOledBlackBackground(!uiState.oledBlackBackground) }
                     )
@@ -4623,6 +4638,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Movie,
                         title = stringResource(R.string.show_budget),
                         value = stringResource(if (uiState.showBudget) R.string.on else R.string.off),
+                        toggleChecked = uiState.showBudget,
                         isFocused = false,
                         showDivider = true,
                         onClick = { viewModel.setShowBudget(!uiState.showBudget) }
@@ -4631,6 +4647,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.Star,
                         title = stringResource(R.string.show_episode_ratings),
                         value = stringResource(if (uiState.showEpisodeRatings) R.string.on else R.string.off),
+                        toggleChecked = uiState.showEpisodeRatings,
                         isFocused = false,
                         showDivider = true,
                         onClick = { viewModel.setShowEpisodeRatings(!uiState.showEpisodeRatings) }
@@ -4639,6 +4656,7 @@ private fun MobileSettingsSubPage(
                         icon = Icons.Default.VisibilityOff,
                         title = stringResource(R.string.spoiler_blur),
                         value = stringResource(if (uiState.spoilerBlurEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.spoilerBlurEnabled,
                         isFocused = false,
                         showDivider = true,
                         onClick = { viewModel.setSpoilerBlurEnabled(!uiState.spoilerBlurEnabled) }
@@ -4656,6 +4674,7 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.smooth_scrolling),
                         subtitle = stringResource(R.string.smooth_scrolling_desc),
                         value = stringResource(if (uiState.smoothScrolling) R.string.on else R.string.off),
+                        toggleChecked = uiState.smoothScrolling,
                         isFocused = false,
                         showDivider = false,
                         onClick = { viewModel.setSmoothScrolling(!uiState.smoothScrolling) }
@@ -4871,6 +4890,7 @@ private fun MobilePrivacySubPage(
             title = stringResource(R.string.settings_diagnostics_sharing),
             subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
             value = stringResource(if (uiState.diagnosticsSharingEnabled) R.string.on else R.string.off),
+            toggleChecked = uiState.diagnosticsSharingEnabled,
             isFocused = false,
             showDivider = false,
             onClick = { viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled) }
@@ -10816,6 +10836,7 @@ private fun InputModal(
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                     update = { editText ->
+                                        editText.hint = field.placeholder.ifBlank { enterFieldHint }
                                         val current = editText.text?.toString().orEmpty()
                                         if (current != field.value) {
                                             editText.setText(field.value)
