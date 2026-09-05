@@ -314,6 +314,22 @@ private fun openExternalUrl(context: Context, url: String) {
     }
 }
 
+/**
+ * Resolves a [SettingsMessage] against the app language. Nested messages (e.g. the EPG summary
+ * inside an IPTV status line) are resolved first so they are localized too.
+ */
+@Composable
+private fun SettingsMessage.localizedText(): String = when (this) {
+    is SettingsMessage.Raw -> text
+    is SettingsMessage.Res -> {
+        val args = mutableListOf<Any>()
+        formatArgs.forEach { arg ->
+            args += if (arg is SettingsMessage) arg.localizedText() else arg
+        }
+        stringResource(resourceId, *args.toTypedArray())
+    }
+}
+
 @Composable
 private fun formatUserAgentPreview(value: String?, maxLength: Int): String {
     val safeValue = value.orEmpty()
@@ -1695,8 +1711,8 @@ fun SettingsScreen(
                             playlists = uiState.iptvPlaylists,
                             channelCount = uiState.iptvChannelCount,
                             isLoading = uiState.isIptvLoading,
-                            error = uiState.iptvError,
-                            statusMessage = uiState.iptvStatusMessage,
+                            error = uiState.iptvError?.localizedText(),
+                            statusMessage = uiState.iptvStatusMessage?.localizedText(),
                             statusType = uiState.iptvStatusType,
                             progressText = uiState.iptvProgressText,
                             progressPercent = uiState.iptvProgressPercent,
@@ -1756,8 +1772,8 @@ fun SettingsScreen(
                             playlists = uiState.iptvPlaylists,
                             channelCount = uiState.iptvChannelCount,
                             isLoading = uiState.isIptvLoading,
-                            error = uiState.iptvError,
-                            statusMessage = uiState.iptvStatusMessage,
+                            error = uiState.iptvError?.localizedText(),
+                            statusMessage = uiState.iptvStatusMessage?.localizedText(),
                             statusType = uiState.iptvStatusType,
                             progressText = uiState.iptvProgressText,
                             progressPercent = uiState.iptvProgressPercent,
@@ -1817,7 +1833,7 @@ fun SettingsScreen(
                             connections = uiState.homeServerConnections,
                             isWorking = uiState.isHomeServerConnecting,
                             isPlexWorking = uiState.isPlexHomeServerPolling || uiState.plexHomeServerAuth != null,
-                            error = uiState.homeServerError,
+                            error = uiState.homeServerError?.localizedText(),
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             onConnect = {
                                 homeServerUrl = ""
@@ -1899,7 +1915,7 @@ fun SettingsScreen(
                             isTraktAuthStarting = uiState.isTraktAuthStarting,
                             isTraktPolling = uiState.isTraktPolling,
                             isForceCloudSyncing = uiState.isForceCloudSyncing,
-                            lastCloudSyncStatus = uiState.lastCloudSyncStatus,
+                            lastCloudSyncStatus = uiState.lastCloudSyncStatus?.localizedText(),
                             diagnosticsSharingEnabled = uiState.diagnosticsSharingEnabled,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             updateStatus = uiState.updateStatus,
@@ -2202,7 +2218,7 @@ fun SettingsScreen(
                 query = uiState.catalogSearchQuery,
                 results = uiState.catalogSearchResults,
                 isSearching = uiState.isCatalogSearching,
-                error = uiState.catalogSearchError,
+                error = uiState.catalogSearchError?.localizedText(),
                 manualUrl = catalogInputUrl,
                 addedCatalogUrls = uiState.catalogs.mapNotNull { it.sourceUrl }.toSet(),
                 onQueryChange = viewModel::setCatalogSearchQuery,
@@ -2266,7 +2282,7 @@ fun SettingsScreen(
             CatalogPackImportDialog(
                 pendingPack = uiState.pendingPackManifest,
                 isLoading = uiState.isPackLoading,
-                error = uiState.packError,
+                error = uiState.packError?.localizedText(),
                 onConfirm = { manifest ->
                     viewModel.confirmInstallPack(uiState.pendingPackUrl ?: "")
                 },
@@ -2606,7 +2622,7 @@ fun SettingsScreen(
         // Toast notification
         uiState.toastMessage?.let { message ->
             Toast(
-                message = message,
+                message = message.localizedText(),
                 type = when (uiState.toastType) {
                     ToastType.SUCCESS -> ComponentToastType.SUCCESS
                     ToastType.ERROR -> ComponentToastType.ERROR
@@ -4741,8 +4757,8 @@ private fun MobileSettingsSubPage(
                     playlists = uiState.iptvPlaylists,
                     channelCount = uiState.iptvChannelCount,
                     isLoading = uiState.isIptvLoading,
-                    error = uiState.iptvError,
-                    statusMessage = uiState.iptvStatusMessage,
+                    error = uiState.iptvError?.localizedText(),
+                    statusMessage = uiState.iptvStatusMessage?.localizedText(),
                     statusType = uiState.iptvStatusType,
                     progressText = uiState.iptvProgressText,
                     progressPercent = uiState.iptvProgressPercent,
@@ -4823,7 +4839,7 @@ private fun MobileSettingsSubPage(
                     connections = uiState.homeServerConnections,
                     isWorking = uiState.isHomeServerConnecting,
                     isPlexWorking = uiState.isPlexHomeServerPolling || uiState.plexHomeServerAuth != null,
-                    error = uiState.homeServerError,
+                    error = uiState.homeServerError?.localizedText(),
                     focusedIndex = -1,
                     onConnect = onConnectHomeServerClick,
                     onConnectPlex = onConnectPlexHomeServerClick,
@@ -5103,7 +5119,8 @@ private fun MobileCloudAccountSubPage(
         MobileSettingsRow(
             icon = Icons.Default.Sync,
             title = stringResource(R.string.settings_force_sync),
-            subtitle = uiState.lastCloudSyncStatus ?: stringResource(R.string.settings_cloud_manual_sync_sub),
+            subtitle = uiState.lastCloudSyncStatus?.localizedText()
+                ?: stringResource(R.string.settings_cloud_manual_sync_sub),
             value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else stringResource(R.string.settings_badge_sync),
             isFocused = false,
             showDivider = true,
