@@ -1109,8 +1109,6 @@ fun DetailsScreen(
             completedAddons = uiState.completedAddons,
             totalAddons = uiState.totalAddons,
             streamSearchStartTime = uiState.streamSearchStartTime,
-            pluginScrapersLoading = uiState.pluginScrapersLoading,
-            loadingPluginNames = uiState.loadingPluginNames,
             onFocusedStream = { stream ->
                 viewModel.prewarmStreamsAround(stream, uiState.streams)
             },
