@@ -317,10 +317,6 @@ fun IptvPlaylistModal(
         modalFocusRequester.requestFocus()
     }
 
-    LaunchedEffect(Unit) {
-        modalFocusRequester.requestFocus()
-    }
-
     Dialog(
         onDismissRequest = {
             hideKeyboardAll()
@@ -332,6 +328,11 @@ fun IptvPlaylistModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        // Dialog content is composed separately; its focus target must be attached first.
+        LaunchedEffect(Unit) {
+            modalFocusRequester.requestFocus()
+        }
+
         BackHandler {
             hideKeyboardAll()
             onDismiss()
