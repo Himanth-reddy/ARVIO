@@ -4546,8 +4546,8 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.ai_model_title),
                         subtitle = stringResource(R.string.ai_model_desc),
                         value = when (uiState.subtitleAiModel) {
-                            com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - GPT-OSS 120B"
-                            com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 3.5 Flash Lite"
+                            com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - GPT-OSS 120B"
+                            com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 3.5 Flash Lite"
                         },
                         isFocused = false,
                         onClick = onSubtitleAiModelClick
@@ -4588,9 +4588,9 @@ private fun MobileSettingsSubPage(
                     if (uiState.subtitleAiEnabled) {
                         Text(
                             text = when (uiState.subtitleAiModel) {
-                                com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B ->
+                                com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B ->
                                     stringResource(R.string.ai_groq_disclaimer)
-                                com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 ->
+                                com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GEMINI_FLASH_25 ->
                                     stringResource(R.string.ai_gemini_disclaimer)
                             },
                             style = ArflixTypography.caption.copy(fontSize = 11.sp),
@@ -4598,17 +4598,6 @@ private fun MobileSettingsSubPage(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                         )
                     }
-                }
-                MobileSettingsCategory(title = stringResource(R.string.settings_section_audio)) {
-                    MobileSettingsRow(
-                        icon = Icons.Default.VolumeUp,
-                        title = stringResource(R.string.volume_boost),
-                        value = if (uiState.volumeBoostDb > 0) "+${uiState.volumeBoostDb} dB" else "0 dB",
-                        isToggle = false,
-                        isFocused = false,
-                        showDivider = false,
-                        onClick = { viewModel.cycleVolumeBoost() }
-                    )
                 }
             }
             "Appearance" -> {
@@ -5784,7 +5773,7 @@ private fun TvGeneralSettingsRows(
     subtitlePreloadEnabled: Boolean = false,
     dolbyVisionCompatEnabled: Boolean = true,
     subtitleAiApiKey: String = "",
-    subtitleAiModel: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B,
+    subtitleAiModel: com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel = com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B,
     subtitleRemoveHearingImpaired: Boolean = true,
     onSubtitleAiEnabledToggle: (Boolean) -> Unit = {},
     onSubtitleAiModelClick: () -> Unit = {},
@@ -5892,8 +5881,8 @@ private fun TvGeneralSettingsRows(
                     title = stringResource(R.string.ai_model_title),
                     subtitle = stringResource(R.string.ai_model_desc),
                     value = when (subtitleAiModel) {
-                        com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - GPT-OSS 120B"
-                        com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 3.5 Flash Lite"
+                        com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - GPT-OSS 120B"
+                        com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 3.5 Flash Lite"
                     },
                     isFocused = focusedIndex == localIndex,
                     onClick = onSubtitleAiModelClick,
@@ -5982,7 +5971,7 @@ private fun GeneralSettings(
     subtitleAiAutoSelect: Boolean = false,
     subtitleAiFindBestMatch: Boolean = false,
     subtitleAiApiKey: String = "",
-    subtitleAiModel: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B,
+    subtitleAiModel: com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel = com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B,
     subtitleRemoveHearingImpaired: Boolean = true,
     onSubtitleAiEnabledToggle: (Boolean) -> Unit = {},
     onSubtitleAiModelClick: () -> Unit = {},
@@ -6359,8 +6348,8 @@ private fun GeneralSettings(
             title = stringResource(R.string.ai_model_title),
             subtitle = stringResource(R.string.ai_model_desc),
             value = when (subtitleAiModel) {
-                com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq – GPT-OSS 120B"
-                com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google – Gemini 3.5 Flash Lite"
+                com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq – GPT-OSS 120B"
+                com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GEMINI_FLASH_25 -> "Google – Gemini 3.5 Flash Lite"
             },
             isFocused = focusedIndex == 29,
             onClick = onSubtitleAiModelClick,
@@ -6408,9 +6397,9 @@ private fun GeneralSettings(
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = when (subtitleAiModel) {
-                    com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B ->
+                    com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B ->
                         stringResource(R.string.ai_groq_disclaimer)
-                    com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 ->
+                    com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GEMINI_FLASH_25 ->
                         stringResource(R.string.ai_gemini_disclaimer)
                 },
                 style = ArflixTypography.caption.copy(fontSize = 11.sp),
@@ -6435,14 +6424,14 @@ private fun maskAiApiKey(key: String, notSetLabel: String = "Not set"): String {
 
 @Composable
 private fun AiModelDialog(
-    currentModel: com.arflix.tv.ui.screens.player.SubtitleAiModel,
-    onModelSelected: (com.arflix.tv.ui.screens.player.SubtitleAiModel) -> Unit,
+    currentModel: com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel,
+    onModelSelected: (com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel) -> Unit,
     onDismiss: () -> Unit
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val options = listOf(
-        Triple(com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B, "Groq – GPT-OSS 120B", stringResource(R.string.ai_groq_model_note)),
-        Triple(com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25, "Google – Gemini 3.5 Flash Lite", stringResource(R.string.ai_gemini_model_note))
+        Triple(com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B, "Groq – GPT-OSS 120B", stringResource(R.string.ai_groq_model_note)),
+        Triple(com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GEMINI_FLASH_25, "Google – Gemini 3.5 Flash Lite", stringResource(R.string.ai_gemini_model_note))
     )
     BackHandler { onDismiss() }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
@@ -6514,14 +6503,14 @@ private fun AiApiKeyDialog(
     currentKey: String,
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
-    model: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B
+    model: com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel = com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var value by remember(currentKey) { mutableStateOf(currentKey) }
     val inputFocusRequester = remember { FocusRequester() }
     val placeholder = when (model) {
-        com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "gsk_..."
-        com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "AIzaSy..."
+        com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B -> "gsk_..."
+        com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GEMINI_FLASH_25 -> "AIzaSy..."
     }
     BackHandler { onDismiss() }
     LaunchedEffect(Unit) {
@@ -6542,7 +6531,7 @@ private fun AiApiKeyDialog(
                 Text(text = stringResource(R.string.ai_api_key_title), style = ArflixTypography.sectionTitle, color = TextPrimary)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = stringResource(if (model == com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B) R.string.ai_api_key_dialog_subtitle_groq else R.string.ai_api_key_dialog_subtitle_gemini),
+                    text = stringResource(if (model == com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel.GROQ_LLAMA_70B) R.string.ai_api_key_dialog_subtitle_groq else R.string.ai_api_key_dialog_subtitle_gemini),
                     style = ArflixTypography.caption,
                     color = TextSecondary
                 )

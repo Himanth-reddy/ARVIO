@@ -316,6 +316,21 @@ data class LiveCategory(
     val isGroup: Boolean get() = children.isNotEmpty()
 }
 
+internal fun prepareGuideChannels(
+    channels: List<EnrichedChannel>,
+    categoryId: String,
+    sortOrder: String,
+    hiddenGroups: Set<String>,
+    restrictedGroups: Set<String>,
+): List<EnrichedChannel> {
+    val visible = channels.filterNot {
+        isHiddenPlaylistGroup(it, hiddenGroups) || isRestrictedPlaylistGroup(it, restrictedGroups) ||
+            (categoryId in setOf("all", "fav", "recent") && it.isAdult)
+    }.distinctBy { it.id }
+    return if (categoryId == "fav" || categoryId == "recent") visible
+        else sortChannelsByConfiguredOrder(visible, sortOrder)
+}
+
 internal fun sortChannelsByConfiguredOrder(
     channels: List<EnrichedChannel>,
     sortOrder: String,
@@ -1059,7 +1074,7 @@ fun buildPagedStartupChannelState(
             visibleGroupCounts[id] = label to count
         }
     }
-    val totalVisible = totalChannelCount.takeIf { it > 0 } ?: visibleTotal
+    val totalVisible = if (playlistGroupCounts.isNotEmpty()) visibleTotal else totalChannelCount
     val top = listOf(
         LiveCategory("fav", "Favorites", favorites.size, CategoryIcon.Favorite),
         LiveCategory("recent", "Recently Watched", recents.size, CategoryIcon.Recent),
@@ -1070,7 +1085,6 @@ fun buildPagedStartupChannelState(
             iconToken = CategoryIcon.All,
             children = listOf(
                 LiveCategory("g-4k", "4K | Ultra HD", 0, CategoryIcon.Grid),
-                LiveCategory("adult", "Adult", hiddenTotal, CategoryIcon.Lock),
             ).filter { it.count > 0 },
         ),
     )

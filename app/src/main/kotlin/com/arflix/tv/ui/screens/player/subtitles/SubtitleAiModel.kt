@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.subtitles
 
 // Both names are historical: the enum value is persisted in DataStore and cloud backups, so
 // renaming either one breaks restore on other devices. They mean "the Groq model" and "the Gemini

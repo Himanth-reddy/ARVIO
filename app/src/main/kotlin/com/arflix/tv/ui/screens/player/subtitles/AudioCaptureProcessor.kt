@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.subtitles
 
 import android.util.Log
 import androidx.annotation.OptIn
@@ -80,15 +80,19 @@ class AudioCaptureProcessor : BaseAudioProcessor() {
     }
 
     private fun processPcm16(bytes: ByteArray, channels: Int, callback: (ByteArray, Long) -> Unit) {
-        val shorts = ShortArray(bytes.size / 2) { i ->
-            ByteBuffer.wrap(bytes, i * 2, 2).order(ByteOrder.LITTLE_ENDIAN).short
-        }
+        val shorts = ShortArray(bytes.size / 2)
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
         resampleAndEmit(mixToMono(shorts, channels), callback)
     }
 
     private fun processPcmFloat(bytes: ByteArray, channels: Int, callback: (ByteArray, Long) -> Unit) {
         val floatBuf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
-        val shorts = ShortArray(floatBuf.remaining()) { floatBuf.get().coerceIn(-1f, 1f).let { (it * Short.MAX_VALUE).toInt().toShort() } }
+        val count = floatBuf.remaining()
+        val shorts = ShortArray(count)
+        for (i in 0 until count) {
+            val sample = floatBuf.get().coerceIn(-1f, 1f)
+            shorts[i] = (sample * Short.MAX_VALUE).toInt().toShort()
+        }
         resampleAndEmit(mixToMono(shorts, channels), callback)
     }
 

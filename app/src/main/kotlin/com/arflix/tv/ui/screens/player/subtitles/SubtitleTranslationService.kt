@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.subtitles
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -295,9 +295,9 @@ class SubtitleTranslationService(
             })
         }
 
-        val url = "$GEMINI_BASE_URL?key=$apiKey"
         val request = Request.Builder()
-            .url(url)
+            .url(GEMINI_BASE_URL)
+            .header("x-goog-api-key", apiKey)
             .header("Content-Type", "application/json")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()

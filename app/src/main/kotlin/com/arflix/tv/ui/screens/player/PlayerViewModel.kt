@@ -61,6 +61,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Clock
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleSyncMatcher
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationManager
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationService
+import com.arflix.tv.ui.screens.player.subtitles.TRANSLATION_ERROR_CONTENT_BLOCKED
+import com.arflix.tv.ui.screens.player.subtitles.GeminiLiveTranslationService
+import com.arflix.tv.ui.screens.player.subtitles.GeminiLiveState
+import com.arflix.tv.ui.screens.player.subtitles.AudioCaptureProcessor
+import com.arflix.tv.ui.screens.player.common.NextEpisodePromptGate
+import com.arflix.tv.ui.screens.player.common.PlaybackEpisodeKey
 import javax.inject.Inject
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
@@ -150,11 +160,15 @@ data class PlayerUiState(
     val secondarySubtitleLang: String = "",
     val frameRateMatchingMode: String = "Off",
     val subtitleSize: String = "Medium",
+    val subtitleSizePct: Int = 100,
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
     val subtitleFont: String = SubtitleFontOption.DefaultPreference,
     val subtitleStylized: Boolean = true,
     val subtitleOffset: String = "Bottom",
+    val subtitleVerticalPct: Int = 2,
+    val filterSubtitlesByLanguage: Boolean = false,
+    val subtitleRemoveHearingImpaired: Boolean = false,
     val error: PlayerMessage? = null,
     val isSetupError: Boolean = false, // true when error is due to missing addons (shows friendly guide instead of red error)
     // Auto-play next episode at end of current one. Mirrors the profile-scoped
@@ -168,6 +182,7 @@ data class PlayerUiState(
     val showLoadingStats: Boolean = true,
     // Skip intro/recap
     val activeSkipInterval: SkipInterval? = null,
+    val skipIntervals: List<SkipInterval> = emptyList(),
     val skipIntervalDismissed: Boolean = false,
     // Source-loading progress surfaced to the loading UI. When streams are
     // being resolved progressively, this fills from 0f→1f as addons complete.
@@ -198,12 +213,26 @@ data class PlayerUiState(
     // Full name of the preferred subtitle language (e.g. "Hebrew") — drives the "Find Best Match"
     // menu entry. Independent of AI availability: the timing scan needs no AI/API key.
     val matchLanguageName: String = "",
+    // Active media metadata fields
+    val mediaType: MediaType = MediaType.MOVIE,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null,
     // Episode title for TV shows (e.g. "The Devil's Verdict"), populated from TMDB season details
     val episodeTitle: String? = null,
     // Plot synopsis from TMDB, used in the pause overlay metadata block
     val overview: String? = null,
     // Release year extracted from TMDB releaseDate/firstAirDate (e.g. "2023")
-    val releaseYear: String? = null
+    val releaseYear: String? = null,
+    // All episodes for the active season (used in Mobile Episodes drawer)
+    val seasonEpisodes: List<com.arflix.tv.data.model.Episode> = emptyList(),
+    // Auto-skip intro preference
+    val autoSkipIntro: Boolean = false,
+    // Auto-skip outro preference
+    val autoSkipOutro: Boolean = false,
+    // Audio delay offset in milliseconds
+    val audioDelayMs: Long = 0L,
+    // Audio volume normalization preference
+    val audioNormalization: Boolean = false
 )
 
 
@@ -466,6 +495,7 @@ class PlayerViewModel @Inject constructor(
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
+    private val subtitleMenuCandidates = linkedMapOf<String, Subtitle>()
     private fun frameRateMatchingModeKey() = profileManager.profileStringKey("frame_rate_matching_mode")
     private fun autoPlayNextKey() = profileManager.profileBooleanKey("auto_play_next")
     private fun showLoadingStatsKey() = profileManager.profileBooleanKey("show_loading_stats")
@@ -531,6 +561,7 @@ class PlayerViewModel @Inject constructor(
         preferredBingeGroup: String?,
         startPositionMs: Long?,
         isLiveStreamPlayback: Boolean = false,
+        forceRefresh: Boolean = false,
         airDate: String? = null
     ) {
         currentAirDate = airDate
@@ -591,8 +622,11 @@ class PlayerViewModel @Inject constructor(
             isAiAvailable = false,
             aiTargetLanguageName = "",
             logoUrl = cachedLogoUrl,
+            mediaType = mediaType,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
             streamProgress = null,
-            streamLoadPhase = null,
+            streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
             sourceSearchActive = false,
             error = null,
             isSetupError = false
@@ -601,20 +635,28 @@ class PlayerViewModel @Inject constructor(
         skipIntervalsJob?.cancel()
         currentImdbId = providedImdbId
         skipIntervals = emptyList()
+        subtitleMenuCandidates.clear()
         lastActiveSkipType = null
         activeSkipRequestKey = null
-        _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervalDismissed = false)
+        _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervals = emptyList(), skipIntervalDismissed = false)
         currentOriginalLanguage = cachedItem?.originalLanguage
         currentGenreIds = cachedItem?.genreIds ?: emptyList()
         currentItemTitle = cachedItem?.title ?: ""
 
-        viewModelScope.launch {
+        mediaLoadJob?.cancel()
+        mediaLoadJob = viewModelScope.launch {
             // Autoplay should always use the current highest-ranked source list.
             // Explicit source navigation still passes preferred fields or a URL below.
             val preferredAudioLanguage = resolvePreferredAudioLanguage()
             val frameRateMatchingMode = resolveFrameRateMatchingMode()
             val prefs = context.settingsDataStore.data.first()
             val subSize = prefs[profileManager.profileStringKey("subtitle_size")] ?: "Medium"
+            val subSizePct = prefs[profileManager.profileIntKey("subtitle_size_pct")] ?: when (subSize.lowercase()) {
+                "small" -> 80
+                "large" -> 120
+                "extra large" -> 140
+                else -> 100
+            }
             val subColor = prefs[profileManager.profileStringKey("subtitle_color")] ?: "White"
             val subStyle = prefs[profileManager.profileStringKey("subtitle_style")] ?: "Bold"
             val subFont = SubtitleFontOption.fromPreference(
@@ -622,6 +664,12 @@ class PlayerViewModel @Inject constructor(
             ).preferenceValue
             val subStylized = prefs[profileManager.profileBooleanKey("subtitle_stylized")] ?: true
             val subOffset = prefs[profileManager.profileStringKey("subtitle_offset")] ?: "Bottom"
+            val subVertPct = prefs[profileManager.profileIntKey("subtitle_vertical_pct")] ?: when (subOffset) {
+                "Bottom" -> 2; "Low" -> 8; "Medium" -> 15; "High" -> 25; else -> 2
+            }
+            val filterSubLang = prefs[filterSubtitlesByLanguageKey()] ?: true
+            val removeHi = prefs[profileManager.profileBooleanKey("subtitle_remove_hearing_impaired")] ?: false
+            translationManager.removeSubtitleHearingImpaired = removeHi
             val autoPlayNext = prefs[autoPlayNextKey()] ?: true
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val volumeBoostDb = prefs[profileManager.profileStringKey("volume_boost_db")]
@@ -654,10 +702,19 @@ class PlayerViewModel @Inject constructor(
             untranslatableSourceIds.clear()
             translationManager.reset()
 
+            val autoSkipIntro = prefs[profileManager.profileBooleanKey("auto_skip_intro")] ?: false
+            val autoSkipOutro = prefs[profileManager.profileBooleanKey("auto_skip_outro")] ?: false
+            val audioDelayMs = prefs[profileManager.profileLongKey("audio_delay_ms")] ?: 0L
+            val audioNormalization = prefs[profileManager.profileBooleanKey("audio_normalization")] ?: false
+
             _uiState.value = PlayerUiState(
+                mediaType = mediaType,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber,
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
+                streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
                 title = cachedItem?.title ?: currentItemTitle,
                 backdropUrl = cachedItem?.backdrop?.takeIf { it.isNotBlank() }
                     ?: cachedItem?.image?.takeIf { it.isNotBlank() },
@@ -668,12 +725,20 @@ class PlayerViewModel @Inject constructor(
                 secondarySubtitleLang = secondarySub,
                 frameRateMatchingMode = frameRateMatchingMode,
                 subtitleSize = subSize,
+                subtitleSizePct = subSizePct,
                 subtitleColor = subColor,
                 subtitleStyle = subStyle,
                 subtitleFont = subFont,
                 subtitleStylized = subStylized,
                 subtitleOffset = subOffset,
+                subtitleVerticalPct = subVertPct,
+                filterSubtitlesByLanguage = filterSubLang,
+                subtitleRemoveHearingImpaired = removeHi,
                 autoPlayNext = autoPlayNext,
+                autoSkipIntro = autoSkipIntro,
+                autoSkipOutro = autoSkipOutro,
+                audioDelayMs = audioDelayMs,
+                audioNormalization = audioNormalization,
                 showLoadingStats = showLoadingStats,
                 volumeBoostDb = volumeBoostDb,
                 subtitlePreloadEnabled = subtitlePreloadEnabled,
@@ -772,6 +837,7 @@ class PlayerViewModel @Inject constructor(
                     isLoading = false,
                     isLoadingStreams = false,
                     sourceSearchActive = true,
+                    streams = listOfNotNull(resolvedProvidedStream),
                     selectedStream = resolvedProvidedStream,
                     selectedStreamUrl = resolvedProvidedUrl,
                     savedPosition = resumeData.positionMs
@@ -1020,7 +1086,8 @@ class PlayerViewModel @Inject constructor(
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = effectiveStreamId,
                         title = currentItemTitle,
-                        year = null
+                        year = null,
+                        forceRefresh = forceRefresh
                     )
                 } else {
                     streamRepository.resolveEpisodeStreamsProgressive(
@@ -1032,6 +1099,7 @@ class PlayerViewModel @Inject constructor(
                         genreIds = currentGenreIds,
                         originalLanguage = currentOriginalLanguage,
                         title = currentItemTitle,
+                        forceRefresh = forceRefresh,
                         animeQueryOverride = animeQueryOverride,
                         airDate = currentAirDate
                     )
@@ -1061,8 +1129,9 @@ class PlayerViewModel @Inject constructor(
                             u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                         }
                     val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
+                    val activeStreamList = listOfNotNull(_uiState.value.selectedStream)
                     val mergedStreams = sortStreamsByQualityAndSize(
-                        (allStreams + existingVod)
+                        (allStreams + existingVod + activeStreamList)
                             .distinctBy(::providerScopedStreamIdentity),
                         preferredLanguage
                     )
@@ -1074,14 +1143,17 @@ class PlayerViewModel @Inject constructor(
                         progressive.isFinal &&
                         mergedStreams.isEmpty() &&
                         !hasHomeServerConnections &&
-                        !supplementalSourcesStillLoading
+                        !supplementalSourcesStillLoading &&
+                        _uiState.value.selectedStreamUrl == null
                     ) {
                         if (streamingAddonCount == 0) {
                             PlayerMessage.Res(R.string.player_error_no_streaming_addons)
                         } else {
                             PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
                         }
-                    } else null
+                    } else {
+                        null
+                    }
                     if (errorMessage != null && !sourceEmptyReported) {
                         sourceEmptyReported = true
                         AppLogger.recordException(
@@ -1278,6 +1350,22 @@ class PlayerViewModel @Inject constructor(
     /**
      * Fetch media metadata in background (non-blocking)
      */
+    private suspend fun loadPlayerSeasonEpisodes(mediaId: Int, displaySeason: Int): List<com.arflix.tv.data.model.Episode> {
+        val structure = if (isCurrentAnime()) animeMapper.resolveAnimeSeasonStructure(mediaId) else null
+        val identities = structure?.seasons?.get(displaySeason)
+            ?: return mediaRepository.getSeasonEpisodes(mediaId, displaySeason)
+        val bySeason = identities.map { it.tmdbSeason }.distinct().associateWith { season ->
+            mediaRepository.getSeasonEpisodes(mediaId, season).associateBy { it.episodeNumber }
+        }
+        return identities.mapNotNull { identity ->
+            bySeason[identity.tmdbSeason]?.get(identity.tmdbEpisode)?.copy(
+                seasonNumber = identity.displaySeason,
+                episodeNumber = identity.displayEpisode,
+                identity = identity,
+            )
+        }
+    }
+
     private suspend fun fetchMediaMetadata(mediaType: MediaType, mediaId: Int) {
         try {
             val details = if (mediaType == MediaType.TV) {
@@ -1296,6 +1384,7 @@ class PlayerViewModel @Inject constructor(
             val posterUrl: String?
             var overview: String? = null
             var releaseYear: String? = null
+            var fetchedSeasonEpisodes = emptyList<com.arflix.tv.data.model.Episode>()
 
             if (mediaType == MediaType.TV) {
                 val tvDetails = details as com.arflix.tv.data.api.TmdbTvDetails
@@ -1316,6 +1405,13 @@ class PlayerViewModel @Inject constructor(
                     }.getOrNull()
                     currentEpisodeTitle = episodeDetails?.name?.takeIf { it.isNotBlank() }
                     overview = episodeDetails?.overview?.takeIf { it.isNotBlank() } ?: overview
+                    fetchedSeasonEpisodes = try {
+                        loadPlayerSeasonEpisodes(mediaId, season)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
                 }
             } else {
                 val movieDetails = details as com.arflix.tv.data.api.TmdbMovieDetails
@@ -1338,9 +1434,13 @@ class PlayerViewModel @Inject constructor(
                 backdropUrl = backdropUrl,
                 logoUrl = logoUrl ?: _uiState.value.logoUrl,
                 posterUrl = posterUrl,
+                mediaType = mediaType,
+                seasonNumber = currentSeason,
+                episodeNumber = currentEpisode,
                 episodeTitle = currentEpisodeTitle,
                 overview = overview,
                 releaseYear = releaseYear,
+                seasonEpisodes = if (mediaType == MediaType.TV && fetchedSeasonEpisodes.isNotEmpty()) fetchedSeasonEpisodes else _uiState.value.seasonEpisodes,
                 preferredAudioLanguage = resolvePreferredAudioLanguage()
             )
         } catch (e: Exception) {
@@ -1374,7 +1474,7 @@ class PlayerViewModel @Inject constructor(
             skipIntervals = intervals
             // Force a recompute on the next position tick.
             lastActiveSkipType = null
-            _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervalDismissed = false)
+            _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervals = intervals, skipIntervalDismissed = false)
         }
     }
 
@@ -1428,6 +1528,9 @@ class PlayerViewModel @Inject constructor(
     // Returns subs filtered to the preferred language(s) when the setting is enabled.
     // Tries primary language first; if nothing matches, tries secondary; falls back to full list.
     private suspend fun filterSubsByPreferredLanguage(subs: List<Subtitle>): List<Subtitle> {
+        subs.forEach { subtitle ->
+            subtitleMenuCandidates[subtitle.id.ifBlank { subtitle.url }] = subtitle
+        }
         val prefs = runCatching { context.settingsDataStore.data.first() }.getOrNull() ?: return subs
         val enabled = prefs[filterSubtitlesByLanguageKey()] ?: true
         if (!enabled) return subs
@@ -2398,6 +2501,7 @@ class PlayerViewModel @Inject constructor(
      * Select a stream for playback
      */
     fun selectStream(stream: StreamSource, resumePositionMs: Long? = null) {
+        subtitleMenuCandidates.entries.removeAll { it.value.isEmbedded }
         streamSelectionJob?.cancel()
         playbackErrorReportJob?.cancel()
         streamSelectionJob = viewModelScope.launch {
@@ -2893,6 +2997,191 @@ class PlayerViewModel @Inject constructor(
                 isLiveAudioTranslating = false,
                 matchStatus = null
             )
+        }
+    }
+
+    fun setAutoPlayNext(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoPlayNext = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[autoPlayNextKey()] = enabled
+            }
+        }
+    }
+
+    fun setAutoSkipIntro(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoSkipIntro = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("auto_skip_intro")] = enabled
+            }
+        }
+    }
+
+    fun setAutoSkipOutro(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoSkipOutro = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("auto_skip_outro")] = enabled
+            }
+        }
+    }
+
+    fun setAudioDelayMs(delayMs: Long) {
+        _uiState.value = _uiState.value.copy(audioDelayMs = delayMs)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileLongKey("audio_delay_ms")] = delayMs
+            }
+        }
+    }
+
+    fun setAudioNormalization(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(audioNormalization = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("audio_normalization")] = enabled
+            }
+        }
+    }
+
+    fun setSubtitleSizePref(size: String) {
+        val mappedPct = when (size.lowercase()) {
+            "small" -> 80
+            "large" -> 120
+            "extra large" -> 140
+            else -> 100
+        }
+        _uiState.value = _uiState.value.copy(subtitleSize = size, subtitleSizePct = mappedPct)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_size")] = size
+                prefs[profileManager.profileIntKey("subtitle_size_pct")] = mappedPct
+            }
+        }
+    }
+
+    fun setSubtitleSizePct(pct: Int) {
+        val clamped = pct.coerceIn(50, 250)
+        val name = when {
+            clamped <= 80 -> "Small"
+            clamped >= 130 -> "Extra Large"
+            clamped >= 115 -> "Large"
+            else -> "Medium"
+        }
+        _uiState.value = _uiState.value.copy(subtitleSizePct = clamped, subtitleSize = name)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileIntKey("subtitle_size_pct")] = clamped
+                prefs[profileManager.profileStringKey("subtitle_size")] = name
+            }
+        }
+    }
+
+    fun setSubtitleVerticalPct(pct: Int) {
+        val clamped = pct.coerceIn(1, 88)
+        val name = when {
+            clamped >= 60 -> "Top"
+            clamped >= 25 -> "High"
+            clamped >= 12 -> "Medium"
+            clamped >= 5 -> "Low"
+            else -> "Bottom"
+        }
+        _uiState.value = _uiState.value.copy(subtitleVerticalPct = clamped, subtitleOffset = name)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileIntKey("subtitle_vertical_pct")] = clamped
+                prefs[profileManager.profileStringKey("subtitle_offset")] = name
+            }
+        }
+    }
+
+    fun setSubtitlePreloadEnabled(enabled: Boolean) {
+        subtitlePreloadEnabled = enabled
+        _uiState.value = _uiState.value.copy(subtitlePreloadEnabled = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[subtitlePreloadKey] = enabled
+            }
+        }
+    }
+
+    fun setFilterSubtitlesByLanguage(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(filterSubtitlesByLanguage = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[filterSubtitlesByLanguageKey()] = enabled
+            }
+            val filtered = filterSubsByPreferredLanguage(subtitleMenuCandidates.values.toList())
+            val selected = _uiState.value.selectedSubtitle
+            _uiState.value = _uiState.value.copy(
+                subtitles = (filtered + listOfNotNull(selected)).distinctBy { it.id }
+            )
+        }
+    }
+
+    fun setSubtitleRemoveHearingImpaired(enabled: Boolean) {
+        translationManager.removeSubtitleHearingImpaired = enabled
+        _uiState.value = _uiState.value.copy(subtitleRemoveHearingImpaired = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("subtitle_remove_hearing_impaired")] = enabled
+            }
+        }
+    }
+
+    fun setSubtitleColorPref(color: String) {
+        _uiState.value = _uiState.value.copy(subtitleColor = color)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_color")] = color
+            }
+        }
+    }
+
+    fun setSubtitleOffsetPref(offset: String) {
+        _uiState.value = _uiState.value.copy(subtitleOffset = offset)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_offset")] = offset
+            }
+        }
+    }
+
+    fun setVolumeBoostDb(boostDb: Int) {
+        val clamped = boostDb.coerceIn(0, 15)
+        _uiState.value = _uiState.value.copy(volumeBoostDb = clamped)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("volume_boost_db")] = clamped.toString()
+            }
+        }
+    }
+
+    fun setSubtitleStylePref(style: String) {
+        _uiState.value = _uiState.value.copy(subtitleStyle = style)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_style")] = style
+            }
+        }
+    }
+
+    fun setSubtitleFontPref(font: String) {
+        _uiState.value = _uiState.value.copy(subtitleFont = font)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_font")] = font
+            }
+        }
+    }
+
+    fun setSubtitleStylizedPref(stylized: Boolean) {
+        _uiState.value = _uiState.value.copy(subtitleStylized = stylized)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("subtitle_stylized")] = stylized
+            }
         }
     }
 
@@ -4079,6 +4368,23 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun retry() {
+        retryPlayback()
+    }
+
+    fun reloadStreams() {
+        val resumeTarget = lastKnownPositionMs.takeIf { it > 0L } ?: currentStartPositionMs
+        mediaLoadJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            error = null,
+            isLoading = false,
+            isLoadingStreams = true,
+            sourceSearchActive = true,
+            streams = emptyList(),
+            selectedStream = null,
+            selectedStreamUrl = null,
+            streamProgress = 0f,
+            streamLoadPhase = null
+        )
         loadMedia(
             mediaType = currentMediaType,
             mediaId = currentMediaId,
@@ -4092,9 +4398,22 @@ class PlayerViewModel @Inject constructor(
             preferredAddonId = currentPreferredAddonId,
             preferredSourceName = currentPreferredSourceName,
             preferredBingeGroup = currentPreferredBingeGroup,
-            startPositionMs = currentStartPositionMs,
-            isLiveStreamPlayback = currentIsLiveStreamPlayback
+            startPositionMs = resumeTarget,
+            isLiveStreamPlayback = currentIsLiveStreamPlayback,
+            forceRefresh = true,
+            airDate = currentAirDate
         )
+    }
+
+    fun retryPlayback() {
+        val stream = _uiState.value.selectedStream
+        if (stream != null) {
+            _uiState.value = _uiState.value.copy(error = null)
+            val resumeTarget = lastKnownPositionMs.takeIf { it > 0L } ?: currentStartPositionMs
+            selectStream(stream, resumeTarget)
+        } else {
+            reloadStreams()
+        }
     }
 
     private data class ResumeData(
@@ -4547,6 +4866,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     private var progressSaveJob: Job? = null
+    private var mediaLoadJob: Job? = null
     private var subtitleRefreshJob: Job? = null
     private var vodAppendJob: Job? = null
     private var homeServerAppendJob: Job? = null
@@ -4780,7 +5100,11 @@ class PlayerViewModel @Inject constructor(
                 }
 
             val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
-            val mergedStreams = (allStreams + existingVod)
+            val activeStreamList = listOfNotNull(
+                _uiState.value.selectedStream,
+                if (playbackUrl.isNotBlank()) StreamSource(source = "Direct", addonName = "Direct", quality = "Direct", size = "", url = playbackUrl) else null
+            )
+            val mergedStreams = (allStreams + existingVod + activeStreamList)
                 .distinctBy(::providerScopedStreamIdentity)
 
             val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }

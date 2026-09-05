@@ -634,12 +634,11 @@ fun ArflixApp(
     // Hide bottom bar on player, profile selection, and login screens.
     // TV route shows the bottom bar on mobile (touch devices) for easy navigation;
     // the fullscreen IPTV player uses BackHandler to return to the guide.
-    val showBottomBar = isMobile && activeProfile != null &&
-        currentRoute != null &&
-        !iptvFullscreen &&
-        !currentRoute.contains("player") &&
-        !currentRoute.contains("profile") &&
-        !currentRoute.contains("login")
+    val isPlayerScreen = currentRoute?.startsWith("player") == true
+    val isFullscreenRoute = isPlayerScreen || iptvFullscreen
+    val isProfileOrLogin = currentRoute == Screen.ProfileSelection.route || currentRoute == Screen.Login.route
+    val showBottomBar = isMobile && activeProfile != null && currentRoute != null && !isFullscreenRoute && !isProfileOrLogin
+    val applySystemBarsPadding = isMobile && !isFullscreenRoute
 
     val isPlayerRoute = iptvFullscreen || currentRoute?.contains("player") == true
 
@@ -677,11 +676,10 @@ fun ArflixApp(
                     )
                 }
             )
-            // On mobile, push content below the status bar (except player).
-            // Applied AFTER background so the gradient fills behind the bars.
-            // statusBarsPadding() reads live WindowInsets, so it automatically
-            // becomes 0 when the player hides the bars.
-            .then(if (isMobile && !isPlayerRoute) Modifier.statusBarsPadding() else Modifier)
+            // On mobile, push non-player screens between the status bar and navigation bar.
+            // Player screens remain completely stable edge-to-edge without jumping when
+            // transient system bars appear or disappear.
+            .then(if (applySystemBarsPadding) Modifier.systemBarsPadding() else Modifier)
     ) {
         Box(modifier = Modifier.weight(1f)) {
             AppNavigation(

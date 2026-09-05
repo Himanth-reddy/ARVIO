@@ -1,6 +1,8 @@
-package com.arflix.tv.ui.screens.player
+package com.arflix.tv.ui.screens.player.common
 
-internal data class PlaybackEpisodeKey(
+import com.arflix.tv.ui.screens.player.NextEpisodeAirDateResolution
+
+data class PlaybackEpisodeKey(
     val mediaId: Int,
     val seasonNumber: Int,
     val episodeNumber: Int,
@@ -13,11 +15,15 @@ internal data class PlaybackEpisodeKey(
 /**
  * Claims an end-of-episode prompt once per episode.
  *
- * The player polls ExoPlayer state continuously. STATE_ENDED remains active after the prompt is
+ * The player polls player state continuously. STATE_ENDED remains active after the prompt is
  * dismissed, so visibility alone cannot guard against opening the same countdown again.
  */
 internal class NextEpisodePromptGate {
     private var handledEpisode: PlaybackEpisodeKey? = null
+
+    fun dismiss(episode: PlaybackEpisodeKey?) {
+        if (episode != null) handledEpisode = episode
+    }
 
     fun tryOpen(
         episode: PlaybackEpisodeKey?,

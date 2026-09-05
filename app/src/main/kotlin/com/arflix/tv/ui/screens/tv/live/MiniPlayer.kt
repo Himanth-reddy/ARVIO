@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -306,7 +307,7 @@ private fun LiveBug(modifier: Modifier = Modifier) {
         Box(
             modifier = Modifier
                 .size(8.dp)
-                .alpha(alpha)
+                .graphicsLayer { this.alpha = alpha }
                 .background(LiveColors.LiveRed, CircleShape),
         )
         Text(
