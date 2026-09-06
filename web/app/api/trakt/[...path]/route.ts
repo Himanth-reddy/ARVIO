@@ -11,8 +11,8 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     process.env.NETLIFY_BACKEND_URL ??
     "https://auth.arvio.tv/.netlify/functions"
   ).replace(/\/+$/, "");
-  const appAnonKey = envValue(process.env.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
-  const traktClientId = process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID ?? "";
+  const appAnonKey = envValue(process.env.APP_ANON_KEY, envValue(process.env.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""));
+  const traktClientId = process.env.TRAKT_CLIENT_ID || process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID || "";
   const traktSecret = process.env.TRAKT_CLIENT_SECRET ?? "";
   const input = new URL(request.url);
   const method = request.method;
@@ -49,20 +49,21 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     return NextResponse.json({ error: "Trakt proxy is not configured" }, { status: 500 });
   }
 
-  const parsedBody = body && normalizedPath === "oauth/device/token" && traktSecret && !usesNetlifyProxy
-    ? JSON.stringify({ ...JSON.parse(body), client_secret: traktSecret })
+  const parsedBody = body && ["oauth/device/token", "oauth/token", "oauth/device/code"].includes(normalizedPath) && !usesNetlifyProxy
+    ? JSON.stringify({ ...JSON.parse(body), client_id: traktClientId, ...(traktSecret ? { client_secret: traktSecret } : {}) })
     : body;
 
   const response = await fetch(target, {
     method,
     headers,
     body: parsedBody,
-    cache: "no-store"
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000)
   });
 
   const responseHeaders = new Headers();
   responseHeaders.set("content-type", response.headers.get("content-type") ?? "application/json");
-  responseHeaders.set("cache-control", cacheControlForTrakt(method, normalizedPath, request));
+  responseHeaders.set("cache-control", response.ok ? cacheControlForTrakt(method, normalizedPath, request) : "no-store");
 
   return new NextResponse(response.body, {
     status: response.status,

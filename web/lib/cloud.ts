@@ -179,11 +179,11 @@ function setScopedValue<T>(root: RawPayload, key: string, profileId: string, val
 // under `fieldUpdatedAt` ("g:accentColor", "p:<profileId>:autoPlayNext"). Only the fields this web
 // session actually changed get their timestamp bumped, so the web can't revert a phone's newer
 // change and its own changes are respected by the Android merge.
-function bumpFieldTs(root: RawPayload, key: string) {
+function bumpFieldTs(root: RawPayload, key: string, changedAt = Date.now()) {
   const map = (root.fieldUpdatedAt && typeof root.fieldUpdatedAt === "object"
     ? root.fieldUpdatedAt
     : {}) as Record<string, number>;
-  map[key] = Date.now();
+  map[key] = changedAt;
   root.fieldUpdatedAt = map;
 }
 
@@ -625,10 +625,13 @@ function androidContinueWatchingItems(root: RawPayload, profileId?: string | nul
 // next read is fresh.
 let rawPayloadCache: { userId: string; at: number; payload: RawPayload } | null = null;
 let rawPayloadInFlight: { userId: string; promise: Promise<RawPayload> } | null = null;
+let rawPayloadGeneration = 0;
 const RAW_PAYLOAD_TTL_MS = 5_000;
 
 export function invalidateRawPayloadCache() {
   rawPayloadCache = null;
+  rawPayloadInFlight = null;
+  rawPayloadGeneration++;
 }
 
 async function fetchRawPayload(auth: AuthClient): Promise<RawPayload> {
@@ -653,35 +656,37 @@ export async function pullRawPayload(auth: AuthClient): Promise<RawPayload> {
   if (!auth.session) return {};
   const userId = auth.session.userId;
   if (rawPayloadCache && rawPayloadCache.userId === userId && Date.now() - rawPayloadCache.at < RAW_PAYLOAD_TTL_MS) {
-    return rawPayloadCache.payload;
+    return structuredClone(rawPayloadCache.payload);
   }
   if (rawPayloadInFlight && rawPayloadInFlight.userId === userId) {
-    return rawPayloadInFlight.promise;
+    return structuredClone(await rawPayloadInFlight.promise);
   }
+  const generation = rawPayloadGeneration;
   const promise = fetchRawPayload(auth)
     .then((payload) => {
-      rawPayloadCache = { userId, at: Date.now(), payload };
+      if (generation === rawPayloadGeneration && auth.session?.userId === userId) rawPayloadCache = { userId, at: Date.now(), payload };
       return payload;
     })
     .finally(() => {
       if (rawPayloadInFlight?.promise === promise) rawPayloadInFlight = null;
     });
   rawPayloadInFlight = { userId, promise };
-  return promise;
+  return structuredClone(await promise);
 }
 
 async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
   if (!auth.session) return;
   payload.userId = auth.session.userId;
   payload.updatedAt = Date.now();
-  // The payload we just wrote is now authoritative — seed the read cache with it
-  // so an immediate follow-up read is served locally instead of round-tripping.
-  rawPayloadCache = { userId: auth.session.userId, at: Date.now(), payload };
+  const userId = auth.session.userId;
   if (canUseBackendSync(auth)) {
     await backendRequest(auth, "account-sync-push", {
       method: "POST",
       body: JSON.stringify({ payload })
     });
+    // The server merges concurrent device edits. Read its acknowledged result,
+    // not our submitted document (which may omit those edits).
+    if (auth.session?.userId === userId) invalidateRawPayloadCache();
     return;
   }
   await auth.supabase("/rest/v1/account_sync_state", {
@@ -693,6 +698,7 @@ async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
       updated_at: new Date().toISOString()
     })
   });
+  invalidateRawPayloadCache();
 }
 
 /**
@@ -700,11 +706,21 @@ async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
  * (e.g. Android's profiles / avatar images). Mirrors Android's
  * AuthRepository.mutateAccountSyncPayload.
  */
+const mutationQueues = new Map<string, Promise<void>>();
+
 export async function mutateCloudPayload(auth: AuthClient, mutator: (root: RawPayload) => void) {
   if (!auth.session) return;
-  const root = await pullRawPayload(auth);
-  mutator(root);
-  await writeRawPayload(auth, root);
+  const userId = auth.session.userId;
+  const task = (mutationQueues.get(userId) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    if (auth.session?.userId !== userId) throw new Error("Account changed before sync completed");
+    const root = await pullRawPayload(auth);
+    if (auth.session?.userId !== userId) throw new Error("Account changed before sync completed");
+    mutator(root);
+    await writeRawPayload(auth, root);
+  });
+  mutationQueues.set(userId, task);
+  try { await task; }
+  finally { if (mutationQueues.get(userId) === task) mutationQueues.delete(userId); }
 }
 
 export async function pullCloudPayload(auth: AuthClient, profileId?: string | null): Promise<CloudPayload> {
@@ -800,7 +816,8 @@ export async function saveCloudSettings(
   // The web session's last-synced settings (same profile). Used to detect which fields THIS session
   // actually changed, so we only assert (and timestamp) those — never reverting a field a phone
   // changed. Null → treat every field as changed (bootstrap / after a profile switch).
-  baseline?: AppSettings | null
+  baseline?: AppSettings | null,
+  changedAt = Date.now()
 ) {
   await mutateCloudPayload(auth, (root) => {
     root.version = 2;
@@ -830,7 +847,7 @@ export async function saveCloudSettings(
     for (const [rootKey, newVal, baseVal] of globalFields) {
       if (!baseline || !sameFieldValue(newVal, baseVal)) {
         root[rootKey] = newVal;
-        bumpFieldTs(root, `g:${rootKey}`);
+        bumpFieldTs(root, `g:${rootKey}`, changedAt);
       }
     }
     root.focusBorderColor = settings.accentColor; // mirror of accentColor (not a merge key)
@@ -873,14 +890,14 @@ export async function saveCloudSettings(
         if (skip.has(field)) continue;
         if (!baseProfile || !sameFieldValue(newProfile[field], baseProfile[field])) {
           merged[field] = newProfile[field];
-          bumpFieldTs(root, `p:${profileId}:${field}`);
+          bumpFieldTs(root, `p:${profileId}:${field}`, changedAt);
         }
       }
       // defaultSubtitle uses Android's own subtitleSettingsUpdatedAt LWW — assert it only when the
       // web actually changed it, bumping that timestamp so Android adopts it.
       if (!baseline || !sameFieldValue(settings.defaultSubtitle, baseline.defaultSubtitle)) {
         merged.defaultSubtitle = settings.defaultSubtitle || "Off";
-        merged.subtitleSettingsUpdatedAt = Date.now();
+        merged.subtitleSettingsUpdatedAt = changedAt;
       }
       setScopedValue(root, "profileSettingsById", profileId, merged);
       // NOTE: settings saves must NOT touch add-ons. Android now reconciles add-ons to the cloud

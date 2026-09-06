@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
 import "./globals.css";
+import "./premium.css";
 
 export const metadata: Metadata = {
   title: "ARVIO",

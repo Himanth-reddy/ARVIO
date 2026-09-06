@@ -820,7 +820,7 @@ async function jellyfinItemSources(
   const { token, userId } = session;
   // PlaybackInfo yields the authoritative MediaSources with container/size.
   const playbackInfo = await proxiedPost<{ MediaSources?: JellyfinFullItem["MediaSources"] }>(
-    `${base}/Items/${item.Id}/PlaybackInfo?UserId=${userId}&IsPlayback=true&AutoOpenLiveStream=true&MaxStreamingBitrate=2147483647&api_key=${token}`,
+    `${base}/Items/${item.Id}/PlaybackInfo?UserId=${userId}&IsPlayback=false&AutoOpenLiveStream=false&MaxStreamingBitrate=2147483647&api_key=${token}`,
     {},
     { "X-Emby-Token": token }
   ).catch(() => null);

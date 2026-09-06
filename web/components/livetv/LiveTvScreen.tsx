@@ -1,19 +1,20 @@
 "use client";
 
-import { CalendarClock, ChevronDown, ExternalLink, Eye, EyeOff, History, LayoutGrid, List, ListVideo, Play, Plus, RefreshCw, Search, Star, Tv, X } from "lucide-react";
+import { ArrowDown, ArrowUp, PanelLeft, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Eye, EyeOff, History, LayoutGrid, List, ListVideo, Play, Plus, RefreshCw, Search, Star, Tv, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
-import { groupKey, loadXtreamCatchup, type CatchupProgram } from "@/lib/iptv";
+import { accessibleChannels, groupKey, loadXtreamCatchup, type CatchupProgram } from "@/lib/iptv";
+import { VirtualList } from "@/components/ui/VirtualList";
 import { IPTV_SNAPSHOT_TTL_MS, iptvPlaylistSignature } from "@/lib/iptv";
 import { loadStored, saveStored } from "@/lib/storage";
 import { useApp } from "@/lib/store";
-import type { IptvChannel, IptvSnapshot } from "@/lib/types";
+import type { IptvChannel, IptvProgram, IptvSnapshot } from "@/lib/types";
 
-const CHANNEL_PAGE_SIZE = 300;
 const LAST_CHANNEL_KEY = "arvio.web.livetv.lastChannel";
 const GUIDE_BATCH_DELAY_MS = 500;
 const GUIDE_WINDOW_HOURS = 4;
 const GUIDE_PX_PER_MIN = 6;
+const rowKey = (item: { id: string }) => item.id;
 
 function fmtTime(ms: number): string {
   try {
@@ -28,7 +29,9 @@ function groupLabel(group: string) {
 }
 
 export function LiveTvScreen() {
-  const { iptvSnapshot, settings, setSettings, playChannel, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth } = useApp();
+  const { iptvSnapshot, settings, setSettings, playChannel, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile } = useApp();
+  const lastChannelKey = `${LAST_CHANNEL_KEY}:${auth?.userId ?? "local"}:${activeProfile?.id ?? "local"}`;
+  const listRef = useRef<HTMLElement>(null);
 
   // Open a channel straight in VLC/Infuse from the detail panel — the reliable
   // path for the many IPTV providers whose plain-HTTP streams a secure web page
@@ -63,17 +66,26 @@ export function LiveTvScreen() {
   // channel you left"). Persisted per device; falls back to the first channel
   // when that channel is gone from the current playlists.
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
-    () => loadStored<string | null>(LAST_CHANNEL_KEY, null)
+    () => loadStored<string | null>(lastChannelKey, null)
   );
   const [managing, setManaging] = useState(false);
   const [view, setView] = useState<"list" | "guide">("list");
-  const [visibleCount, setVisibleCount] = useState(CHANNEL_PAGE_SIZE);
+  const [groupsOpen, setGroupsOpen] = useState(true);
+  const [provider, setProvider] = useState("all");
   const [catchup, setCatchup] = useState<{ channelId: string; programs: CatchupProgram[]; loading: boolean } | null>(null);
 
-  const channels = iptvSnapshot.channels;
-  const groups = iptvSnapshot.grouped;
+  const allChannels = iptvSnapshot.allChannels ?? iptvSnapshot.channels;
+  const providerChannels = useMemo(() => provider === "all" ? allChannels : allChannels.filter((ch) => ch.id.startsWith(`${provider}:`)), [allChannels, provider]);
+  const channels = useMemo(() => accessibleChannels(providerChannels, hiddenGroups), [providerChannels, hiddenGroups]);
+  const groups = useMemo(() => {
+    const result: Record<string, IptvChannel[]> = {};
+    for (const channel of channels) (result[groupKey(channel)] ??= []).push(channel);
+    return result;
+  }, [channels]);
+  const channelById = useMemo(() => new Map(channels.map((ch) => [ch.id, ch])), [channels]);
+  const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
   const enabledPlaylists = playlists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim());
-  const favoriteChannels = channels.filter((channel) => favorites.includes(channel.id));
+  const favoriteChannels = useMemo(() => favorites.map((id) => channelById.get(id)).filter((ch): ch is IptvChannel => Boolean(ch)), [favorites, channelById]);
   const isLoadingTv = Boolean(busy && (busy.toLowerCase().includes("syncing") || busy.toLowerCase().includes("loading tv")));
   const hasWarnings = Boolean(iptvSnapshot.playlistWarnings?.length);
   // Same helper the store stamps onto the snapshot, so both sides agree on when
@@ -96,7 +108,7 @@ export function LiveTvScreen() {
   }, [playlistSignature, refreshIptv, playlists.length]);
 
   const categories = useMemo(() => {
-    const orderMap = new Map(iptvSnapshot.groupOrder.map((id, index) => [id, index]));
+    const orderMap = new Map(settings.groupOrder.map((id, index) => [id, index]));
     const groupRank = (group: string, items: IptvChannel[]) => {
       const keyed = items[0] ? groupKey(items[0]) : group;
       return orderMap.get(keyed) ?? orderMap.get(group) ?? Number.MAX_SAFE_INTEGER;
@@ -105,7 +117,7 @@ export function LiveTvScreen() {
     const groupRows = Object.entries(groups)
       .map(([group, items]) => ({
         id: `group:${group}`,
-        label: groupLabel(group),
+        label: groupLabel(items[0]?.group ?? group),
         count: items.length,
         favorite: favoriteGroups.includes(group) || Boolean(items[0] && favoriteGroups.includes(groupKey(items[0]))),
         hidden: hiddenGroups.includes(group) || Boolean(items[0] && hiddenGroups.includes(groupKey(items[0]))),
@@ -124,7 +136,7 @@ export function LiveTvScreen() {
       { id: "favorites", label: "Favorites", count: favoriteChannels.length, favorite: true, hidden: false },
       ...groupRows
     ];
-  }, [channels.length, favoriteChannels.length, favoriteGroups, groups, hiddenGroups, iptvSnapshot.groupOrder, settings.iptvSortOrder]);
+  }, [channels.length, favoriteChannels.length, favoriteGroups, groups, hiddenGroups, settings.groupOrder, settings.iptvSortOrder]);
 
   const visibleChannels = useMemo(() => {
     const base = activeCategory === "favorites"
@@ -141,6 +153,7 @@ export function LiveTvScreen() {
         )
       : base;
     const sortMode = settings.iptvSortOrder ?? "provider";
+    if (activeCategory === "favorites") return filtered;
     if (sortMode === "number") {
       return [...filtered].sort((a, b) => {
         const numA = a.number ? parseInt(a.number, 10) : Number.MAX_SAFE_INTEGER;
@@ -156,16 +169,20 @@ export function LiveTvScreen() {
   }, [activeCategory, channels, favoriteChannels, groups, query, settings.iptvSortOrder]);
 
   useEffect(() => {
-    setVisibleCount(CHANNEL_PAGE_SIZE);
-  }, [activeCategory, query]);
-  const renderedChannels = useMemo(() => visibleChannels.slice(0, visibleCount), [visibleChannels, visibleCount]);
-  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId) ?? renderedChannels[0] ?? null;
+    if (!categories.some((category) => category.id === activeCategory)) setActiveCategory("all");
+  }, [categories, activeCategory]);
+  const renderedChannels = visibleChannels;
+  const selectedChannel = channelById.get(selectedChannelId ?? "") ?? renderedChannels[0] ?? null;
   const selectedGuide = selectedChannel ? iptvSnapshot.nowNext[selectedChannel.id] : undefined;
 
-  // Remember the channel across sessions so the next visit opens on it.
+  // Restore the last played channel, not every row crossed while browsing.
   useEffect(() => {
-    if (selectedChannel?.id) saveStored(LAST_CHANNEL_KEY, selectedChannel.id);
-  }, [selectedChannel?.id]);
+    setSelectedChannelId(loadStored<string | null>(lastChannelKey, null));
+  }, [lastChannelKey]);
+  const watchChannel = useCallback((channel: IptvChannel) => {
+    saveStored(lastChannelKey, channel.id);
+    playChannel(channel);
+  }, [lastChannelKey, playChannel]);
 
   // Catch-up listings for the selected channel (channels the panel archives).
   useEffect(() => {
@@ -175,10 +192,12 @@ export function LiveTvScreen() {
     }
     let active = true;
     setCatchup({ channelId: selectedChannel.id, programs: [], loading: true });
-    void loadXtreamCatchup(settings.iptvPlaylists, selectedChannel)
-      .then((programs) => { if (active) setCatchup({ channelId: selectedChannel.id, programs, loading: false }); })
-      .catch(() => { if (active) setCatchup({ channelId: selectedChannel.id, programs: [], loading: false }); });
-    return () => { active = false; };
+    const timer = window.setTimeout(() => {
+      void loadXtreamCatchup(settings.iptvPlaylists, selectedChannel)
+        .then((programs) => { if (active) setCatchup({ channelId: selectedChannel.id, programs, loading: false }); })
+        .catch(() => { if (active) setCatchup({ channelId: selectedChannel.id, programs: [], loading: false }); });
+    }, 400);
+    return () => { active = false; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChannel?.id]);
 
@@ -213,6 +232,15 @@ export function LiveTvScreen() {
         ? favorites.filter((id) => id !== channelId)
         : [channelId, ...favorites]
     });
+
+  const moveFavorite = (id: string, direction: number) => {
+    const index = favorites.indexOf(id);
+    const next = index + direction;
+    if (index < 0 || next < 0 || next >= favorites.length) return;
+    const ordered = [...favorites];
+    [ordered[index], ordered[next]] = [ordered[next], ordered[index]];
+    setSettings({ ...settings, favoriteChannelIds: ordered });
+  };
 
   const toggleGroupFavorite = (group: string) => {
     const first = groups[group]?.[0];
@@ -270,6 +298,11 @@ export function LiveTvScreen() {
           )}
         </div>
         <div className="livetv-topbar-actions">
+          <button type="button" className="livetv-chipbtn" title="Toggle categories" aria-label="Toggle categories" aria-expanded={groupsOpen} onClick={() => setGroupsOpen(!groupsOpen)}><PanelLeft size={18} /></button>
+          {enabledPlaylists.length > 1 && <select aria-label="Playlist provider" value={provider} onChange={(event) => { setProvider(event.target.value); setActiveCategory("all"); }}>
+            <option value="all">All playlists</option>
+            {enabledPlaylists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>}
           <button type="button" className="livetv-chipbtn" onClick={() => setManaging((value) => !value)} aria-expanded={managing}>
             <ListVideo size={17} /> Playlists
           </button>
@@ -281,6 +314,7 @@ export function LiveTvScreen() {
 
       {managing && (
         <section className="livetv-manage">
+          {hiddenGroups.length > 0 && <div className="hidden-groups"><strong>Hidden categories</strong>{hiddenGroups.map((group) => <button type="button" key={group} className="secondary" onClick={() => setSettings({ ...settings, hiddenGroupIds: hiddenGroups.filter((id) => id !== group) })}><Eye size={16} />{group.includes("|") ? group.slice(group.indexOf("|") + 1) : group}</button>)}</div>}
           {playlists.map((playlist) => (
             <div className="livetv-manage-row" key={playlist.id}>
               <button
@@ -332,9 +366,9 @@ export function LiveTvScreen() {
       )}
 
       {channels.length > 0 && (
-        <div className="livetv-columns">
-          <nav className="livetv-cats" aria-label="Channel categories">
-            {categories.map((category) => (
+        <div className={`livetv-columns ${groupsOpen ? "" : "groups-collapsed"}`}>
+          <nav className="livetv-cats" aria-label="Channel categories" inert={!groupsOpen}>
+            <VirtualList items={categories} estimate={44} itemKey={rowKey} label="Categories" renderItem={(category) => (
               <button
                 type="button"
                 key={category.id}
@@ -343,23 +377,21 @@ export function LiveTvScreen() {
                 onClick={() => {
                   setActiveCategory(category.id);
                   setSelectedChannelId(null);
+                  setGroupsOpen(false);
+                  requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>('[data-virtual-index] button')?.focus({ preventScroll: true }));
                 }}
               >
                 {category.id === "favorites" && <Star size={13} fill="currentColor" />}
                 <span>{category.label}</span>
                 <em>{category.count.toLocaleString()}</em>
               </button>
-            ))}
+            )} />
           </nav>
 
-          <main className="livetv-list" aria-label={activeCategoryLabel}>
+          <main ref={listRef} className="livetv-list" aria-label={activeCategoryLabel}>
             <div className="livetv-list-head">
               <h3>{activeCategoryLabel}</h3>
-              <span>
-                {renderedChannels.length < visibleChannels.length
-                  ? `${renderedChannels.length.toLocaleString()} of ${visibleChannels.length.toLocaleString()}`
-                  : visibleChannels.length.toLocaleString()}
-              </span>
+              <span>{visibleChannels.length.toLocaleString()}</span>
               <div className="livetv-view-toggle" role="tablist" aria-label="Channel view">
                 <button type="button" className={view === "list" ? "is-active" : ""} onClick={() => setView("list")} aria-label="List view"><List size={15} /> List</button>
                 <button type="button" className={view === "guide" ? "is-active" : ""} onClick={() => setView("guide")} aria-label="Guide view"><LayoutGrid size={15} /> Guide</button>
@@ -382,19 +414,19 @@ export function LiveTvScreen() {
             )}
             {view === "list" ? (
               <div className="livetv-rows">
-                {renderedChannels.map((channel) => (
+                <VirtualList key={`${provider}:${activeCategory}:${query}`} items={renderedChannels} itemKey={rowKey} label="Channels" estimate={86} renderItem={(channel) => (
                   <ChannelRow
                     key={channel.id}
                     channel={channel}
                     guide={iptvSnapshot.nowNext[channel.id]}
-                    favorite={favorites.includes(channel.id)}
+                    favorite={favoriteIds.has(channel.id)}
                     selected={selectedChannel?.id === channel.id}
                     onFocus={() => setSelectedChannelId(channel.id)}
                     onVisible={() => requestGuide(channel)}
-                    onPlay={() => playChannel(channel)}
+                    onPlay={() => watchChannel(channel)}
                     onToggleFavorite={() => toggleFavorite(channel.id)}
                   />
-                ))}
+                )} />
               </div>
             ) : (
               <GuideGrid
@@ -403,11 +435,9 @@ export function LiveTvScreen() {
                 selectedId={selectedChannel?.id ?? null}
                 onFocus={(channel) => setSelectedChannelId(channel.id)}
                 onVisible={requestGuide}
-                onPlay={playChannel}
+                onPlay={watchChannel}
+                onCatchup={playCatchup}
               />
-            )}
-            {visibleChannels.length > renderedChannels.length && (
-              <LoadMoreSentinel onLoadMore={() => setVisibleCount((count) => count + CHANNEL_PAGE_SIZE)} />
             )}
           </main>
 
@@ -444,23 +474,26 @@ export function LiveTvScreen() {
                   </div>
                 )}
                 <div className="livetv-detail-actions">
-                  <button type="button" className="primary" onClick={() => playChannel(selectedChannel)}><Play size={17} fill="currentColor" /> Watch</button>
+                  {favoriteIds.has(selectedChannel.id) && <><button className="secondary" type="button" title="Move favorite up" aria-label="Move favorite up" disabled={favorites.indexOf(selectedChannel.id) === 0} onClick={() => moveFavorite(selectedChannel.id, -1)}><ArrowUp size={17} /></button><button className="secondary" type="button" title="Move favorite down" aria-label="Move favorite down" disabled={favorites.indexOf(selectedChannel.id) === favorites.length - 1} onClick={() => moveFavorite(selectedChannel.id, 1)}><ArrowDown size={17} /></button></>}
+                  <button type="button" className="primary" onClick={() => watchChannel(selectedChannel)}><Play size={17} fill="currentColor" /> Watch</button>
                   <button type="button" className="secondary" onClick={() => openChannelExternally(selectedChannel, "vlc")}>
                     <ExternalLink size={17} /> VLC
                   </button>
                   <button
                     type="button"
                     className={favorites.includes(selectedChannel.id) ? "secondary is-active" : "secondary"}
+                    aria-label={favorites.includes(selectedChannel.id) ? "Remove selected favorite" : "Add selected favorite"}
+                    title={favorites.includes(selectedChannel.id) ? "Remove favorite" : "Add favorite"}
                     onClick={() => toggleFavorite(selectedChannel.id)}
                   >
-                    <Star size={17} fill={favorites.includes(selectedChannel.id) ? "currentColor" : "none"} /> Favorite
+                    <Star size={17} fill={favorites.includes(selectedChannel.id) ? "currentColor" : "none"} />
                   </button>
                 </div>
                 {catchup?.channelId === selectedChannel.id && (catchup.loading || catchup.programs.length > 0) && (
                   <div className="livetv-catchup">
                     <p className="livetv-catchup-head"><History size={14} /> Catch-up{selectedChannel.catchupDays ? ` · ${selectedChannel.catchupDays}d archive` : ""}</p>
                     {catchup.loading && <p className="livetv-detail-empty">Loading archive…</p>}
-                    {catchup.programs.slice(0, 12).map((program) => (
+                    {catchup.programs.map((program) => (
                       <button
                         type="button"
                         key={`${program.startUtcMillis}`}
@@ -515,32 +548,36 @@ function LoadMoreSentinel({ onLoadMore }: { onLoadMore: () => void }) {
 
 // Timeline guide: channels down, time across (now → +4h), programme blocks
 // positioned by their real start/end times. EPG loads lazily per visible row.
-function GuideGrid({ channels, nowNext, selectedId, onFocus, onVisible, onPlay }: {
+function GuideGrid({ channels, nowNext, selectedId, onFocus, onVisible, onPlay, onCatchup }: {
   channels: IptvChannel[];
   nowNext: IptvSnapshot["nowNext"];
   selectedId: string | null;
   onFocus: (channel: IptvChannel) => void;
   onVisible: (channel: IptvChannel) => void;
   onPlay: (channel: IptvChannel) => void;
+  onCatchup: (channel: IptvChannel, program: IptvProgram) => void;
 }) {
-  // The window starts at the previous half-hour so the "on now" block has context.
-  const [windowStart] = useState(() => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() < 30 ? 0 : 30, 0, 0);
-    return now.getTime();
-  });
+  const [clock, setClock] = useState(Date.now);
+  const [manualStart, setManualStart] = useState<number | null>(null);
+  const currentStart = Math.floor(clock / 1_800_000) * 1_800_000;
+  const windowStart = manualStart ?? currentStart;
   const windowEnd = windowStart + GUIDE_WINDOW_HOURS * 60 * 60 * 1000;
   const totalWidth = GUIDE_WINDOW_HOURS * 60 * GUIDE_PX_PER_MIN;
   const ticks = Array.from({ length: GUIDE_WINDOW_HOURS * 2 }, (_, index) => windowStart + index * 30 * 60 * 1000);
-  const [, forceTick] = useState(0);
   useEffect(() => {
-    const timer = window.setInterval(() => forceTick((value) => value + 1), 60_000);
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
   const nowOffset = ((Date.now() - windowStart) / 60000) * GUIDE_PX_PER_MIN;
 
   return (
     <div className="livetv-guide" role="grid" aria-label="Programme guide">
+      <div className="guide-window-controls" role="group" aria-label="Guide time window">
+        <button type="button" title="Previous four hours" aria-label="Previous four hours" disabled={windowStart <= currentStart - 48 * 3_600_000} onClick={() => setManualStart(windowStart - 4 * 3_600_000)}><ChevronLeft size={18} /></button>
+        <button type="button" className="guide-now" onClick={() => { setClock(Date.now()); setManualStart(null); }}>Now</button>
+        <button type="button" title="Next four hours" aria-label="Next four hours" disabled={windowStart >= currentStart + 44 * 3_600_000} onClick={() => setManualStart(windowStart + 4 * 3_600_000)}><ChevronRight size={18} /></button>
+        <span aria-live="polite">{new Intl.DateTimeFormat([], { weekday: "short", day: "numeric", month: "short" }).format(windowStart)} · {fmtTime(windowStart)}–{fmtTime(windowEnd)}</span>
+      </div>
       <div className="livetv-guide-scroll">
         <div className="livetv-guide-inner" style={{ width: `${totalWidth + 232}px` }}>
           <div className="livetv-guide-timebar">
@@ -554,7 +591,7 @@ function GuideGrid({ channels, nowNext, selectedId, onFocus, onVisible, onPlay }
               )}
             </div>
           </div>
-          {channels.map((channel) => (
+          <VirtualList items={channels} itemKey={rowKey} label="Guide channels" estimate={62} renderItem={(channel) => (
             <GuideRow
               key={channel.id}
               channel={channel}
@@ -567,15 +604,16 @@ function GuideGrid({ channels, nowNext, selectedId, onFocus, onVisible, onPlay }
               onFocus={() => onFocus(channel)}
               onVisible={() => onVisible(channel)}
               onPlay={() => onPlay(channel)}
+              onCatchup={(program) => onCatchup(channel, program)}
             />
-          ))}
+          )} />
         </div>
       </div>
     </div>
   );
 }
 
-function GuideRow({ channel, guide, selected, windowStart, windowEnd, totalWidth, nowOffset, onFocus, onVisible, onPlay }: {
+function GuideRow({ channel, guide, selected, windowStart, windowEnd, totalWidth, nowOffset, onFocus, onVisible, onPlay, onCatchup }: {
   channel: IptvChannel;
   guide?: IptvSnapshot["nowNext"][string];
   selected: boolean;
@@ -586,6 +624,7 @@ function GuideRow({ channel, guide, selected, windowStart, windowEnd, totalWidth
   onFocus: () => void;
   onVisible: () => void;
   onPlay: () => void;
+  onCatchup: (program: IptvProgram) => void;
 }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -603,7 +642,7 @@ function GuideRow({ channel, guide, selected, windowStart, windowEnd, totalWidth
   }, [channel.id]);
 
   const programs = useMemo(() => {
-    const all = [guide?.now, ...(guide?.upcoming ?? [])].filter((program): program is NonNullable<typeof program> => Boolean(program));
+    const all = [...(guide?.recent ?? []), guide?.now, guide?.next, ...(guide?.upcoming ?? [])].filter((program): program is NonNullable<typeof program> => Boolean(program));
     const seen = new Set<number>();
     return all
       .filter((program) => program.endUtcMillis > windowStart && program.startUtcMillis < windowEnd)
@@ -618,20 +657,24 @@ function GuideRow({ channel, guide, selected, windowStart, windowEnd, totalWidth
         <span className="livetv-row-logo">{channel.logo ? <img src={channel.logo} alt="" loading="lazy" /> : <Tv size={16} />}</span>
         <strong>{channel.name}</strong>
       </button>
-      <div className="livetv-guide-lane" style={{ width: `${totalWidth}px` }} onClick={onPlay}>
+      <div className="livetv-guide-lane" style={{ width: `${totalWidth}px` }}>
         {programs.map((program) => {
           const left = Math.max(0, ((program.startUtcMillis - windowStart) / 60000) * GUIDE_PX_PER_MIN);
           const right = Math.min(totalWidth, ((program.endUtcMillis - windowStart) / 60000) * GUIDE_PX_PER_MIN);
           const live = Date.now() >= program.startUtcMillis && Date.now() < program.endUtcMillis;
+          const archived = program.endUtcMillis <= Date.now() && Boolean(channel.catchupDays && Date.now() - program.startUtcMillis <= channel.catchupDays * 86_400_000);
           return (
-            <span
+            <button
+              type="button"
               key={program.startUtcMillis}
               className={`livetv-guide-block ${live ? "is-live" : ""}`}
               style={{ left: `${left}px`, width: `${Math.max(14, right - left - 2)}px` }}
-              title={`${program.title} · ${fmtTime(program.startUtcMillis)}–${fmtTime(program.endUtcMillis)}`}
+              aria-disabled={!live && !archived}
+              onClick={() => { if (live) onPlay(); else if (archived) onCatchup(program); }}
+              title={`${program.title} · ${fmtTime(program.startUtcMillis)}–${fmtTime(program.endUtcMillis)} · ${live ? "Live" : archived ? "Catch-up" : program.startUtcMillis > Date.now() ? "Upcoming" : "Archive unavailable"}`}
             >
               {program.title}
-            </span>
+            </button>
           );
         })}
         {programs.length === 0 && <span className="livetv-guide-empty">No guide data</span>}

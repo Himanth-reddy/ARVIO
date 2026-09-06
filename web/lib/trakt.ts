@@ -35,6 +35,7 @@ function normalizeToken(token: TraktToken | null): TraktToken | null {
 export class TraktClient {
   token: TraktToken | null = null;
   private profileId: string | null = null;
+  private refreshInFlight: { profileId: string | null; token: string; promise: Promise<TraktToken | null> } | null = null;
 
   get currentProfileId(): string | null {
     return this.profileId;
@@ -477,6 +478,16 @@ export class TraktClient {
   }
 
   private async refreshIfNeeded(): Promise<TraktToken | null> {
+    const profileId = this.profileId;
+    const token = this.token?.refresh_token ?? "";
+    if (this.refreshInFlight?.profileId === profileId && this.refreshInFlight.token === token) return this.refreshInFlight.promise;
+    const promise = this.refreshToken();
+    this.refreshInFlight = { profileId, token, promise };
+    try { return await promise; }
+    finally { if (this.refreshInFlight?.promise === promise) this.refreshInFlight = null; }
+  }
+
+  private async refreshToken(): Promise<TraktToken | null> {
     const profileId = this.profileId;
     const token = this.token;
     if (!token?.refresh_token) return null;

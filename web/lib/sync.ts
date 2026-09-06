@@ -91,8 +91,15 @@ function writeClients(): SyncClient[] {
   return result;
 }
 
-async function readAll(operation: (client: SyncClient) => Promise<unknown[]>): Promise<unknown[]> {
-  const settled = await Promise.allSettled(readClients("watchlist").map(operation));
+export function readsFrom(feature: TrackingFeature, provider: "trakt" | "simkl" | "mdblist"): boolean {
+  return readClients(feature).includes(({ trakt: traktClient, simkl: simklClient, mdblist: mdblistClient })[provider] as unknown as SyncClient);
+}
+
+async function readAll(feature: TrackingFeature, operation: (client: SyncClient) => Promise<unknown[]>): Promise<unknown[]> {
+  const settled = await Promise.allSettled(readClients(feature).map(operation));
+  // A partial snapshot must not be treated as an authoritative deletion.
+  const failed = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed.length) throw new AggregateError(failed.map((result) => result.reason), "A tracking service could not be read. Your saved library has been kept.");
   return settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
 }
 
@@ -100,21 +107,20 @@ async function writeAll(operation: (client: SyncClient) => Promise<void>): Promi
   const clients = writeClients();
   if (!clients.length) return;
   const settled = await Promise.allSettled(clients.map(operation));
-  if (settled.every((result) => result.status === "rejected")) {
-    throw (settled[0] as PromiseRejectedResult).reason;
+  const failed = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed.length) {
+    throw new AggregateError(failed.map((result) => result.reason), "Not all tracking services saved this change. Please retry.");
   }
 }
 
 class TrackingRouter implements SyncClient {
   get isConnected() { return readClients("watchlist").length > 0 || writeClients().length > 0; }
-  watchlist() { return readAll((client) => client.watchlist()); }
+  watchlist() { return readAll("watchlist", (client) => client.watchlist()); }
   async playback() {
-    const settled = await Promise.allSettled(readClients("continueWatching").map((client) => client.playback()));
-    return settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+    return readAll("continueWatching", (client) => client.playback());
   }
   async watched(type: "movies" | "shows") {
-    const settled = await Promise.allSettled(readClients("watched").map((client) => client.watched(type)));
-    return settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+    return readAll("watched", (client) => client.watched(type));
   }
   addToWatchlist(item: SyncMediaRef) { return writeAll((client) => client.addToWatchlist(item)); }
   removeFromWatchlist(item: SyncMediaRef) { return writeAll((client) => client.removeFromWatchlist(item)); }

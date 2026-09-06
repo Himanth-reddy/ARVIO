@@ -1240,6 +1240,7 @@ function AccountsSection() {
     pollSimkl,
     disconnectSimkl,
     refreshData,
+    settingsSyncState,
   } = useApp();
   const [traktError, setTraktError] = useState<string | null>(null);
   const [traktBusy, setTraktBusy] = useState<"start" | "poll" | null>(null);
@@ -1395,7 +1396,7 @@ function AccountsSection() {
           </div>
           <div>
             <span>Sync</span>
-            <strong>{auth ? "Cloud saved" : "Local only"}</strong>
+            <strong>{!auth ? "Local only" : settingsSyncState === "saved" ? "Settings saved" : settingsSyncState === "error" ? "Save pending - retrying" : "Settings pending"}</strong>
           </div>
         </div>
         {auth ? (

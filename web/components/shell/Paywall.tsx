@@ -125,6 +125,8 @@ function PaywallScreen({
   const [error, setError] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [kofiEmail, setKofiEmail] = useState("");
+  const [verificationRequired, setVerificationRequired] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
   const trialAvailable = state?.trialAvailable ?? true;
   const trialDays = state?.trialDurationDays ?? 3;
   const expired = state?.reason === "expired" || state?.status === "cancelled";
@@ -189,8 +191,9 @@ function PaywallScreen({
     void trackPremiumEvent(authClient, "membership_link_started");
     setBusy("link"); setError(null);
     try {
-      const next = await linkKofiEmail(authClient, kofiEmail.trim());
-      if (next.entitled) {
+      const next = await linkKofiEmail(authClient, kofiEmail.trim(), verificationRequired ? verificationCode : undefined);
+      if (next.verificationRequired) setVerificationRequired(true);
+      else if (next.entitled) {
         void trackPremiumEvent(authClient, "membership_linked");
         onEntitled(next);
       }
@@ -200,11 +203,11 @@ function PaywallScreen({
         status: err instanceof HttpError ? err.status : 0,
         error: err instanceof Error ? err.message : "unknown"
       });
-      setError("No active membership was found for that email.");
+      setError(err instanceof Error ? err.message : "Could not verify your membership. Try again.");
     } finally {
       setBusy(null);
     }
-  }, [kofiEmail, onEntitled]);
+  }, [kofiEmail, verificationCode, verificationRequired, onEntitled]);
 
   return (
     <main className="paywall">
@@ -259,10 +262,12 @@ function PaywallScreen({
               type="email"
               placeholder="Your Ko-fi / PayPal email"
               value={kofiEmail}
-              onChange={(e) => setKofiEmail(e.target.value)}
+              onChange={(e) => { setKofiEmail(e.target.value); setVerificationRequired(false); setVerificationCode(""); }}
+              aria-label="Billing email"
             />
-            <button type="button" onClick={() => void link()} disabled={busy !== null || !kofiEmail.trim()}>
-              {busy === "link" ? <Loader2 className="paywall-spinner" size={16} /> : "Link"}
+            {verificationRequired && <label>Enter the code sent to your billing email<input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} autoComplete="one-time-code" maxLength={16} aria-label="Email verification code" /></label>}
+            <button type="button" onClick={() => void link()} disabled={busy !== null || !kofiEmail.trim() || (verificationRequired && verificationCode.trim().length !== 16)}>
+              {busy === "link" ? <Loader2 className="paywall-spinner" size={16} /> : verificationRequired ? "Verify" : "Link"}
             </button>
           </div>
         )}

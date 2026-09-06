@@ -324,6 +324,19 @@ function VideoPlayer({
   const [muted, setMuted] = useState(false);
   const [buffering, setBuffering] = useState(true);
   const [showControls, setShowControls] = useState(true);
+  const [nextCountdown, setNextCountdown] = useState<number | null>(null);
+  const nextDismissed = useRef(false);
+  useEffect(() => { setNextCountdown(null); nextDismissed.current = false; }, [stream.url]);
+  useEffect(() => {
+    if (nextCountdown === null) return;
+    if (nextCountdown <= 0) {
+      setNextCountdown(null);
+      void onAdvance();
+      return;
+    }
+    const timer = window.setTimeout(() => setNextCountdown((value) => value === null ? null : value - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [nextCountdown, onAdvance]);
   const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState(false);
   const [activePanel, setActivePanel] = useState<PlayerPanel>(null);
@@ -405,10 +418,8 @@ function VideoPlayer({
     void trackPremiumMilestone(authClient, "first_playback", { playback_type: liveTv ? "live" : "vod" });
   }, [booted, liveTv]);
 
-  // Black-frame guard: some Dolby Vision sources decode audio fine but render an
-  // all-black picture in browsers that can't handle the DV enhancement layer
-  // (the "sound but no video" case). A few seconds in, sample the actual frame;
-  // if it's essentially black while playback advances, hop to another source.
+  // Recover only when the decoder delivers no video frames. Pixel brightness
+  // cannot distinguish unsupported video from a legitimate dark scene.
   useEffect(() => {
     if (!booted || liveTv) return undefined;
     const video = videoRef.current;
@@ -425,31 +436,7 @@ function VideoPlayer({
         if (!tryNextSource()) setError(true);
         return;
       }
-      if (switchedForBlackRef.current || video.paused || video.currentTime < 4 || !video.videoWidth) {
-        timer = window.setTimeout(check, 1500);
-        return;
-      }
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = 32;
-        canvas.height = 18;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        if (!ctx) return;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        let bright = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          if (data[i] > 16 || data[i + 1] > 16 || data[i + 2] > 16) bright += 1;
-        }
-        // Fewer than 1% non-black pixels over a real playing frame = broken video.
-        if (bright / (data.length / 4) < 0.01) {
-          switchedForBlackRef.current = true;
-          onToast("This version's video won't render in the browser — switching source.");
-          if (!tryNextSource()) { setError(true); }
-        }
-      } catch {
-        // Canvas can taint on cross-origin frames without CORS; skip silently.
-      }
+      if (!switchedForBlackRef.current) timer = window.setTimeout(check, 1500);
     };
     timer = window.setTimeout(check, 3500);
     return () => window.clearTimeout(timer);
@@ -1096,6 +1083,9 @@ function VideoPlayer({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !item) return undefined;
+    const userId = authClient.session?.userId;
+    let lastPosition: { position: number; duration: number } | null = null;
+    let lastQueuedPosition = -1;
     const season = selectedEpisode?.season ?? item.seasonNumber ?? null;
     const episode = selectedEpisode?.episode ?? item.episodeNumber ?? null;
     const isLiveStream = isLiveStreamOrSportsItem({
@@ -1106,7 +1096,7 @@ function VideoPlayer({
     }, addons);
     const isAnime = item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16));
     const scrobble = (action: "start" | "pause" | "stop", progress: number) => {
-      if (isLiveStream) return;
+      if (isLiveStream || authClient.session?.userId !== userId) return;
       void syncClient().scrobble(action, {
         mediaType: item.mediaType,
         tmdbId: item.id,
@@ -1130,12 +1120,18 @@ function VideoPlayer({
       scrobbleActive = false;
       scrobble("pause", playbackProgress());
     };
-    const save = () => {
-      if (!authClient.session || !Number.isFinite(video.duration) || video.duration <= 0) return;
+    const save = (force: boolean | Event = false) => {
+      if (Number.isFinite(video.duration) && video.duration > 0 && Number.isFinite(video.currentTime)) {
+        lastPosition = { position: video.currentTime, duration: video.duration };
+      }
+      if (!lastPosition || !authClient.session || authClient.session.userId !== userId || isLiveStream) return;
       const now = Date.now();
-      if (now - lastSavedRef.current < 15_000) return;
+      if (force !== true && now - lastSavedRef.current < 15_000) return;
+      const { position, duration } = lastPosition;
+      if (lastQueuedPosition === Math.round(position)) return;
+      lastQueuedPosition = Math.round(position);
       lastSavedRef.current = now;
-      const progress = Math.min(1, Math.max(0, video.currentTime / video.duration));
+      const progress = Math.min(1, Math.max(0, position / duration));
       void saveProgress(authClient, {
         media_type: item.mediaType,
         show_tmdb_id: item.id,
@@ -1145,15 +1141,15 @@ function VideoPlayer({
         episode_title: item.episodeTitle ?? null,
         title: item.title,
         progress,
-        duration_seconds: Math.round(video.duration),
-        position_seconds: Math.round(video.currentTime),
+        duration_seconds: Math.round(duration),
+        position_seconds: Math.round(position),
         backdrop_path: item.backdrop?.replace(config.backdropBase, "") ?? null,
         episode_still_path: item.episodeStill ?? null,
         poster_path: item.image?.replace(config.imageBase, "") ?? null,
         source: stream.addonName,
         stream_addon_id: stream.addonId ?? null,
         stream_title: stream.source
-      }, activeProfileId, addons).catch(() => undefined);
+      }, activeProfileId, addons).catch(() => { lastQueuedPosition = -1; });
     };
     const onEnded = () => {
       scrobbleActive = false;
@@ -1166,18 +1162,25 @@ function VideoPlayer({
           episodeNumber: episode
         }, true, activeProfileId).catch(() => undefined);
       }
-      if (settings.autoPlayNext && canAdvance) void onAdvance();
+      save(true);
+      if (settings.autoPlayNext && canAdvance && !nextDismissed.current) { setShowControls(true); setNextCountdown(10); }
     };
+    const flush = () => { save(true); onPaused(); };
+    const background = () => { if (document.visibilityState === "hidden") flush(); };
     video.addEventListener("timeupdate", save);
-    video.addEventListener("pause", save);
+    video.addEventListener("pause", flush);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", background);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPaused);
     video.addEventListener("ended", onEnded);
     if (!video.paused && video.readyState >= 2) onPlaying();
     return () => {
-      save();
+      flush();
       video.removeEventListener("timeupdate", save);
-      video.removeEventListener("pause", save);
+      video.removeEventListener("pause", flush);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", background);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("pause", onPaused);
       video.removeEventListener("ended", onEnded);
@@ -1320,6 +1323,13 @@ function VideoPlayer({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.key !== "Escape" && target instanceof HTMLElement && (
+        target.closest('input, select, textarea, [contenteditable="true"]') ||
+        (target.closest('button, [role="button"]') && e.key === " ") ||
+        (activePanel && e.key.startsWith("Arrow"))
+      )) return;
       switch (e.key) {
         case " ":
         case "k":
@@ -1328,13 +1338,16 @@ function VideoPlayer({
           break;
         case "ArrowLeft":
         case "j":
+          e.preventDefault();
           seekBy(-10);
           break;
         case "ArrowRight":
         case "l":
+          e.preventDefault();
           seekBy(10);
           break;
         case "ArrowUp": {
+          e.preventDefault();
           const v = videoRef.current;
           if (v) {
             v.volume = Math.min(1, v.volume + 0.1);
@@ -1343,6 +1356,7 @@ function VideoPlayer({
           break;
         }
         case "ArrowDown": {
+          e.preventDefault();
           const v = videoRef.current;
           if (v) {
             v.volume = Math.max(0, v.volume - 0.1);
@@ -1504,7 +1518,8 @@ function VideoPlayer({
           </div>
         </div>
         <div className="player-top-actions">
-          {canAdvance && <button type="button" className="player-next" onClick={() => void onAdvance()}><SkipForward size={18} /> Next episode</button>}
+          {nextCountdown !== null && <div className="next-episode-prompt" role="status"><span>Next episode in {nextCountdown}s</span><button type="button" className="icon-button" aria-label="Cancel next episode" onClick={() => { nextDismissed.current = true; setNextCountdown(null); }}><X size={20} /></button></div>}
+          {canAdvance && <button type="button" className="player-next" onClick={() => { setNextCountdown(null); void onAdvance(); }}><SkipForward size={18} /> Next episode</button>}
           <button type="button" className="player-icon-btn" onClick={onClose} aria-label="Close"><X size={22} /></button>
         </div>
       </div>
@@ -1751,15 +1766,16 @@ function VideoPlayer({
               aria-valuetext={fmt(scrubDisplayTime)}
               style={{ ["--pct" as string]: `${pct}%`, ["--buf" as string]: `${bufPct}%` }}
               onChange={(e) => setScrubTo(Number(e.target.value))}
-              onPointerUp={() => {
+              onPointerUp={(event) => {
                 const v = videoRef.current;
-                if (v && scrubTo !== null) v.currentTime = scrubTo;
+                if (v) v.currentTime = Number(event.currentTarget.value);
                 setScrubTo(null);
               }}
-              onKeyUp={() => {
+              onKeyUp={(event) => {
+                if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) return;
                 // Keyboard seeking has no pointer release to commit on.
                 const v = videoRef.current;
-                if (v && scrubTo !== null) v.currentTime = scrubTo;
+                if (v) v.currentTime = Number(event.currentTarget.value);
                 setScrubTo(null);
               }}
               onBlur={() => setScrubTo(null)}

@@ -8,7 +8,6 @@ const IPTV_TEXT_CACHE_META = "arvio.web.iptv.textMeta.v1";
 const PLAYLIST_TTL_MS = 6 * 60 * 60 * 1000;
 const EPG_TTL_MS = 3 * 60 * 60 * 1000;
 const LARGE_IPTV_LIST_CHANNEL_COUNT = 10_000;
-const MAX_IPTV_PLAYLISTS = 3;
 const DEFAULT_IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20";
 
 type IptvLoadOptions = {
@@ -98,15 +97,16 @@ export async function loadIptvSnapshot(
       }
     })
   );
-  const channels = channelSets.flat();
+  const allChannels = channelSets.flat();
+  const channels = accessibleChannels(allChannels, hiddenGroups);
   // Xtream channels get now/next on demand from the panel's JSON EPG (fast,
   // per-channel); only non-Xtream channels need the upfront XMLTV pass.
   const xtreamPlaylistIds = new Set(enabled.filter((playlist) => xtreamInfoFromPlaylist(playlist.m3uUrl)).map((playlist) => playlist.id));
   const xmltvChannels = channels.filter((channel) => !xtreamPlaylistIds.has(channel.id.split(":")[0] ?? ""));
   const skipInitialEpg = xmltvChannels.length > LARGE_IPTV_LIST_CHANNEL_COUNT;
-  const nowNext = skipInitialEpg || !xmltvChannels.length
-    ? {}
-    : await loadNowNext(enabled, xmltvChannels).catch(() => ({} as Record<string, IptvNowNext>));
+  // Channels must not wait for a potentially huge XMLTV response. The visible
+  // window requests its guide independently after the snapshot is painted.
+  const nowNext = {};
   const epgWarning = skipInitialEpg
     ? `Guide loads on demand for this ${channels.length.toLocaleString()} channel playlist, so Live TV opens fast without parsing the full EPG upfront.`
     : undefined;
@@ -114,12 +114,13 @@ export async function loadIptvSnapshot(
   const grouped = channels.reduce<Record<string, IptvChannel[]>>((acc, channel) => {
     const group = channel.group || "Uncategorized";
     if (hidden.has(group) || hidden.has(groupKey(channel))) return acc;
-    acc[group] = [...(acc[group] ?? []), channel];
+    (acc[group] ??= []).push(channel);
     return acc;
   }, {});
   const orderedGroups = orderGroups(grouped, groupOrder, channels);
   return {
     channels,
+    allChannels,
     grouped: Object.fromEntries(orderedGroups.map((group) => [group, grouped[group]])),
     nowNext,
     favoriteChannels,
@@ -331,8 +332,12 @@ async function fetchPlaylistText(url: string, options: IptvLoadOptions = {}) {
 export function normalizeIptvPlaylists(playlists: IptvPlaylistEntry[]) {
   return playlists
     .map((playlist, index) => normalizeIptvPlaylist(playlist, index))
-    .filter((playlist): playlist is IptvPlaylistEntry => Boolean(playlist))
-    .slice(0, MAX_IPTV_PLAYLISTS);
+    .filter((playlist): playlist is IptvPlaylistEntry => Boolean(playlist));
+}
+
+export function accessibleChannels(channels: IptvChannel[], hiddenGroups: string[]) {
+  const hidden = new Set(hiddenGroups);
+  return channels.filter((channel) => !hidden.has(channel.group || "Uncategorized") && !hidden.has(groupKey(channel)));
 }
 
 export function normalizeIptvPlaylist(playlist: IptvPlaylistEntry, index = 0): IptvPlaylistEntry | null {
@@ -587,7 +592,7 @@ function orderGroups(grouped: Record<string, IptvChannel[]>, groupOrder: string[
     const bKey = firstChannelByGroup[b] ? groupKey(firstChannelByGroup[b]) : b;
     const ai = orderMap.get(aKey) ?? orderMap.get(a) ?? Number.MAX_SAFE_INTEGER;
     const bi = orderMap.get(bKey) ?? orderMap.get(b) ?? Number.MAX_SAFE_INTEGER;
-    return ai === bi ? a.localeCompare(b) : ai - bi;
+    return ai === bi ? 0 : ai - bi;
   });
 }
 
@@ -657,37 +662,62 @@ export function isDividerChannelName(name?: string) {
 }
 
 async function loadNowNext(playlists: IptvPlaylistEntry[], channels: IptvChannel[]) {
-  const urls = playlists.flatMap((playlist) => [playlist.epgUrl, ...(playlist.epgUrls ?? [])]).filter((url): url is string => Boolean(url?.trim()));
-  if (!urls.length || !channels.length) return {};
+  if (!channels.length) return {};
   const programsById: Record<string, IptvProgram[]> = {};
-  const channelLookup = new Map(channels.flatMap((channel) => [
-    [channel.tvgId?.toLowerCase(), channel.id],
-    [channel.name.toLowerCase(), channel.id]
-  ].filter((pair): pair is [string, string] => Boolean(pair[0]))));
-
-  const xmlTexts = await Promise.all(urls.slice(0, 3).map((url) => fetchEpgText(url).catch(() => "")));
-  for (const xml of xmlTexts) {
-    for (const program of parseXmltv(xml)) {
-      const channelId = channelLookup.get(program.channel.toLowerCase());
-      if (!channelId) continue;
-      programsById[channelId] = [...(programsById[channelId] ?? []), program.program];
+  for (const playlist of playlists) {
+    const lookup = new Map<string, Set<string>>();
+    for (const channel of channels) {
+      if (!channel.id.startsWith(`${playlist.id}:`)) continue;
+      for (const key of [channel.tvgId, channel.name]) {
+        if (!key?.trim()) continue;
+        const normalized = key.trim().toLowerCase();
+        if (!lookup.has(normalized)) lookup.set(normalized, new Set());
+        lookup.get(normalized)!.add(channel.id);
+      }
+    }
+    if (!lookup.size) continue;
+    const urls = [...new Set([playlist.epgUrl, ...(playlist.epgUrls ?? [])].filter((url): url is string => Boolean(url?.trim())))];
+    for (const url of urls) {
+      const programs = await cachedXmltvPrograms(url).catch(() => []);
+      const matchedThisSource = new Set<string>();
+      for (const { channel, program } of programs) {
+        for (const id of lookup.get(channel.trim().toLowerCase()) ?? []) {
+          // Earlier configured sources own the channel when they contain data.
+          if (programsById[id] && !matchedThisSource.has(id)) continue;
+          matchedThisSource.add(id);
+          (programsById[id] ??= []).push(program);
+        }
+      }
     }
   }
 
   const now = Date.now();
   return Object.fromEntries(Object.entries(programsById).map(([channelId, programs]) => {
-    const sorted = programs.sort((a, b) => a.startUtcMillis - b.startUtcMillis);
+    const sorted = [...new Map(programs.map((p) => [p.startUtcMillis, p])).values()].sort((a, b) => a.startUtcMillis - b.startUtcMillis);
     const live = sorted.find((program) => now >= program.startUtcMillis && now < program.endUtcMillis);
     const future = sorted.filter((program) => program.startUtcMillis > now);
-    const recent = sorted.filter((program) => program.endUtcMillis <= now).slice(-12);
+    const recent = sorted.filter((program) => program.endUtcMillis <= now && program.endUtcMillis >= now - 48 * 3600_000);
     return [channelId, {
       now: live,
       next: future[0],
       later: future[1],
-      upcoming: future.slice(0, 8),
+      upcoming: future.filter((program) => program.startUtcMillis < now + 48 * 3600_000),
       recent
     } satisfies IptvNowNext];
   }));
+}
+
+const parsedGuides = new Map<string, { at: number; promise: Promise<ReturnType<typeof parseXmltv>> }>();
+function cachedXmltvPrograms(url: string) {
+  const cached = parsedGuides.get(url);
+  if (cached && Date.now() - cached.at < EPG_TTL_MS) return cached.promise;
+  const promise = fetchEpgText(url).then(parseXmltv).catch((error) => {
+    parsedGuides.delete(url);
+    throw error;
+  });
+  if (parsedGuides.size >= 4) parsedGuides.delete(parsedGuides.keys().next().value!);
+  parsedGuides.set(url, { at: Date.now(), promise });
+  return promise;
 }
 
 function parseXmltv(xml: string) {

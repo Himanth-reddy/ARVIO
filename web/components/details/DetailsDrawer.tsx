@@ -15,6 +15,7 @@ import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/service
 import { getImdbRating } from "@/lib/imdbRatings";
 import { mdblistClient, type MdbExternalRating } from "@/lib/mdblist";
 import { sourcePickerScore } from "@/lib/sourceRank";
+import { playbackPlan } from "@/lib/streamCompatibility";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
@@ -391,7 +392,7 @@ function SourcePickerModal({
   onToast: (message: string) => void;
   loading: boolean;
 }) {
-  const { settings } = useApp();
+  const { settings, playStream } = useApp();
   const [addonFilter, setAddonFilter] = useState("all");
   const [query, setQuery] = useState("");
   // Windows-only: offer the one-time vlc:// setup so "Open in VLC" launches VLC
@@ -666,14 +667,15 @@ function SourcePickerModal({
             // only what always works: an external player. In-browser Play is
             // removed with it; a button that usually fails is worse than none.
             const uncached = isUncachedDebridStream(stream);
+            const browserOption = !locked && !uncached && playbackPlan(stream).route === "here";
             const statusLabel = uncached
               ? "Not cached — downloads first, slow start"
               : locked
                 ? "Needs a debrid resolver"
-                : "Plays in an external player — open in VLC";
+                : browserOption ? "Browser or external player" : "External player recommended";
             const statusClass = "needs-vlc";
             return (
-              <article key={`${stream.addonId}-${stream.source}-${index}`} className={`source-picker-row ${locked ? "is-locked" : ""}`}>
+              <article key={`${stream.addonId}-${stream.url ?? stream.source}`} className={`source-picker-row ${locked ? "is-locked" : ""}`}>
                 <span className="source-rank">{index + 1}</span>
                 <span className="source-main">
                   <strong>{stream.source || stream.addonName}</strong>
@@ -690,9 +692,10 @@ function SourcePickerModal({
                   </span>
                 </span>
                 <span className="source-side">
-                  <b>{stream.quality || "HD"}</b>
+                  <b>{stream.quality || "Unknown"}</b>
                   <small>{locked ? "Needs resolver" : "External"}</small>
                   <span className="source-row-actions">
+                    {browserOption && <button type="button" className="source-action primary-action" onClick={() => { playStream(stream, { forceBrowser: true }); onClose(); }}><Play size={13} /> Play</button>}
                     <button
                       type="button"
                       className={`source-action ${locked ? "" : "primary-action"}`}

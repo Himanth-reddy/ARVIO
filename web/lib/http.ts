@@ -31,30 +31,42 @@ export class HttpError extends Error {
   }
 }
 
+async function timedRequest<T>(url: string, init: RequestInit, consume: (response: Response) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error("The service took too long to respond. Please retry.")), 30_000);
+  try { return await consume(await fetch(url, { ...init, signal: controller.signal })); }
+  finally { clearTimeout(timer); init.signal?.removeEventListener("abort", abort); }
+}
+
 export async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
+  return timedRequest(url, {
     ...init,
     headers: {
       Accept: "application/json",
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers ?? {})
     }
-  });
+  }, async (response) => {
   if (!response.ok) {
     const message = await response.text().catch(() => "");
     throw new HttpError(response.status, cleanErrorMessage(response.status, message));
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+  });
 }
 
 export async function textRequest(url: string, init: RequestInit = {}): Promise<string> {
-  const response = await fetch(url, init);
+  return timedRequest(url, init, async (response) => {
   if (!response.ok) {
     const message = await response.text().catch(() => "");
     throw new Error(cleanErrorMessage(response.status, message));
   }
   return response.text();
+  });
 }
 
 export function proxiedUrl(url: string, headers?: Record<string, string>) {

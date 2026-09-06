@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { safeProxyFetch, withinProxyBudget } from "@/lib/server/safeProxy";
 
 const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 const PROXY_TIMEOUT_MS = 18_000;
@@ -7,6 +8,7 @@ const ALLOW_MEDIA_PROXY =
   process.env.NEXT_PUBLIC_ALLOW_NETLIFY_MEDIA_PROXY === "true";
 
 export async function GET(request: NextRequest) {
+  if (!withinProxyBudget(request.headers.get("x-nf-client-connection-ip") ?? "local")) return NextResponse.json({ error: "Proxy request limit reached. Please wait." }, { status: 429, headers: { "retry-after": "60" } });
   const input = new URL(request.url);
   const raw = input.searchParams.get("url");
   if (!raw) return NextResponse.json({ error: "Missing url" }, { status: 400 });
@@ -43,11 +45,11 @@ export async function GET(request: NextRequest) {
   });
 
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
-  if (rewriteMode !== "0" && shouldRewritePlaylist(target, contentType)) {
+  if (response.ok && rewriteMode !== "0" && shouldRewritePlaylist(target, contentType)) {
     const text = await response.text();
     const rewritten = rewriteMode === "worker"
-      ? rewritePlaylistToWorker(text, target, input.searchParams.get("headers"))
-      : rewriteMode === "direct" ? rewritePlaylistToAbsolute(text, target) : rewritePlaylist(text, target, request);
+      ? rewritePlaylistToWorker(text, new URL(response.headers.get("x-arvio-final-url") ?? target), input.searchParams.get("headers"))
+      : rewriteMode === "direct" ? rewritePlaylistToAbsolute(text, new URL(response.headers.get("x-arvio-final-url") ?? target)) : rewritePlaylist(text, new URL(response.headers.get("x-arvio-final-url") ?? target), request);
     const headers = new Headers();
     headers.set("content-type", contentType.includes("mpegurl") ? contentType : "application/vnd.apple.mpegurl");
     headers.set("cache-control", rewriteMode === "direct" ? "private, max-age=20" : "private, max-age=30, stale-while-revalidate=120");
@@ -99,6 +101,7 @@ function isCacheableIptvCatalog(target: URL) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!withinProxyBudget(request.headers.get("x-nf-client-connection-ip") ?? "local")) return NextResponse.json({ error: "Proxy request limit reached. Please wait." }, { status: 429, headers: { "retry-after": "60" } });
   const input = new URL(request.url);
   const raw = input.searchParams.get("url");
   if (!raw) return NextResponse.json({ error: "Missing url" }, { status: 400 });
@@ -121,6 +124,7 @@ export async function POST(request: NextRequest) {
 
   const forwardedHeaders = decodeHeaders(input.searchParams.get("headers")) ?? {};
   const body = await request.text();
+  if (body.length > 1024 * 1024) return NextResponse.json({ error: "Request too large" }, { status: 413 });
   const response = await fetchWithTimeout(target, {
     method: "POST",
     headers: { "content-type": "application/json", ...forwardedHeaders },
@@ -256,16 +260,12 @@ function rewritePlaylistToAbsolute(text: string, baseUrl: URL) {
 }
 
 async function fetchWithTimeout(target: URL, init: RequestInit) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
   try {
-    return await fetch(target, { ...init, signal: controller.signal });
+    return await safeProxyFetch(target, init);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)) {
       return NextResponse.json({ error: "Proxy target timed out" }, { status: 504 });
     }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+    return NextResponse.json({ error: "Proxy target unavailable or blocked" }, { status: 502 });
   }
 }

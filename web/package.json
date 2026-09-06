@@ -2,15 +2,21 @@
   "name": "arvio-web",
   "version": "0.1.0",
   "private": true,
+  "overrides": {
+    "postcss": "8.5.28"
+  },
   "scripts": {
     "dev": "next dev",
+    "test": "node --test tests/*.test.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
     "@mediabunny/ac3": "^1.50.6",
+    "@tanstack/react-virtual": "^3.14.10",
     "hls.js": "^1.5.20",
+    "ipaddr.js": "^2.5.0",
     "lucide-react": "^0.468.0",
     "mediabunny": "^1.50.6",
     "mpegts.js": "^1.8.0",
@@ -18,7 +24,8 @@
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "telegram": "^2.26.22"
+    "telegram": "^2.26.22",
+    "undici": "^8.10.2"
   },
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5.15.12",

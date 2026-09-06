@@ -9,7 +9,8 @@ export const config = {
   netlifyBackendUrl: process.env.NEXT_PUBLIC_NETLIFY_BACKEND_URL ?? process.env.NETLIFY_BACKEND_URL ?? "https://auth.arvio.tv/.netlify/functions",
   resolverUrl: envValue(process.env.NEXT_PUBLIC_ARVIO_RESOLVER_URL, ""),
   traktClientId: process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID ?? "",
-  traktClientSecret: envValue(process.env.NEXT_PUBLIC_TRAKT_CLIENT_SECRET, ""),
+  // OAuth secrets belong only on the server, never in the browser bundle.
+  traktClientSecret: "",
   simklClientId: process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID ?? process.env.SIMKL_CLIENT_ID ?? "",
   allowNetlifyMediaProxy: envValue(process.env.NEXT_PUBLIC_ALLOW_NETLIFY_MEDIA_PROXY, "false") === "true",
   // Web subscription: the Ko-fi membership page the paywall links to, and a
@@ -39,7 +40,7 @@ export function hasResolverConfig() {
 }
 
 export function hasTraktConfig() {
-  return hasNetlifyBackendConfig() ||
+  return hasNetlifyBackendUrl() ||
     (config.traktClientId.length > 10 && !config.traktClientId.startsWith("__"));
 }
 

@@ -274,12 +274,25 @@ export class SimklClient implements SyncClient {
     return [...movies, ...shows];
   }
 
+  async library(status: "plantowatch" | "watching" | "completed" | "hold" | "dropped"): Promise<unknown[]> {
+    const snapshot = await this.loadSnapshot();
+    const rows = [
+      ...snapshot.movies.filter((row) => row.status === status).map((row) => ({ type: "movie", movie: row.movie, listed_at: row.last_watched_at })),
+      ...[...snapshot.shows, ...snapshot.anime].filter((row) => row.status === status).map((row) => ({ type: "show", show: row.show, listed_at: row.last_watched_at }))
+    ];
+    // Identity/artwork is resolved by the shared bounded tracker hydrator.
+    return rows;
+  }
+
   async playback(): Promise<unknown[]> {
     if (!this.isConnected) return [];
-    const [rows, snapshot] = await Promise.all([
+    const [playbackResult, snapshotResult] = await Promise.allSettled([
       this.simkl<SimklPlaybackRow[]>("/sync/playback"),
       this.loadSnapshot()
     ]);
+    if (playbackResult.status === "rejected" && snapshotResult.status === "rejected") throw snapshotResult.reason;
+    const rows = playbackResult.status === "fulfilled" ? playbackResult.value : [];
+    const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : { shows: [], anime: [] };
     const normalized = (await Promise.all(rows.map(async (row) => ({
       ...row,
       movie: await this.resolveMedia(row.movie, "movie"),
@@ -290,8 +303,8 @@ export class SimklClient implements SyncClient {
     })))).filter((row) => row.movie?.ids?.tmdb || row.show?.ids?.tmdb);
     const pausedShows = new Set(normalized.map((row) => row.show?.ids?.tmdb).filter(Boolean));
     const upNext = (await Promise.all([...snapshot.shows, ...snapshot.anime].map(async (row) => {
-      const show = await this.resolveMedia(row.show, "tv");
       if (row.status !== "watching") return null;
+      const show = await this.resolveMedia(row.show, "tv");
       const episode = row.next_to_watch_info ?? parseNextToWatch(row.next_to_watch);
       const number = episode?.episode;
       const season = episode?.season ?? 1;

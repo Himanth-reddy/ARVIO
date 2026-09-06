@@ -3,6 +3,7 @@
 import { Bookmark, Film, LoaderCircle, RefreshCw, Search, Server, Tv } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MediaCard } from "@/components/media/MediaCard";
+import { TrackerLibrary } from "./TrackerLibrary";
 import type { HomeServerLibraryOption, HomeServerLibraryPage, HomeServerLibrarySort } from "@/lib/homeserver";
 import { useApp } from "@/lib/store";
 import type { HomeServerConfig, MediaItem } from "@/lib/types";
@@ -31,7 +32,7 @@ function itemKey(item: MediaItem): string {
 export function WatchlistScreen() {
   const {
     watchlist, traktConnected, simklConnected, mdblistConnected, openDetails,
-    settings, trackingPreferences, loadTraktLists, loadTraktListItems
+    settings, trackingPreferences, loadTraktLists, loadTraktListItems, auth, activeProfile
   } = useApp();
   const posterMode = settings.cardLayoutMode === "poster";
   const homeServers = useMemo(
@@ -44,6 +45,7 @@ export function WatchlistScreen() {
   );
 
   const [tab, setTab] = useState<LibraryTab>("watchlist");
+  const [trackerTab, setTrackerTab] = useState<"trakt" | "simkl" | null>(null);
   const [filter, setFilter] = useState<WatchlistFilter>("all");
   const [sort, setSort] = useState<HomeServerLibrarySort>("added");
   const [search, setSearch] = useState("");
@@ -58,6 +60,7 @@ export function WatchlistScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [libraryError, setLibraryError] = useState(false);
   const requestRef = useRef(0);
+  const librariesRequest = useRef(0);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -73,16 +76,21 @@ export function WatchlistScreen() {
   }, [traktConnected, loadTraktLists]);
 
   const refreshLibraries = useCallback(async () => {
+    const id = ++librariesRequest.current;
     if (!homeServers.length) {
       setLibraries([]);
       return;
     }
     const { listHomeServerLibraries } = await import("@/lib/homeserver");
-    const next = await listHomeServerLibraries(homeServers).catch(() => []);
-    setLibraries(next);
+    try {
+      const next = await listHomeServerLibraries(homeServers);
+      if (librariesRequest.current === id) setLibraries(next);
+    } catch {
+      if (librariesRequest.current === id) setLibraryError(true);
+    }
   }, [homeServers]);
 
-  useEffect(() => { void refreshLibraries(); }, [refreshLibraries]);
+  useEffect(() => { void refreshLibraries(); return () => { librariesRequest.current++; requestRef.current++; }; }, [refreshLibraries]);
 
   useEffect(() => {
     if (tab !== "watchlist" && !providerTypes.includes(tab)) setTab("watchlist");
@@ -123,7 +131,7 @@ export function WatchlistScreen() {
   }, [tab, watchlistSource, loadTraktListItems]);
 
   const libraryFilter: WatchlistFilter = "all";
-  const cacheKey = `${selectedLibrary}|${sort}|${searchQuery.toLowerCase()}`;
+  const cacheKey = `${auth?.userId ?? "local"}:${activeProfile?.id}:${selectedLibrary}|${sort}|${searchQuery.toLowerCase()}`;
   const loadLibrary = useCallback(async (force = false) => {
     if (tab === "watchlist" || !selectedLibrary) return;
     const requestId = ++requestRef.current;
@@ -146,16 +154,17 @@ export function WatchlistScreen() {
       libraryCache.set(cacheKey, page);
       setLibraryPage(page);
     } catch {
-      if (requestId === requestRef.current && !cached) setLibraryError(true);
+      if (requestId === requestRef.current) setLibraryError(true);
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
   }, [activeLibrary?.mediaType, cacheKey, homeServers, libraryFilter, searchQuery, selectedLibrary, sort, tab]);
 
-  useEffect(() => { void loadLibrary(); }, [loadLibrary]);
+  useEffect(() => { void loadLibrary(); return () => { requestRef.current++; }; }, [loadLibrary]);
 
-  const loadMore = useCallback(async () => {
-    if (tab === "watchlist" || loading || loadingMore || !libraryPage.hasMore || !selectedLibrary) return;
+  const loadMore = useCallback(async (retry = false) => {
+    if (tab === "watchlist" || loading || loadingMore || (libraryError && !retry) || !libraryPage.hasMore || !selectedLibrary) return;
+    setLibraryError(false);
     setLoadingMore(true);
     const requestId = requestRef.current;
     const { loadHomeServerLibraryPage } = await import("@/lib/homeserver");
@@ -177,10 +186,12 @@ export function WatchlistScreen() {
         libraryCache.set(cacheKey, page);
         return page;
       });
+    } catch {
+      if (requestId === requestRef.current) setLibraryError(true);
     } finally {
       setLoadingMore(false);
     }
-  }, [activeLibrary?.mediaType, cacheKey, homeServers, libraryFilter, libraryPage.hasMore, libraryPage.items.length, loading, loadingMore, searchQuery, selectedLibrary, sort, tab]);
+  }, [activeLibrary?.mediaType, cacheKey, homeServers, libraryError, libraryFilter, libraryPage.hasMore, libraryPage.items.length, loading, loadingMore, searchQuery, selectedLibrary, sort, tab]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -224,19 +235,21 @@ export function WatchlistScreen() {
     <div className={`screen has-section-heading library-screen ${posterMode ? "poster-results" : ""}`}>
       <section className="section-heading library-heading">
         <div className="library-title-block">
-          <p className="eyebrow">{eyebrow}</p>
-          <h2>{heading}</h2>
+          <p className="eyebrow">{trackerTab ? "Your connected library" : eyebrow}</p>
+          <h2>{trackerTab ? trackerTab === "trakt" ? "Trakt Library" : "Simkl Library" : heading}</h2>
         </div>
         <nav className="library-provider-tabs" aria-label="Library source">
-          <button type="button" className={tab === "watchlist" ? "is-active" : ""} onClick={() => setTab("watchlist")}>
+            <button type="button" className={!trackerTab && tab === "watchlist" ? "is-active" : ""} onClick={() => { setTrackerTab(null); setTab("watchlist"); }}>
             <Bookmark size={17} /> Watchlist
           </button>
           {providerTypes.map((type) => (
-            <button key={type} type="button" className={tab === type ? "is-active" : ""} onClick={() => setTab(type)}>
+            <button key={type} type="button" className={!trackerTab && tab === type ? "is-active" : ""} onClick={() => { setTrackerTab(null); setTab(type); }}>
               <span className={`library-provider-mark is-${type}`} aria-hidden="true" /> {PROVIDER_LABELS[type]}
             </button>
           ))}
-          {tab !== "watchlist" && (
+          {traktConnected && <button type="button" className={trackerTab === "trakt" ? "is-active" : ""} onClick={() => setTrackerTab("trakt")}><span className="library-provider-mark is-trakt" /> Trakt</button>}
+          {simklConnected && <button type="button" className={trackerTab === "simkl" ? "is-active" : ""} onClick={() => setTrackerTab("simkl")}><span className="library-provider-mark is-simkl" /> Simkl</button>}
+          {!trackerTab && tab !== "watchlist" && (
             <select className="library-provider-sort" value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)} aria-label="Sort titles">
               <option value="added">Recently added</option>
               <option value="rating">Highest rated</option>
@@ -246,7 +259,7 @@ export function WatchlistScreen() {
         </nav>
       </section>
 
-      <div className={`library-workspace ${tab !== "watchlist" && visibleLibraries.length ? "has-library-sidebar" : ""}`}>
+      {trackerTab ? <TrackerLibrary key={trackerTab} provider={trackerTab} /> : <div className={`library-workspace ${tab !== "watchlist" && visibleLibraries.length ? "has-library-sidebar" : ""}`}>
         {tab !== "watchlist" && visibleLibraries.length > 0 && (
           <aside className="library-sidebar" aria-label={`${PROVIDER_LABELS[tab]} libraries`}>
             <strong className="library-sidebar-server">{activeServerName}</strong>
@@ -280,7 +293,7 @@ export function WatchlistScreen() {
           )}
 
           <div className="library-toolbar">
-        {tab === "watchlist" && (customLists.length > 0 || watchlistSource !== "watchlist") && (
+        {tab === "watchlist" && traktConnected && (
           <select className="watchlist-source" value={watchlistSource} onChange={(event) => setWatchlistSource(event.target.value)} aria-label="Choose list">
             {traktConnected && BUILTIN_SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}
             {!traktConnected && <option value="watchlist">Watchlist</option>}
@@ -316,7 +329,7 @@ export function WatchlistScreen() {
 
           {loading && items.length === 0 ? (
             <div className="library-loading" aria-label="Loading library"><LoaderCircle size={34} /></div>
-          ) : libraryError ? (
+          ) : libraryError && items.length === 0 ? (
             <div className="watchlist-empty"><Server size={42} /><p>Server unavailable</p><span>Check the server connection and try again.</span><button type="button" onClick={() => void loadLibrary(true)}>Retry</button></div>
           ) : items.length === 0 ? (
             <div className="watchlist-empty"><Bookmark size={42} /><p>{searchQuery ? "No matching titles" : "This library is empty"}</p><span>{tab === "watchlist" ? "Add movies and series from their details page." : "Try another library or filter."}</span></div>
@@ -325,12 +338,13 @@ export function WatchlistScreen() {
               <div className="grid-results library-grid">
                 {items.map((item) => <MediaCard key={itemKey(item)} item={item} onOpen={openDetails} posterMode={posterMode} />)}
               </div>
+              {libraryError && <div className="library-error" role="alert"><span>The server could not update this library. Loaded titles are still available.</span><button type="button" className="secondary" onClick={() => void (libraryPage.hasMore ? loadMore(true) : loadLibrary(true))}>Retry</button></div>}
               {loading && items.length > 0 && <div className="library-refreshing-indicator" aria-label="Updating library"><LoaderCircle size={24} /></div>}
               {tab !== "watchlist" && <div ref={loadMoreRef} className="library-load-more">{loadingMore && <LoaderCircle size={26} />}</div>}
             </>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

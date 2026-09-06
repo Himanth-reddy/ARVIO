@@ -356,6 +356,7 @@ export interface IptvNowNext {
 }
 
 export interface IptvSnapshot {
+  allChannels?: IptvChannel[];
   channels: IptvChannel[];
   grouped: Record<string, IptvChannel[]>;
   nowNext: Record<string, IptvNowNext>;

@@ -110,13 +110,13 @@ export async function startTrial(auth: AuthClient): Promise<EntitlementState> {
 }
 
 /** Link a Ko-fi/PayPal email whose payment used a different address. */
-export async function linkKofiEmail(auth: AuthClient, kofiEmail: string): Promise<EntitlementState> {
-  const state = await backendRequest<EntitlementState>(auth, "entitlement-link", {
+export async function linkKofiEmail(auth: AuthClient, kofiEmail: string, code?: string): Promise<EntitlementState & { verificationRequired?: boolean }> {
+  const state = await backendRequest<EntitlementState & { verificationRequired?: boolean }>(auth, "entitlement-link", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ kofiEmail })
+    body: JSON.stringify({ kofiEmail, code })
   });
-  cache(auth, state);
+  if (!state.verificationRequired) cache(auth, state);
   return state;
 }
 
