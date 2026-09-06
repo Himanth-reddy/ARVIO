@@ -33,6 +33,14 @@ paywall configuration, billing URL, auth configuration and mail configuration.
 Keep the private traffic report and local fixture screenshots out of publish roots.
 The controlled UI fixture remains unavailable in production.
 
+Production verification also found a stale team app key and an invalid public
+alias on the web site. Both web-specific app-key variables now use the auth
+backend's existing public application key; no account signing secrets are exposed
+or rotated. TMDB errors are no longer CDN-cached as successful catalogue responses.
+Netlify draft functions use preview environment values even when their build used
+production context. Check the production function configuration after publishing;
+do not promote a draft with missing mail/auth runtime settings blindly.
+
 No purchases, customer trials, payout settings or campaign emails are changed by
 the deployment tests. Adding Stripe/card payments requires the owner's payment
 provider connection and a separate end-to-end transaction. Ko-fi only sends payment
