@@ -12,11 +12,19 @@ const PREMIUM_EVENTS = new Set([
   "membership_linked",
   "membership_link_failed",
   "first_playback",
+  "external_playback_requested",
   "subscription_started",
   "subscription_renewed",
   "trial_email_welcome_sent",
   "trial_email_reminder_sent",
   "trial_email_expired_sent"
+]);
+
+// Payment and trial-success events must come from their server handlers, never
+// from a browser claiming that payment succeeded.
+const CLIENT_PREMIUM_EVENTS = new Set([
+  "paywall_view", "account_connected", "trial_requested", "trial_start_failed",
+  "checkout_opened", "membership_link_started", "membership_linked", "membership_link_failed", "first_playback", "external_playback_requested"
 ]);
 
 function premiumFunnelStore(event) {
@@ -99,26 +107,33 @@ function dayRange(days) {
 }
 
 async function premiumFunnelReport(event, days = 30) {
-  const safeDays = Math.min(90, Math.max(1, Number(days) || 30));
+  const safeDays = Math.floor(Math.min(90, Math.max(1, Number(days) || 30)));
   const store = premiumFunnelStore(event);
+  const dates = dayRange(safeDays);
+  const keys = [];
+  for (const date of dates) keys.push(...await listKeys(store, `events/date/${date}/`));
+  return summarizePremiumKeys(keys, dates);
+}
+
+function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString()) {
   const counts = {};
   const unique = {};
-  const daily = {};
+  const daily = Object.fromEntries(dates.map(date => [date, {}]));
+  const firstDates = {};
 
-  for (const date of dayRange(safeDays)) {
-    const keys = await listKeys(store, `events/date/${date}/`);
-    const dailyCounts = {};
-    for (const key of keys) {
+  for (const key of new Set(keys)) {
       const parts = key.split("/");
+      const date = parts[2];
       const accountKey = parts[4] || "";
       const eventName = String(parts[5] || "").replace(/\.json$/, "");
-      if (!PREMIUM_EVENTS.has(eventName) || !accountKey) continue;
+      if (!daily[date] || !PREMIUM_EVENTS.has(eventName) || !accountKey) continue;
       counts[eventName] = (counts[eventName] || 0) + 1;
+      const dailyCounts = daily[date];
       dailyCounts[eventName] = (dailyCounts[eventName] || 0) + 1;
       if (!unique[eventName]) unique[eventName] = new Set();
       unique[eventName].add(accountKey);
-    }
-    daily[date] = dailyCounts;
+      const account = firstDates[accountKey] ||= {};
+      if (!account[eventName] || date < account[eventName]) account[eventName] = date;
   }
 
   const uniqueAccounts = Object.fromEntries(
@@ -126,16 +141,32 @@ async function premiumFunnelReport(event, days = 30) {
   );
   const connected = uniqueAccounts.account_connected || 0;
   const trials = uniqueAccounts.trial_started || 0;
-  const paid = uniqueAccounts.subscription_started || 0;
+  const accounts = Object.values(firstDates);
+  const transitioned = (row, from, to) => Boolean(row[from] && row[to] && row[to] >= row[from]);
+  const connectedTrials = accounts.filter(row => transitioned(row, "account_connected", "trial_started")).length;
+  const trialPaid = accounts.filter(row => transitioned(row, "trial_started", "subscription_started")).length;
+  const matureTrials = accounts.filter(row => row.trial_started && Date.parse(row.trial_started) + 4 * 86400000 <= Date.parse(generatedAt));
   return {
-    days: safeDays,
-    generatedAt: new Date().toISOString(),
+    days: dates.length,
+    generatedAt,
+    timezone: "UTC",
+    includesPartialToday: dates.includes(generatedAt.slice(0, 10)),
     eventDays: counts,
     uniqueAccounts,
     conversion: {
-      connectedToTrial: connected ? Number((trials / connected).toFixed(4)) : null,
-      trialToPaid: trials ? Number((paid / trials).toFixed(4)) : null
+      connectedToTrial: connected ? Number((connectedTrials / connected).toFixed(4)) : null,
+      trialToPaid: trials ? Number((trialPaid / trials).toFixed(4)) : null
     },
+    trialCohort: {
+      trials, paidByReportEnd: trialPaid,
+      atLeastThreeCompleteDaysObserved: matureTrials.length,
+      maturePaidByReportEnd: matureTrials.filter(row => transitioned(row, "trial_started", "subscription_started")).length
+    },
+    measurementNotes: [
+      "Conversion matches anonymized account identities inside this window, with day-level ordering; it is not a lifetime cohort.",
+      "Different billing emails cannot be joined automatically. Renewals are separate from subscription starts.",
+      "Event-days are deduplicated per account/event/day, not total clicks. Internal playback does not measure VLC or downloads."
+    ],
     daily
   };
 }
@@ -156,9 +187,10 @@ async function cleanupPremiumFunnel(event, retentionDays = 90) {
 
 module.exports = {
   PREMIUM_EVENTS,
+  CLIENT_PREMIUM_EVENTS,
   premiumFunnelStore,
   recordPremiumEvent,
   premiumFunnelReport,
   cleanupPremiumFunnel,
-  _test: { sanitizeMetadata, dayRange }
+  _test: { sanitizeMetadata, dayRange, summarizePremiumKeys }
 };

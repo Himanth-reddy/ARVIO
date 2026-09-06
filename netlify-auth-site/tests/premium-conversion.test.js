@@ -11,6 +11,28 @@ const funnel = require("../netlify/functions/_premium-funnel");
 const trialEmails = require("../netlify/functions/_trial-emails");
 const entitlementStatus = require("../netlify/functions/entitlement-status");
 
+test("funnel conversion matches identities instead of dividing unrelated totals", () => {
+  const key = (date, account, event) => `events/date/${date}/account/${account}/${event}.json`;
+  const result = funnel._test.summarizePremiumKeys([
+    key('2026-08-30', 'a', 'account_connected'), key('2026-08-30', 'a', 'trial_started'),
+    key('2026-08-31', 'a', 'subscription_started'), key('2026-09-01', 'unrelated', 'subscription_started'),
+    key('2026-09-01', 'b', 'trial_started'), key('2026-08-30', 'b', 'subscription_started'),
+    key('2026-09-05', 'new', 'trial_started'), key('2026-08-31', 'a', 'subscription_started')
+  ], ['2026-08-30', '2026-08-31', '2026-09-01', '2026-09-05'], '2026-09-06T00:00:00Z');
+  assert.equal(result.uniqueAccounts.subscription_started, 3);
+  assert.equal(result.conversion.trialToPaid, 0.3333);
+  assert.equal(result.trialCohort.paidByReportEnd, 1);
+  assert.equal(result.trialCohort.atLeastThreeCompleteDaysObserved, 2);
+  assert.equal(result.trialCohort.maturePaidByReportEnd, 1);
+  assert.equal(result.includesPartialToday, false);
+});
+test("browser analytics cannot claim a subscription, renewal or trial success", () => {
+  for (const event of ['subscription_started', 'subscription_renewed', 'trial_started', 'trial_email_welcome_sent']) {
+    assert.equal(funnel.CLIENT_PREMIUM_EVENTS.has(event), false);
+  }
+  assert.equal(funnel.CLIENT_PREMIUM_EVENTS.has('checkout_opened'), true);
+});
+
 test("new trials last three days while existing records retain their own expiry", () => {
   assert.equal(entitlements.TRIAL_DAYS, 3);
   assert.equal(entitlements.TRIAL_MS, 3 * 24 * 60 * 60 * 1000);

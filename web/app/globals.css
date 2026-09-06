@@ -1095,6 +1095,7 @@ input:focus {
 }
 .paywall-link-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
 }
@@ -1126,6 +1127,16 @@ input:focus {
   margin: 18px 0 0;
   color: rgba(255, 255, 255, 0.48);
   font-size: 12px;
+}
+.paywall-link-row label { flex: 1 0 100%; text-align: left; font-size: 13px; color: var(--muted); }
+.paywall-link-row label input { display: block; width: 100%; margin-top: 6px; }
+.paywall-link-row button { min-height: 44px; }
+.paywall-disclaimer {
+  margin: 10px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .paywall-signout {
   margin-top: 22px;

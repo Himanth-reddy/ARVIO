@@ -405,18 +405,17 @@ function VideoPlayer({
     const video = videoRef.current;
     if (!video) return undefined;
     const onReady = () => setBooted(true);
-    video.addEventListener("playing", onReady);
+    const onPlaying = () => {
+      onReady();
+      void trackPremiumMilestone(authClient, "first_playback", { playback_type: liveTv ? "live" : "vod" });
+    };
+    video.addEventListener("playing", onPlaying);
     video.addEventListener("loadeddata", onReady);
     return () => {
-      video.removeEventListener("playing", onReady);
+      video.removeEventListener("playing", onPlaying);
       video.removeEventListener("loadeddata", onReady);
     };
-  }, [stream.url, remuxRestartKey]);
-
-  useEffect(() => {
-    if (!booted) return;
-    void trackPremiumMilestone(authClient, "first_playback", { playback_type: liveTv ? "live" : "vod" });
-  }, [booted, liveTv]);
+  }, [stream.url, remuxRestartKey, liveTv]);
 
   // Recover only when the decoder delivers no video frames. Pixel brightness
   // cannot distinguish unsupported video from a legitimate dark scene.

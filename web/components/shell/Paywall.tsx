@@ -1,7 +1,7 @@
 "use client";
 
-import { BadgeCheck, Check, ExternalLink, Loader2, LogOut, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { BadgeCheck, Check, ExternalLink, Loader2, LogOut, RefreshCw, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { config } from "@/lib/config";
 import { HttpError } from "@/lib/http";
 import {
@@ -14,23 +14,28 @@ import {
 } from "@/lib/entitlement";
 import { authClient, useApp } from "@/lib/store";
 import { capturePremiumAttribution, trackPremiumEvent, trackPremiumMilestone, TRIAL_INTENT_KEY } from "@/lib/premiumAnalytics";
+import { currentEntitlement, entitlementCheckDelay } from "@/lib/entitlementPolicy";
 
 // Three-day free trial: enabled — enough time to use ARVIO Web on normal days,
 // blind $2.99 ask. One trial per account (trialUsed is stamped server-side).
 const SHOW_TRIAL = true;
 
-// Gate that stands between profile selection and the app when the paywall is
-// enabled. Fails OPEN on backend errors (a paying user is never locked out by a
-// hiccup) and CLOSED on a confirmed non-entitled state.
+// A still-valid cached membership survives transient backend errors. Unknown
+// access is retryable, not a free membership or a request to pay again.
 export function EntitlementGate({ children }: { children: React.ReactNode }) {
   const { auth, signOut, goToLogin } = useApp();
   const accountId = auth?.userId ?? null;
   const [state, setState] = useState<EntitlementState | null>(() => cachedEntitlement(authClient));
   const [status, setStatus] = useState<"loading" | "ready" | "error">(state ? "ready" : "loading");
+  const [retry, setRetry] = useState(0);
+  const [stateAccountId, setStateAccountId] = useState(accountId);
+  const lastVerifiedAt = useRef(Date.now());
+  const lastRefreshAt = useRef(0);
 
   useEffect(() => {
     if (!config.paywallEnabled) return;
     const cached = cachedEntitlement(authClient);
+    setStateAccountId(accountId);
     setState(cached);
     if (!accountId) {
       setStatus("ready");
@@ -39,36 +44,50 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
     setStatus(cached ? "ready" : "loading");
     let active = true;
     void fetchEntitlement(authClient)
-      .then((next) => { if (active) { setState(next); setStatus("ready"); } })
+      .then((next) => { if (active) { lastVerifiedAt.current = Date.now(); setState(next); setStatus("ready"); } })
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [accountId]);
+  }, [accountId, retry]);
 
   useEffect(() => {
-    // A paid subscription is stable until the next mount. An active trial is
-    // different: returning from Ko-fi may have upgraded it, so refresh on
-    // focus and replace the trial state as soon as the webhook lands.
-    if (!config.paywallEnabled || !accountId || (state?.entitled && state.reason !== "trial")) return;
+    if (!config.paywallEnabled || !accountId) return;
     let active = true;
     let refreshing = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const refreshAccess = (scheduleRetry = false) => {
       if (!active || refreshing || document.visibilityState === "hidden") return;
+      if (scheduleRetry && Date.now() - lastRefreshAt.current < 1000) return;
       refreshing = true;
+      lastRefreshAt.current = Date.now();
+      let refreshedState = state;
+      let failed = false;
       void fetchEntitlement(authClient)
         .then((next) => {
           if (!active) return;
+          lastVerifiedAt.current = Date.now();
+          refreshedState = next;
           setState(next);
           setStatus("ready");
-          if (!next.entitled && scheduleRetry) {
+          if ((!next.entitled || next.reason === "trial") && scheduleRetry) {
             if (retryTimer) clearTimeout(retryTimer);
             retryTimer = setTimeout(() => refreshAccess(false), 3000);
           }
         })
-        .catch(() => { /* Keep the confirmed paywall state on refresh errors. */ })
-        .finally(() => { refreshing = false; });
+        .catch(() => { failed = true; if (active) setStatus("error"); })
+        .finally(() => {
+          refreshing = false;
+          if (active) {
+            if (expiryTimer) clearTimeout(expiryTimer);
+            const nextDelay = failed ? 15 * 60_000 : entitlementCheckDelay(refreshedState);
+            if (nextDelay !== null) expiryTimer = setTimeout(() => refreshAccess(false), nextDelay);
+          }
+        });
     };
+
+    const delay = entitlementCheckDelay(state);
+    if (delay !== null) expiryTimer = setTimeout(() => refreshAccess(false), delay);
 
     const onFocus = () => refreshAccess(true);
     const onVisibilityChange = () => {
@@ -79,49 +98,66 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
       if (retryTimer) clearTimeout(retryTimer);
+      if (expiryTimer) clearTimeout(expiryTimer);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [accountId, state?.entitled, state?.reason]);
+  }, [accountId, state?.entitled, state?.reason, state?.expiresAt, retry]);
 
-  // Paywall off, or entitled → app. On a backend error with no cached "not
-  // entitled", fail open so we never lock out a paying user over a hiccup.
   if (!config.paywallEnabled) return <>{children}</>;
-  if (state?.entitled) return <>{children}</>;
-  if (status === "error" && !state) return <>{children}</>;
-  if (status === "loading") {
+  const access = stateAccountId === accountId ? currentEntitlement(state) : null;
+  if (access?.entitled && (status !== "error" || Date.now() - lastVerifiedAt.current < 6 * 60 * 60_000)) return <>{children}</>;
+  if (status === "loading" || stateAccountId !== accountId) {
     return (
       <main className="paywall-boot">
         <Loader2 className="paywall-spinner" size={40} />
       </main>
     );
   }
+  if (status === "error") {
+    return (
+      <main className="paywall">
+        <div className="paywall-card" role="alert">
+          <h1>We could not check your membership</h1>
+          <p className="paywall-sub">Your payment status has not changed. Please retry before subscribing again.</p>
+          <button className="paywall-trial" onClick={() => setRetry((value) => value + 1)}><RefreshCw size={16} /> Check access again</button>
+          <button className="paywall-link-toggle" onClick={goToLogin}>Reconnect to Cloud</button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <PaywallScreen
-      state={state}
+      state={access}
+      accountId={accountId}
       isSignedIn={Boolean(auth)}
-      onEntitled={(next) => setState(next)}
+      onEntitled={(next) => {
+        if (authClient.session?.userId !== accountId) return;
+        lastVerifiedAt.current = Date.now(); setStateAccountId(accountId); setState(next); setStatus("ready");
+      }}
       onConnect={goToLogin}
       onSignOut={signOut}
     />
   );
 }
 
-function PaywallScreen({
+export function PaywallScreen({
   state,
+  accountId,
   isSignedIn,
   onEntitled,
   onConnect,
   onSignOut
 }: {
   state: EntitlementState | null;
+  accountId: string | null;
   isSignedIn: boolean;
   onEntitled: (next: EntitlementState) => void;
   onConnect: () => void;
   onSignOut: () => void;
 }) {
-  const [busy, setBusy] = useState<"trial" | "link" | null>(null);
+  const [busy, setBusy] = useState<"trial" | "link" | "check" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [kofiEmail, setKofiEmail] = useState("");
@@ -136,7 +172,20 @@ function PaywallScreen({
     if (!isSignedIn) return;
     void trackPremiumEvent(authClient, "paywall_view", {}, true);
     void trackPremiumMilestone(authClient, "account_connected");
-  }, [isSignedIn]);
+  }, [isSignedIn, accountId]);
+
+  const checkAccess = async () => {
+    if (!isSignedIn) { onConnect(); return; }
+    setBusy("check"); setError(null);
+    try {
+      const next = await fetchEntitlement(authClient);
+      if (next.entitled) onEntitled(next);
+      else setError("Payment may take a moment to arrive. Check again shortly, or link the email used for your Ko-fi payment. Do not pay again.");
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 401) onConnect();
+      else setError("Could not check your membership. Please try again; do not pay again.");
+    } finally { setBusy(null); }
+  };
 
   const beginTrial = useCallback(async () => {
     if (!isSignedIn) {
@@ -244,6 +293,7 @@ function PaywallScreen({
         >
           <BadgeCheck size={18} /> Subscribe on Ko-fi <ExternalLink size={15} />
         </a>
+        <p className="paywall-disclaimer">Use the same email as your ARVIO Cloud account at checkout, or link your billing email below.</p>
 
         {SHOW_TRIAL && trialAvailable && !expired && (
           <button type="button" className="paywall-trial" onClick={() => void beginTrial()} disabled={busy !== null}>
@@ -252,8 +302,11 @@ function PaywallScreen({
           </button>
         )}
 
+        <button type="button" className="paywall-trial" onClick={() => void checkAccess()} disabled={busy !== null}>
+          {busy === "check" ? <Loader2 className="paywall-spinner" size={16} /> : <RefreshCw size={16} />} I have paid, check access
+        </button>
         <button type="button" className="paywall-link-toggle" onClick={() => setLinkOpen((v) => !v)}>
-          Already subscribed? Link your Ko-fi email
+          Paid with a different email? Link your Ko-fi email
         </button>
 
         {linkOpen && (

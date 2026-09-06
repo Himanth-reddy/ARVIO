@@ -8,6 +8,7 @@ import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
+import { trackPremiumEvent } from "./premiumAnalytics";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
 import { canDirectPlayMkvStream, playbackPlan, streamPlayability } from "./streamCompatibility";
 import { loadHomeServerRows } from "./homeserver";
@@ -1611,6 +1612,7 @@ export function AppProvider({
         episode: selectedEpisode?.episode ?? null
       });
       openExternalPlayer(preferredPlayer, target, externalTitle, preferredSub);
+      void trackPremiumEvent(authClient, "external_playback_requested", { player: preferredPlayer, playback_type: "vod" }, true);
       return;
     }
     // Explicit escalations (from the player's fallback buttons) resolve the
@@ -1778,6 +1780,7 @@ export function AppProvider({
           : "Opening in VLC..."
     );
     openExternalPlayer(player, stream, title, settingsRef.current.defaultSubtitle);
+    void trackPremiumEvent(authClient, "external_playback_requested", { player, playback_type: "live_or_catchup" }, true);
     return true;
   }, []);
 

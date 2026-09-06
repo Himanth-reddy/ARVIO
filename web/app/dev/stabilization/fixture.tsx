@@ -8,6 +8,7 @@ import { WatchlistScreen } from "@/components/watchlist/WatchlistScreen";
 import { MediaCard } from "@/components/media/MediaCard";
 import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { PlayerOverlay } from "@/components/player/PlayerOverlay";
+import { PaywallScreen } from "@/components/shell/Paywall";
 import { iptvPlaylistSignature } from "@/lib/iptv";
 import type { AppSettings, IptvChannel, IptvNowNext, MediaItem, StreamSource } from "@/lib/types";
 
@@ -64,10 +65,10 @@ export function StabilizationFixture() {
     <div style={{ maxWidth: 1600, margin: "auto", padding: "18px 20px" }}>
       <nav className="fixture-nav" aria-label="Test navigation"><img src="/arvio-wordmark.svg" alt="ARVIO" width={130} />
         {[{ id: "home", label: "Home", icon: Home }, { id: "library", label: "Library", icon: Library }, { id: "tv", label: "Live TV", icon: Tv }, { id: "settings", label: "Settings", icon: Settings }].map(({ id, label, icon: Icon }) => <button className={page === id ? "primary" : "secondary"} key={id} onClick={() => setPage(id)}><Icon size={18} />{label}</button>)}
-        <span>Test data</span>
+        <button className="secondary" onClick={() => setPage("premium")}>Premium</button><span>Test data</span>
       </nav>
       <div className="fixture-tools"><button className="secondary" onClick={() => setSettings((old) => ({ ...old, cardLayoutMode: old.cardLayoutMode === "poster" ? "landscape" : "poster" }))}><LayoutGrid size={16} />Card layout</button><label><input type="checkbox" checked={failLibrary} onChange={(event) => setFailLibrary(event.target.checked)} /> Simulate tracker outage</label><button className="secondary" onClick={() => setActiveStream({ source: "CC0 playback sample", addonName: "Test fixture", quality: "HD", size: "", url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" })}>Play sample</button></div>
-      {page === "tv" ? <LiveTvScreen /> : page === "library" ? <WatchlistScreen /> : page === "settings" ? <SettingsScreen /> : <section className="screen"><h2>Continue Watching</h2><div className="grid-results">{media.slice(0, 8).map((item) => <MediaCard key={item.id} item={item} onOpen={app.openDetails} />)}</div></section>}
+      {page === "premium" ? <PaywallScreen state={null} accountId={null} isSignedIn={false} onEntitled={noop} onConnect={() => setToast("Cloud connection requested (test only)")} onSignOut={noop} /> : page === "tv" ? <LiveTvScreen /> : page === "library" ? <WatchlistScreen /> : page === "settings" ? <SettingsScreen /> : <section className="screen"><h2>Continue Watching</h2><div className="grid-results">{media.slice(0, 8).map((item) => <MediaCard key={item.id} item={item} onOpen={app.openDetails} />)}</div></section>}
       {toast && <div role="status" className="fixture-toast" onClick={() => setToast("")}>{toast}</div>}
       <PlayerOverlay />
     </div>

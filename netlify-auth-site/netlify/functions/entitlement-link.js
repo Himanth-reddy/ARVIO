@@ -6,7 +6,7 @@
 // attach an entitlement TO their own account). We only copy if the Ko-fi email
 // actually has a live paid entitlement — no way to fabricate access.
 const { randomBytes, timingSafeEqual } = require("node:crypto");
-const { json, options, resolveIdentity, normalizeEmail, sha256, sendTransactionalEmail } = require("./_backend");
+const { json, options, parseBody, resolveIdentity, normalizeEmail, sha256, sendTransactionalEmail } = require("./_backend");
 const {
   entitlementsStore,
   readEntitlement,
@@ -30,7 +30,8 @@ exports.handler = async (event) => {
   if (!accountEmail) return json(400, { error: "no_email_on_account" });
 
   let body = {};
-  try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
+  try { body = parseBody(event); } catch { body = {}; }
+  if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
   const kofiEmail = normalizeEmail(body.kofiEmail);
   if (!kofiEmail || kofiEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(kofiEmail)) return json(400, { error: "missing_kofi_email" });
 

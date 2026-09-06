@@ -11,7 +11,8 @@ export type PremiumFunnelEvent =
   | "membership_link_started"
   | "membership_linked"
   | "membership_link_failed"
-  | "first_playback";
+  | "first_playback"
+  | "external_playback_requested";
 
 const ATTRIBUTION_KEY = "arvio.premium.attribution.v1";
 export const TRIAL_INTENT_KEY = "arvio.premium.trial-intent.v1";
@@ -54,7 +55,7 @@ export async function trackPremiumEvent(
   oncePerSession = false
 ) {
   if (!auth.session) return false;
-  const sessionKey = `arvio.premium.session.${eventName}`;
+  const sessionKey = `arvio.premium.session.${auth.session.userId}.${eventName}`;
   const sessionStore = typeof window === "undefined" ? undefined : window.sessionStorage;
   if (oncePerSession && storageGet(sessionStore, sessionKey)) return true;
   try {
