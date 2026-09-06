@@ -6,7 +6,8 @@
 // attach an entitlement TO their own account). We only copy if the Ko-fi email
 // actually has a live paid entitlement — no way to fabricate access.
 const { randomBytes, timingSafeEqual } = require("node:crypto");
-const { json, options, parseBody, resolveIdentity, normalizeEmail, sha256, sendTransactionalEmail } = require("./_backend");
+const { json, options, parseBody, resolveIdentity, normalizeEmail, sha256, privacyHash, sendTransactionalEmail } = require("./_backend");
+const { recordPremiumEvent } = require("./_premium-funnel");
 const {
   entitlementsStore,
   readEntitlement,
@@ -106,6 +107,11 @@ exports.handler = async (event) => {
     }
     await writeEntitlement(store, accountHash, merged);
     await store.delete(proofKey);
+    await recordPremiumEvent(event, {
+      email: accountEmail,
+      eventName: "billing_email_verified",
+      metadata: { billing_key: privacyHash("premium-funnel-account", kofiEmail) }
+    }).catch(() => console.error("Verified billing analytics temporarily unavailable"));
     return json(200, { ...evaluateEntitlement(merged), linked: true });
   } catch (error) {
     console.error("entitlement-link failed", { name: error.name });

@@ -10,9 +10,13 @@ const PREMIUM_EVENTS = new Set([
   "checkout_opened",
   "membership_link_started",
   "membership_linked",
+  "billing_email_verified",
   "membership_link_failed",
   "first_playback",
   "external_playback_requested",
+  "download_requested",
+  "download_handoff",
+  "download_failed",
   "subscription_started",
   "subscription_renewed",
   "trial_email_welcome_sent",
@@ -24,7 +28,8 @@ const PREMIUM_EVENTS = new Set([
 // from a browser claiming that payment succeeded.
 const CLIENT_PREMIUM_EVENTS = new Set([
   "paywall_view", "account_connected", "trial_requested", "trial_start_failed",
-  "checkout_opened", "membership_link_started", "membership_linked", "membership_link_failed", "first_playback", "external_playback_requested"
+  "checkout_opened", "membership_link_started", "membership_linked", "membership_link_failed", "first_playback", "external_playback_requested",
+  "download_requested", "download_handoff", "download_failed"
 ]);
 
 function premiumFunnelStore(event) {
@@ -112,20 +117,37 @@ async function premiumFunnelReport(event, days = 30) {
   const dates = dayRange(safeDays);
   const keys = [];
   for (const date of dates) keys.push(...await listKeys(store, `events/date/${date}/`));
-  return summarizePremiumKeys(keys, dates);
+  // Only the server-side successful ownership flow can write this event. Do not
+  // infer a billing identity from browser events or a typed email address.
+  const verifiedLinks = [];
+  for (const key of keys.filter(key => key.endsWith('/billing_email_verified.json'))) {
+    const record = await getJSON(store, key);
+    if (/^[a-f0-9]{64}$/.test(record?.metadata?.billing_key || "") && /^[a-f0-9]{64}$/.test(record?.accountKey || "")) {
+      verifiedLinks.push({ billingKey: record.metadata.billing_key, accountKey: record.accountKey });
+    }
+  }
+  return summarizePremiumKeys(keys, dates, new Date().toISOString(), verifiedLinks);
 }
 
-function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString()) {
+function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString(), verifiedLinks = []) {
   const counts = {};
   const unique = {};
   const daily = Object.fromEntries(dates.map(date => [date, {}]));
   const firstDates = {};
+  const billingOwners = new Map();
+  for (const { billingKey, accountKey } of verifiedLinks) {
+    if (!billingKey || !accountKey) continue;
+    // Ambiguous transfers must not attribute one payment to multiple accounts.
+    const prior = billingOwners.get(billingKey);
+    billingOwners.set(billingKey, prior === undefined || prior === accountKey ? accountKey : null);
+  }
 
   for (const key of new Set(keys)) {
       const parts = key.split("/");
       const date = parts[2];
-      const accountKey = parts[4] || "";
+      let accountKey = parts[4] || "";
       const eventName = String(parts[5] || "").replace(/\.json$/, "");
+      if (eventName === "subscription_started" || eventName === "subscription_renewed") accountKey = billingOwners.get(accountKey) || accountKey;
       if (!daily[date] || !PREMIUM_EVENTS.has(eventName) || !accountKey) continue;
       counts[eventName] = (counts[eventName] || 0) + 1;
       const dailyCounts = daily[date];
@@ -164,8 +186,8 @@ function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString(
     },
     measurementNotes: [
       "Conversion matches anonymized account identities inside this window, with day-level ordering; it is not a lifetime cohort.",
-      "Different billing emails cannot be joined automatically. Renewals are separate from subscription starts.",
-      "Event-days are deduplicated per account/event/day, not total clicks. Internal playback does not measure VLC or downloads."
+      "Different billing emails are joined only after verified ownership within this report window; older unverified links remain unmatched. Renewals are separate from starts.",
+      "Event-days are deduplicated per account/event/day, not total clicks. External-player and download handoffs do not confirm successful playback or completed downloads."
     ],
     daily
   };

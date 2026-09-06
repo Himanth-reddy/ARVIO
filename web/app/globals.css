@@ -991,9 +991,11 @@ input:focus {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: clamp(12px, 0.85vw, 16px);
+  font-size: 12px;
   font-weight: 700;
-  white-space: nowrap;
+  max-width: 180px;
+  white-space: normal;
+  line-height: 1.25;
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
@@ -1128,6 +1130,8 @@ input:focus {
   color: rgba(255, 255, 255, 0.48);
   font-size: 12px;
 }
+
+.trial-membership-link svg { flex-shrink: 0; }
 .paywall-link-row label { flex: 1 0 100%; text-align: left; font-size: 13px; color: var(--muted); }
 .paywall-link-row label input { display: block; width: 100%; margin-top: 6px; }
 .paywall-link-row button { min-height: 44px; }

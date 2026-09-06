@@ -14,3 +14,14 @@ export function entitlementCheckDelay(state: EntitlementState | null, now = Date
   const expiry = state.expiresAt ? Date.parse(state.expiresAt) : Infinity;
   return Math.max(1000, Math.min(15 * 60_000, Number.isFinite(expiry) ? expiry - now + 100 : 15 * 60_000));
 }
+
+export function trialRemainingLabel(state: EntitlementState | null, now = Date.now()): string | null {
+  if (!state?.entitled || state.reason !== "trial" || !state.expiresAt) return null;
+  const remaining = Date.parse(state.expiresAt) - now;
+  if (!Number.isFinite(remaining) || remaining <= 0) return null;
+  const hours = Math.ceil(remaining / 3_600_000);
+  if (hours > 24) return `Trial: ${Math.ceil(hours / 24)} days left`;
+  if (hours > 1) return `Trial: ${hours} hours left`;
+  const minutes = Math.ceil(remaining / 60_000);
+  return `Trial: ${minutes} ${minutes === 1 ? "minute" : "minutes"} left`;
+}

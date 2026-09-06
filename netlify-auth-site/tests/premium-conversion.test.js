@@ -27,10 +27,19 @@ test("funnel conversion matches identities instead of dividing unrelated totals"
   assert.equal(result.includesPartialToday, false);
 });
 test("browser analytics cannot claim a subscription, renewal or trial success", () => {
-  for (const event of ['subscription_started', 'subscription_renewed', 'trial_started', 'trial_email_welcome_sent']) {
+  for (const event of ['subscription_started', 'subscription_renewed', 'trial_started', 'trial_email_welcome_sent', 'billing_email_verified']) {
     assert.equal(funnel.CLIENT_PREMIUM_EVENTS.has(event), false);
   }
   assert.equal(funnel.CLIENT_PREMIUM_EVENTS.has('checkout_opened'), true);
+});
+
+test("different billing emails join only with verified, unambiguous ownership", () => {
+  const keys = ['events/date/2026-09-01/account/cloud/trial_started.json', 'events/date/2026-09-02/account/billing/subscription_started.json'];
+  const dates = ['2026-09-01', '2026-09-02'];
+  const report = links => funnel._test.summarizePremiumKeys(keys, dates, '2026-09-06T00:00:00Z', links);
+  assert.equal(report([]).trialCohort.paidByReportEnd, 0);
+  assert.equal(report([{ billingKey: 'billing', accountKey: 'cloud' }]).trialCohort.paidByReportEnd, 1);
+  assert.equal(report([{ billingKey: 'billing', accountKey: 'cloud' }, { billingKey: 'billing', accountKey: 'other' }]).trialCohort.paidByReportEnd, 0);
 });
 
 test("new trials last three days while existing records retain their own expiry", () => {
@@ -109,12 +118,28 @@ test("public Premium presentation has one tracked route and factual social proof
   assert.match(redirects, /from = "\/go\/premium"/);
   assert.match(redirects, /from = "\/go\/premium\/hero"/);
   assert.match(redirects, /from = "\/go\/membership\/nav"/);
-  assert.match(redirects, /to = "https:\/\/ko-fi\.com\/arvio\/tiers\?/);
-  assert.match(redirects, /utm_content=spotlight/);
-  assert.match(redirects, /utm_campaign=premium/);
-  assert.match(redirects, /intent=trial/);
+  const { premiumDestination } = require('../../netlify-arvio-tv-site/premium-redirect');
+  assert.match(redirects, /to = "\/premium-redirect.html"\s+status = 200/);
+  assert.match(premiumDestination('/go/membership/spotlight'), /ko-fi\.com\/arvio\/tiers.*utm_content=spotlight/);
+  assert.match(premiumDestination('/go/premium/hero'), /intent=trial/);
 
   const login = fs.readFileSync(path.join(root, "web", "components", "login", "LoginScreen.tsx"), "utf8");
   assert.match(login, /TRIAL_INTENT_KEY/);
   assert.match(login, /get\("intent"\) === "trial"/);
+});
+
+test("website handoff measurement preserves every CTA and cannot redirect off the allowlist", () => {
+  const { premiumDestination } = require('../../netlify-arvio-tv-site/premium-redirect');
+  for (const placement of ['', '/nav', '/hero', '/spotlight', '/preview', '/details', '/faq', '/footer']) {
+    const target = new URL(premiumDestination('/go/premium' + placement));
+    assert.equal(target.origin, 'https://web.arvio.tv');
+    assert.equal(target.searchParams.get('intent'), 'trial');
+  }
+  for (const placement of ['nav', 'spotlight', 'details', 'footer']) {
+    assert.equal(new URL(premiumDestination('/go/membership/' + placement)).origin, 'https://ko-fi.com');
+  }
+  for (const path of ['/go/premium/https://evil.invalid', '/go/premium//evil.invalid', '/go/membership', '/go/premium?to=https://evil.invalid']) assert.equal(premiumDestination(path), null);
+  const html = fs.readFileSync(path.join(__dirname, '../../netlify-arvio-tv-site/premium-redirect.html'), 'utf8');
+  assert.match(html, /noindex,nofollow/);
+  assert.match(html, /<noscript>/);
 });

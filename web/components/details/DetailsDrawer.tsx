@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
 import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
+import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveWatchedState } from "@/lib/cloud";
 import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isLinux, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_SH_URL, VLC_SETUP_URL } from "@/lib/externalPlayers";
@@ -524,6 +525,7 @@ function SourcePickerModal({
     // navigation to custom schemes (vlc-x-callback://) once the user gesture is
     // lost, so the app would appear to do nothing. Launch last.
     openExternalPlayer(player, target, title, settings.defaultSubtitle);
+    void trackPremiumEvent(authClient, "external_playback_requested", { player, entry: "sources" }, true);
   };
   // Android: open in whichever player the user picks (VLC, MX Player, …) via the
   // system chooser — the equivalent of the iOS-only Infuse button.
@@ -546,13 +548,16 @@ function SourcePickerModal({
       episode: selectedEpisode?.episode ?? item.episodeNumber ?? null
     });
     openInAnyPlayer(target, title, settings.defaultSubtitle);
+    void trackPremiumEvent(authClient, "external_playback_requested", { player: "chooser", entry: "sources" }, true);
   };
   const copyUrl = async (stream: StreamSource) => {
     const copied = await copyStreamUrl(stream).catch(() => false);
     onToast(copied ? "Stream URL copied." : "Could not copy this stream URL.");
   };
   const downloadSource = async (stream: StreamSource) => {
+    void trackPremiumEvent(authClient, "download_requested", { entry: "sources" }, true);
     if (!stream.url) {
+      void trackPremiumEvent(authClient, "download_failed", { stage: "missing_url" }, true);
       onToast("This source has no direct URL to download.");
       return;
     }
@@ -569,6 +574,7 @@ function SourcePickerModal({
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000))
       ]);
       if (!direct) {
+        void trackPremiumEvent(authClient, "download_failed", { stage: "resolution" }, true);
         onToast("Could not prepare this download — the source may not be cached. Try a [TB+] source.");
         return;
       }
@@ -582,6 +588,7 @@ function SourcePickerModal({
     // for offline playback on the device. Desktop keeps the normal file download.
     if (isAppleMobile()) {
       const ok = downloadToVlc(target, title, settings.defaultSubtitle);
+      void trackPremiumEvent(authClient, ok ? "download_handoff" : "download_failed", { destination: "vlc" }, true);
       onToast(ok
         ? "Downloading to VLC for offline playback. If VLC doesn't open, install it from the App Store."
         : "Could not hand this download to VLC.");
@@ -589,6 +596,7 @@ function SourcePickerModal({
     }
     const href = downloadStreamUrl(target, title);
     if (!href) {
+      void trackPremiumEvent(authClient, "download_failed", { stage: "missing_download_url" }, true);
       onToast("Could not start this download.");
       return;
     }
@@ -598,6 +606,7 @@ function SourcePickerModal({
     // page with no feedback). The download proxy sets Content-Disposition:
     // attachment, so the browser's download manager owns the transfer.
     const started = triggerDownload(href, `${title}.${/\.mp4(?:[?#/]|$)/i.test(`${target.url} ${target.source ?? ""}`) ? "mp4" : "mkv"}`);
+    void trackPremiumEvent(authClient, started ? "download_handoff" : "download_failed", { destination: "browser" }, true);
     onToast(started ? "Download started — check your browser downloads." : "Could not start this download.");
   };
 

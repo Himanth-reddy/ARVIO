@@ -5,6 +5,15 @@ const policy = load('lib/entitlementPolicy.ts');
 const now = Date.parse('2026-09-06T10:00:00Z');
 const trial = { entitled: true, reason: 'trial', expiresAt: new Date(now + 60000).toISOString(), trialAvailable: false };
 
+test('trial time uses the real server deadline and disappears for expired or paid access', () => {
+  assert.equal(policy.trialRemainingLabel(trial, now), 'Trial: 1 minute left');
+  assert.equal(policy.trialRemainingLabel(trial, now + 60000), null);
+  assert.equal(policy.trialRemainingLabel({ ...trial, reason: 'subscription' }, now), null);
+  assert.equal(policy.trialRemainingLabel({ ...trial, expiresAt: 'bad' }, now), null);
+  assert.equal(policy.trialRemainingLabel({ ...trial, expiresAt: new Date(now + 72 * 3600000).toISOString() }, now), 'Trial: 3 days left');
+  assert.equal(policy.trialRemainingLabel({ ...trial, expiresAt: new Date(now + 2 * 3600000).toISOString() }, now), 'Trial: 2 hours left');
+});
+
 test('trial expiry is enforced without reloading the app', () => {
   assert.equal(policy.currentEntitlement(trial, now).entitled, true);
   const expired = policy.currentEntitlement(trial, now + 60000);
@@ -46,4 +55,22 @@ test('funnel session deduplication is isolated to each account', async () => {
   await m.trackPremiumEvent(auth, 'paywall_view', {}, true);
   auth.session.userId = 'b'; await m.trackPremiumEvent(auth, 'paywall_view', {}, true);
   assert.equal(requests, 2);
+});
+
+test('blocked browser storage cannot break playback analytics or its caller', async () => {
+  let requests = 0;
+  const browser = { location: { search: '' } };
+  for (const key of ['localStorage', 'sessionStorage']) Object.defineProperty(browser, key, { get() { throw Error('Storage blocked'); } });
+  const m = load('lib/premiumAnalytics.ts', { './config': { config: { netlifyBackendUrl: 'https://backend.invalid' } }, './http': { jsonRequest: async () => { requests++; } } }, { window: browser, document: { referrer: '' } });
+  const auth = { session: { userId: 'a' }, accessToken: async () => 'fixture' };
+  assert.equal(await m.trackPremiumEvent(auth, 'download_handoff', {}, true), true);
+  assert.equal(requests, 1);
+});
+
+test('simultaneous session events coalesce without delaying playback', async () => {
+  let requests = 0;
+  const m = load('lib/premiumAnalytics.ts', { './config': { config: { netlifyBackendUrl: 'https://backend.invalid' } }, './http': { jsonRequest: async () => { requests++; } } });
+  const auth = { session: { userId: 'a' }, accessToken: async () => 'fixture' };
+  await Promise.all([m.trackPremiumEvent(auth, 'download_handoff', {}, true), m.trackPremiumEvent(auth, 'download_handoff', {}, true)]);
+  assert.equal(requests, 1);
 });

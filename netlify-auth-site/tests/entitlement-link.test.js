@@ -24,9 +24,9 @@ function setup() {
     require: (name) => name === 'node:crypto' ? crypto : name === './_backend' ? {
       json: (statusCode, body) => ({ statusCode, body }), options: () => null, parseBody,
       resolveIdentity: async (event) => { if (!event.identity) throw Error('unauthorized'); return { email: event.identity }; },
-      normalizeEmail: (email) => String(email || '').toLowerCase().trim(), sha256: hash,
+      normalizeEmail: (email) => String(email || '').toLowerCase().trim(), sha256: hash, privacyHash: (_purpose, value) => hash(value),
       sendTransactionalEmail: async (email, subject, text) => emails.push({ email, subject, text })
-    } : { entitlementsStore: () => store, readEntitlement: async (_store, key) => data.get(key), writeEntitlement: async (_store, key, value) => data.set(key, value), evaluateEntitlement }
+    } : name === './_premium-funnel' ? { recordPremiumEvent: async (_event, value) => data.set('verified-funnel', value) } : { entitlementsStore: () => store, readEntitlement: async (_store, key) => data.get(key), writeEntitlement: async (_store, key, value) => data.set(key, value), evaluateEntitlement }
   });
   const request = (body, identity = 'account@example.test', encoded = false) => exports.handler({ httpMethod: 'POST', body: encoded ? Buffer.from(JSON.stringify(body)).toString('base64') : JSON.stringify(body), identity, isBase64Encoded: encoded });
   data.set(hash('billing@example.test'), { status: 'active', source: 'kofi', expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
@@ -41,6 +41,7 @@ test('knowing a billing email cannot grant Premium without verification', async 
   assert.equal(result.body.verificationRequired, true);
   assert.equal(fixture.data.has(fixture.hash('account@example.test')), false);
   assert.equal(fixture.emails[0].email, 'billing@example.test');
+  assert.equal(fixture.data.has('verified-funnel'), false);
 });
 
 test('Netlify base64 requests preserve the billing email and ownership code', async () => {
@@ -50,6 +51,7 @@ test('Netlify base64 requests preserve the billing email and ownership code', as
   const linked = await fixture.request({ kofiEmail: 'billing@example.test', code: fixture.code() }, undefined, true);
   assert.equal(linked.statusCode, 200);
   assert.equal(linked.body.linked, true);
+  assert.equal(fixture.data.get('verified-funnel').metadata.billing_key, fixture.hash('billing@example.test'));
 });
 
 test('malformed billing bodies fail with a controlled validation error', async () => {

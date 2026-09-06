@@ -41,7 +41,7 @@ import {
   nextStallAction,
 } from "@/lib/playerRecovery";
 import { authClient, useApp } from "@/lib/store";
-import { trackPremiumMilestone } from "@/lib/premiumAnalytics";
+import { trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
 import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
 import { getLogoUrl } from "@/lib/tmdb";
@@ -1286,6 +1286,7 @@ function VideoPlayer({
     // The in-player stream already carries fetched subtitles; pass the user's
     // preferred language so VLC/Infuse pick the right one.
     openExternalPlayer(player, target, title, settings.defaultSubtitle);
+    void trackPremiumEvent(authClient, "external_playback_requested", { player, entry: "player" }, true);
   }, [activeProfileId, item, onToast, selectedEpisode, title, settings.defaultSubtitle]);
 
   // Android: open in whichever installed player the user picks (system chooser).
@@ -1307,6 +1308,7 @@ function VideoPlayer({
       episode: selectedEpisode?.episode ?? item?.episodeNumber ?? null
     });
     openInAnyPlayer(target, title, settings.defaultSubtitle);
+    void trackPremiumEvent(authClient, "external_playback_requested", { player: "chooser", entry: "player" }, true);
   }, [activeProfileId, item, onToast, selectedEpisode, title, settings.defaultSubtitle]);
 
   const copyUrl = useCallback(async (selectedStream: StreamSource) => {

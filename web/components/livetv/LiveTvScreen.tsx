@@ -7,7 +7,8 @@ import { accessibleChannels, groupKey, loadXtreamCatchup, type CatchupProgram } 
 import { VirtualList } from "@/components/ui/VirtualList";
 import { IPTV_SNAPSHOT_TTL_MS, iptvPlaylistSignature } from "@/lib/iptv";
 import { loadStored, saveStored } from "@/lib/storage";
-import { useApp } from "@/lib/store";
+import { authClient, useApp } from "@/lib/store";
+import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import type { IptvChannel, IptvProgram, IptvSnapshot } from "@/lib/types";
 
 const LAST_CHANNEL_KEY = "arvio.web.livetv.lastChannel";
@@ -50,6 +51,7 @@ export function LiveTvScreen() {
       channel.name,
       settings.defaultSubtitle
     );
+    void trackPremiumEvent(authClient, "external_playback_requested", { player, entry: "live_tv" }, true);
   }, [setToast, settings.defaultSubtitle]);
 
   const playlists = settings.iptvPlaylists;

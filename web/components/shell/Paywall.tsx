@@ -15,6 +15,7 @@ import {
 import { authClient, useApp } from "@/lib/store";
 import { capturePremiumAttribution, trackPremiumEvent, trackPremiumMilestone, TRIAL_INTENT_KEY } from "@/lib/premiumAnalytics";
 import { currentEntitlement, entitlementCheckDelay } from "@/lib/entitlementPolicy";
+import { EntitlementContext } from "@/lib/entitlementContext";
 
 // Three-day free trial: enabled — enough time to use ARVIO Web on normal days,
 // blind $2.99 ask. One trial per account (trialUsed is stamped server-side).
@@ -106,7 +107,7 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
 
   if (!config.paywallEnabled) return <>{children}</>;
   const access = stateAccountId === accountId ? currentEntitlement(state) : null;
-  if (access?.entitled && (status !== "error" || Date.now() - lastVerifiedAt.current < 6 * 60 * 60_000)) return <>{children}</>;
+  if (access?.entitled && (status !== "error" || Date.now() - lastVerifiedAt.current < 6 * 60 * 60_000)) return <EntitlementContext.Provider value={access}>{children}</EntitlementContext.Provider>;
   if (status === "loading" || stateAccountId !== accountId) {
     return (
       <main className="paywall-boot">
