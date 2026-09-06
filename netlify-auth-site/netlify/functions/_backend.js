@@ -1531,6 +1531,12 @@ async function handleTraktProxy(event) {
 
     const response = await fetch(traktUrl, { method, headers, body: requestBody });
     const text = await response.text();
+    if (response.status === 403 && /<html|<!doctype html/i.test(text)) {
+      return json(503, {
+        error: "trakt_upstream_blocked",
+        message: "Trakt is temporarily rejecting requests from our server. Your account is still connected; please try again later."
+      });
+    }
     let data;
     try {
       data = text ? JSON.parse(text) : { status: response.status };
