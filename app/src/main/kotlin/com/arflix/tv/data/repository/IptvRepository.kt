@@ -3450,9 +3450,7 @@ class IptvRepository @Inject constructor(
                 }
                 if (episodes.isNullOrEmpty()) {
                     val raw = prefs.getString(seriesInfoPrefKey(providerKey, seriesId), null) ?: continue
-                    val persisted = runCatching {
-                        gson.fromJson(raw, ResolverPersistedSeriesInfo::class.java)
-                    }.getOrNull() ?: continue
+                    val persisted = try { gson.fromJson(raw, ResolverPersistedSeriesInfo::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null } ?: continue
                     if (persisted.episodes.isEmpty()) continue
                     if (now - persisted.savedAtMs > seriesInfoTtlMs) continue
                     synchronized(seriesInfoLock) {
@@ -3679,7 +3677,7 @@ class IptvRepository @Inject constructor(
                 // Try SharedPreferences for stale data
                 val persistedRaw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
                 if (!persistedRaw.isNullOrBlank()) {
-                    val persisted = runCatching { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) }.getOrNull()
+                    val persisted = try { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null }
                     if (persisted != null && persisted.entries.isNotEmpty()) {
                         val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
                         catalogMemory[providerKey] = built
@@ -3707,7 +3705,7 @@ class IptvRepository @Inject constructor(
                 if (!forceRefresh) {
                     val persistedRaw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
                     if (!persistedRaw.isNullOrBlank()) {
-                        val persisted = runCatching { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) }.getOrNull()
+                        val persisted = try { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null }
                         if (persisted != null && persisted.entries.isNotEmpty()) {
                             stalePersisted = persisted
                             if (lockNow - persisted.createdAtMs < catalogTtlMs) {
@@ -4011,7 +4009,7 @@ class IptvRepository @Inject constructor(
                 resolvedMemory[key]?.let { return it }
             }
             val raw = prefs.getString(resolvedPrefKey, null) ?: return null
-            val persisted = runCatching { gson.fromJson(raw, ResolverPersistedResolved::class.java) }.getOrNull() ?: return null
+            val persisted = try { gson.fromJson(raw, ResolverPersistedResolved::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null } ?: return null
             val hit = persisted.items[key] ?: return null
             if (System.currentTimeMillis() - hit.savedAtMs > resolvedTtlMs) return null
             synchronized(resolvedLock) { resolvedMemory[key] = hit }
@@ -4023,7 +4021,7 @@ class IptvRepository @Inject constructor(
                 resolvedMemory[key] = value
             }
             val existingRaw = prefs.getString(resolvedPrefKey, null)
-            val existing = runCatching { gson.fromJson(existingRaw, ResolverPersistedResolved::class.java) }.getOrNull()
+            val existing = try { gson.fromJson(existingRaw, ResolverPersistedResolved::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null }
                 ?: ResolverPersistedResolved()
             val merged = LinkedHashMap(existing.items)
             merged[key] = value
@@ -4066,9 +4064,7 @@ class IptvRepository @Inject constructor(
                 // Read prefs inside the lock: prevents two concurrent IO threads from
                 // racing to populate seriesBindingMemory from the same prefs blob.
                 val raw = prefs.getString(seriesBindingPrefKey, null) ?: return emptyList()
-                val persisted = runCatching {
-                    gson.fromJson(raw, ResolverPersistedSeriesBindings::class.java)
-                }.getOrNull() ?: return emptyList()
+                val persisted = try { gson.fromJson(raw, ResolverPersistedSeriesBindings::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null } ?: return emptyList()
                 keys.forEach { key ->
                     val ids = persisted.items[key].orEmpty()
                     if (ids.isNotEmpty()) {
@@ -4091,9 +4087,7 @@ class IptvRepository @Inject constructor(
                 }
             }
             val existingRaw = prefs.getString(seriesBindingPrefKey, null)
-            val existing = runCatching {
-                gson.fromJson(existingRaw, ResolverPersistedSeriesBindings::class.java)
-            }.getOrNull() ?: ResolverPersistedSeriesBindings()
+            val existing = try { gson.fromJson(existingRaw, ResolverPersistedSeriesBindings::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null } ?: ResolverPersistedSeriesBindings()
             val persisted = LinkedHashMap(existing.items)
             keys.forEach { key ->
                 val existingIds = persisted[key].orEmpty()
@@ -5714,7 +5708,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun JsonElement.toXtreamEpgListingOrNull(): XtreamEpgListing? =
-        runCatching { gson.fromJson(this, XtreamEpgListing::class.java) }.getOrNull()
+        try { gson.fromJson(this, XtreamEpgListing::class.java) } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null }
 
     private fun List<XtreamEpgListing>.withRequestedStreamId(streamId: Int): List<XtreamEpgListing> {
         if (isEmpty()) return this

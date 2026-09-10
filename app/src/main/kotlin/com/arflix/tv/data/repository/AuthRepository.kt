@@ -126,7 +126,7 @@ private data class AccountSyncPayloadCandidate(
 private class AccountSyncPayloadRejectedException(message: String) : Exception(message)
 
 private fun parseJsonObject(payload: String): com.google.gson.JsonObject? {
-    return try { JsonParser().parse(payload).asJsonObject } catch (e: com.google.gson.JsonSyntaxException) { null } catch (e: IllegalStateException) { null }
+    return try { JsonParser().parse(payload).asJsonObject } catch (e: Exception) { null }
 }
 
 internal fun accountSyncPayloadProfileCount(payload: String): Int? {
@@ -305,39 +305,39 @@ private fun com.google.gson.JsonObject.arraySize(key: String): Int {
 }
 
 private fun com.google.gson.JsonObject.stringValue(key: String): String {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asString
             .orEmpty()
-    }.getOrDefault("")
+    } catch (e: Exception) { "" }
 }
 
 private fun com.google.gson.JsonObject.intValue(key: String): Int {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asInt
             ?: 0
-    }.getOrDefault(0)
+    } catch (e: Exception) { 0 }
 }
 
 private fun com.google.gson.JsonObject.longValue(key: String): Long {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asLong
             ?: 0L
-    }.getOrDefault(0L)
+    } catch (e: Exception) { 0L }
 }
 
 private fun com.google.gson.JsonObject.booleanValue(key: String): Boolean {
-    return runCatching {
+    return try {
         get(key)
             ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
             ?.asBoolean
             ?: false
-    }.getOrDefault(false)
+    } catch (e: Exception) { false }
 }
 
 /**

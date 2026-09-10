@@ -484,7 +484,7 @@ class CloudSyncRepository @Inject constructor(
 
     private suspend fun loadJsonMap(key: androidx.datastore.preferences.core.Preferences.Key<String>): JSONObject {
         val raw = context.settingsDataStore.data.first()[key]
-        return runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+        return try { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) } catch (e: org.json.JSONException) { JSONObject() }
     }
 
     /**
