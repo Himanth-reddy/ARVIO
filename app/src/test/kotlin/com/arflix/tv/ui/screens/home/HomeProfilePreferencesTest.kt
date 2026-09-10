@@ -22,7 +22,11 @@ class HomeProfilePreferencesTest {
     @Test
     fun `delayed cloud restore enables trailer autoplay without recreating Home`() = runTest {
         val profileId = MutableStateFlow("primary")
-        val preferences = MutableStateFlow<Preferences>(mutablePreferencesOf())
+        val preferences = MutableStateFlow<Preferences>(
+            mutablePreferencesOf(
+                booleanPreferencesKey("profile_primary_trailer_auto_play") to false
+            )
+        )
 
         observeHomeProfilePreferences(profileId, preferences).test {
             assertThat(awaitItem().trailerAutoPlay).isFalse()
@@ -83,7 +87,7 @@ class HomeProfilePreferencesTest {
     fun `missing settings preserve Home defaults`() {
         val settings = readHomeProfilePreferences(mutablePreferencesOf(), "primary")
 
-        assertThat(settings.trailerAutoPlay).isFalse()
+        assertThat(settings.trailerAutoPlay).isTrue()
         assertThat(settings.trailerSoundEnabled).isFalse()
         assertThat(settings.trailerDelaySeconds).isEqualTo(2)
         assertThat(settings.trailerInCards).isTrue()

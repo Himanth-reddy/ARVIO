@@ -267,7 +267,7 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
         "language" -> listOf(0, 3, 1, 2)
         "subtitles" -> listOf(4, 5, 6, 7, 42, 8, 38, 39, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
-        "playback" -> listOf(10, 11, 12, 16, 15, 40, 27)
+        "playback" -> listOf(10, 11, 12, 13, 14, 34, 16, 15, 40, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 41, 36)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26, 35)
@@ -4388,6 +4388,29 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.cycleAutoPlayMinQuality() }
                     )
                     MobileSettingsRow(
+                        icon = Icons.Default.Movie,
+                        title = stringResource(R.string.trailer_auto_play),
+                        value = stringResource(if (uiState.trailerAutoPlay) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerAutoPlay,
+                        isFocused = false,
+                        onClick = { viewModel.setTrailerAutoPlay(!uiState.trailerAutoPlay) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.VolumeUp,
+                        title = stringResource(R.string.trailer_sound),
+                        value = stringResource(if (uiState.trailerSoundEnabled) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerSoundEnabled,
+                        isFocused = false,
+                        onClick = { viewModel.setTrailerSoundEnabled(!uiState.trailerSoundEnabled) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Schedule,
+                        title = stringResource(R.string.trailer_delay),
+                        value = "${uiState.trailerDelaySeconds}s",
+                        isFocused = false,
+                        onClick = { viewModel.cycleTrailerDelay() }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.Settings,
                         title = stringResource(R.string.frame_rate),
                         value = uiState.frameRateMatchingMode,
@@ -5535,7 +5558,7 @@ private fun tvSettingsSectionPills(
         )
         "playback" -> listOf(
             stringResource(R.string.settings_pill_autoplay, if (uiState.autoPlaySingleSource) stringResource(R.string.settings_inline_on) else stringResource(R.string.settings_inline_off)),
-            stringResource(R.string.trailers_on_youtube),
+            stringResource(R.string.settings_pill_trailers, if (uiState.trailerAutoPlay) stringResource(R.string.settings_inline_on) else stringResource(R.string.settings_inline_off)),
             stringResource(R.string.settings_pill_min, localizeSettingValue(uiState.autoPlayMinQuality)),
         )
         "appearance" -> listOf(
@@ -5585,7 +5608,7 @@ private fun tvSettingsPanelFacts(
         )
         "playback" -> listOf(
             stringResource(R.string.settings_fact_autoplay) to if (uiState.autoPlaySingleSource) stringResource(R.string.on) else stringResource(R.string.off),
-            stringResource(R.string.settings_fact_trailers) to "YouTube",
+            stringResource(R.string.settings_fact_trailers) to if (uiState.trailerAutoPlay) stringResource(R.string.on) else stringResource(R.string.off),
             stringResource(R.string.settings_fact_frame_rate) to uiState.frameRateMatchingMode
         )
         "appearance" -> listOf(
@@ -5649,7 +5672,8 @@ private fun tvSettingsFocusedHelp(section: String, focusedIndex: Int): TvSetting
         "playback" -> when (focusedIndex) {
             0 -> TvSettingsHelp(stringResource(R.string.settings_help_next_autoplay), stringResource(R.string.settings_help_next_autoplay_desc))
             1 -> TvSettingsHelp(stringResource(R.string.settings_help_source_autoplay), stringResource(R.string.settings_help_source_autoplay_desc))
-            6 -> TvSettingsHelp(stringResource(R.string.volume_boost), stringResource(R.string.settings_help_volume_boost_desc))
+            in 3..5 -> TvSettingsHelp(stringResource(R.string.settings_help_trailers), stringResource(R.string.settings_help_trailers_desc))
+            9 -> TvSettingsHelp(stringResource(R.string.volume_boost), stringResource(R.string.settings_help_volume_boost_desc))
             else -> TvSettingsHelp(stringResource(R.string.playback), stringResource(R.string.settings_help_playback_desc))
         }
         "appearance" -> TvSettingsHelp(stringResource(R.string.interface_label), stringResource(R.string.settings_help_interface_desc))

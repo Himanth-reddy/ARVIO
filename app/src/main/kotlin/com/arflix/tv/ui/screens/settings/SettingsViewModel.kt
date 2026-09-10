@@ -167,7 +167,7 @@ data class SettingsUiState(
     val subtitleStylized: Boolean = true,
     val filterSubtitlesByLanguage: Boolean = true,
     val secondarySubtitle: String = "Off",
-    val trailerAutoPlay: Boolean = false,
+    val trailerAutoPlay: Boolean = true,
     val trailerSoundEnabled: Boolean = false,
     val trailerDelaySeconds: Int = 2,
     val trailerInCards: Boolean = true,
@@ -562,7 +562,7 @@ class SettingsViewModel @Inject constructor(
                 context.settingsDataStore.edit { it[autoPlayNextKey()] = true }
             }
             val autoPlayMinQuality = normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()])
-            val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: false
+            val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: true
             val trailerSoundEnabled = prefs[trailerSoundEnabledKey()] ?: false
             val trailerDelaySeconds = prefs[trailerDelayKey()]?.toIntOrNull() ?: 2
             val trailerInCards = prefs[trailerInCardsKey()] ?: true

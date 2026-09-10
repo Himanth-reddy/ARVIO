@@ -246,3 +246,10 @@
 -keep class com.arflix.tv.util.Result$* { *; }
 -keep class com.arflix.tv.util.UiState { *; }
 -keep class com.arflix.tv.util.UiState$* { *; }
+
+# ============================================
+# android-youtube-player (IFrame API)
+# ============================================
+-keep class com.pierfrancescosoffritti.androidyoutubeplayer.** { *; }
+-keepnames class com.pierfrancescosoffritti.youtubeplayer.* { *; }
+-dontwarn com.pierfrancescosoffritti.androidyoutubeplayer.**

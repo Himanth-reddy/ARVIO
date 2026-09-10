@@ -174,7 +174,7 @@ import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.SkeletonDetailsPage
 import com.arflix.tv.ui.components.SkeletonEpisodeCard
 import com.arflix.tv.ui.components.StreamSelector
-import com.arflix.tv.ui.components.OpenYouTubeTrailer
+import com.arflix.tv.ui.components.YouTubeTrailerModal
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -540,12 +540,8 @@ fun DetailsScreen(
         }
     }
 
-    BackHandler(enabled = !showStreamSelector && !showEpisodeContextMenu && !showSeasonContextMenu && !uiState.showPersonModal) {
-        if (showTrailerPlayer) {
-            showTrailerPlayer = false
-        } else {
-            onBack()
-        }
+    BackHandler(enabled = !showStreamSelector && !showEpisodeContextMenu && !showSeasonContextMenu && !uiState.showPersonModal && !showTrailerPlayer) {
+        onBack()
     }
 
     // D-pad key handler — only used on TV (skipped on mobile/touch devices)
@@ -554,6 +550,10 @@ fun DetailsScreen(
         verticalMinRepeatIntervalMs = 112L
     )
     val keyModifier = if (isMobile) Modifier else Modifier.onPreviewKeyEvent { event ->
+                // Check if any modal is showing — let the modal handle all keys exclusively
+                if (showStreamSelector || showEpisodeContextMenu || showSeasonContextMenu || uiState.showPersonModal || showTrailerPlayer) {
+                    return@onPreviewKeyEvent false
+                }
                 if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
                     dpadRepeatGate.reset()
                 }
@@ -576,10 +576,6 @@ fun DetailsScreen(
                     return@onPreviewKeyEvent true
                 }
                 if (event.type == KeyEventType.KeyDown) {
-                    // Check if any modal is showing
-                    if (showStreamSelector || showEpisodeContextMenu || showSeasonContextMenu || uiState.showPersonModal) {
-                        return@onPreviewKeyEvent false // Let the modal handle it
-                    }
 
                     val isRtl = isRtlLayoutDirection
                     val actualKey = event.key
@@ -593,8 +589,8 @@ fun DetailsScreen(
 
                     when (logicalKey) {
                         Key.Back, Key.Escape -> {
-                            if (showTrailerPlayer) { showTrailerPlayer = false; true }
-                            else { onBack(); true }
+                            onBack()
+                            true
                         }
                         Key.DirectionLeft -> {
                             if (isSidebarFocused) {
@@ -1015,7 +1011,14 @@ fun DetailsScreen(
         )
 
         if (showTrailerPlayer && uiState.trailerKey != null) {
-            OpenYouTubeTrailer(uiState.trailerKey!!) { showTrailerPlayer = false }
+            YouTubeTrailerModal(
+                youtubeKey = uiState.trailerKey!!,
+                title = uiState.item?.title ?: "",
+                onClose = {
+                    showTrailerPlayer = false
+                    runCatching { focusRequester.requestFocus() }
+                }
+            )
         }
         // Stream Selector Modal
         StreamSelector(

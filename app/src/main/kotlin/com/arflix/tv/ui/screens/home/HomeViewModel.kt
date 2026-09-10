@@ -90,7 +90,7 @@ data class HomeUiState(
     val heroItem: MediaItem? = null,
     val heroLogoUrl: String? = null,
     val heroTrailerKey: String? = null,
-    val trailerAutoPlay: Boolean = false,
+    val trailerAutoPlay: Boolean = true,
     val trailerSoundEnabled: Boolean = false,
     val trailerDelaySeconds: Int = 2,
     val trailerInCards: Boolean = true,
@@ -1698,6 +1698,7 @@ class HomeViewModel @Inject constructor(
                     preferences = context.settingsDataStore.data
                 ).collect { preferences ->
                     val previousState = _uiState.value
+                    val autoplayJustEnabled = !previousState.trailerAutoPlay && preferences.trailerAutoPlay
                     mediaRepository.contentLanguage = preferences.contentLanguage
                     val normalizedLanguage = mediaRepository.contentLanguage
                     val langChanged = observedContentLanguage?.let { it != normalizedLanguage } ?: false
@@ -1708,7 +1709,7 @@ class HomeViewModel @Inject constructor(
                     observedIptvFavoritesOnHome = preferences.iptvFavoritesOnHome
 
                     _uiState.value = previousState.copy(
-                        trailerAutoPlay = false,
+                        trailerAutoPlay = preferences.trailerAutoPlay,
                         trailerSoundEnabled = preferences.trailerSoundEnabled,
                         trailerDelaySeconds = preferences.trailerDelaySeconds,
                         trailerInCards = preferences.trailerInCards,
@@ -1722,6 +1723,8 @@ class HomeViewModel @Inject constructor(
                         loadHomeData()
                     } else if (iptvFavoritesPlacementChanged) {
                         loadHomeData()
+                    } else if (autoplayJustEnabled) {
+                        _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
                     }
                 }
             } catch (e: Exception) {

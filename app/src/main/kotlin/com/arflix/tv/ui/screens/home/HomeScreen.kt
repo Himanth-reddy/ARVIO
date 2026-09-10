@@ -137,6 +137,7 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.network.OkHttpProvider
+import com.arflix.tv.ui.components.BackgroundTrailerPlayer
 import com.arflix.tv.ui.components.FeaturedMediaCard
 import com.arflix.tv.ui.components.movieGenreNameRes
 import com.arflix.tv.ui.components.tvGenreNameRes
@@ -943,7 +944,10 @@ fun HomeScreen(
 
     var isTrailerPlaying by remember { mutableStateOf(false) }
     var trailerSuppressed by remember { mutableStateOf(false) }
-    LaunchedEffect(displayHeroItem?.id) { trailerSuppressed = false }
+    LaunchedEffect(displayHeroItem?.id) {
+        trailerSuppressed = false
+        isTrailerPlaying = false
+    }
     val heroRowIsContinueWatching = latestDisplayCategories
         .getOrNull(focusState.currentRowIndex)?.id == "continue_watching"
     val trailerOverlayAlpha = remember { Animatable(1f) }
@@ -1112,11 +1116,22 @@ fun HomeScreen(
                     )
                 }
 
+                // YouTube trailer auto-play on hero backdrop
+                if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed && !heroRowIsContinueWatching) {
+                    BackgroundTrailerPlayer(
+                        youtubeKey = uiState.heroTrailerKey!!,
+                        delayMs = uiState.trailerDelaySeconds * 1000L,
+                        soundEnabled = uiState.trailerSoundEnabled,
+                        onPlayingChanged = { playing -> isTrailerPlaying = playing },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
 
                 // === SCRIM SYSTEM ===
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer { alpha = trailerOverlayAlpha.value }
                         .drawWithCache {
                             val width = size.width
                             val height = size.height
