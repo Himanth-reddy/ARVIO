@@ -4846,7 +4846,7 @@ private fun buildEpisodeKey(
 
 }
 
-internal object TraktRepoRegexes {
+private object TraktRepoRegexes {
     val DIACRITICS_REGEX = Regex("\\p{Mn}+")
     val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     val HOURS_REGEX = Regex("""(\d+)\s*h""")
