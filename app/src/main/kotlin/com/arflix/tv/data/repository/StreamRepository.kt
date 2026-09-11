@@ -239,7 +239,12 @@ internal fun gatedHubHostLabel(host: String): String? {
 /** True when the URL is a resolvable HubCloud/HubDrive *page* (not a direct file endpoint). */
 internal fun isHubCloudPageUrl(url: String): Boolean {
     // Stream URLs may append request headers after `|`; classify the URL portion only.
-    val parsed = runCatching { java.net.URI(url.substringBefore('|').trim()) }.getOrNull() ?: return false
+    val parsed = try {
+        java.net.URI(url.substringBefore('|').trim())
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        null
+    } ?: return false
     val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
     if (gatedHubHostLabel(host) == null) return false
     val path = parsed.path?.lowercase(Locale.US).orEmpty()
@@ -255,7 +260,12 @@ internal fun isHubCloudPageUrl(url: String): Boolean {
  * rewritten: the host must match an explicitly supported registrable label.
  */
 internal fun isEmbeddedLinkLandingHost(url: String): Boolean {
-    val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+    val parsed = try {
+        java.net.URI(url)
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        null
+    } ?: return false
     val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
     return HUB_DOMAIN_LABELS.contains(registrableLabel(host))
 }
@@ -287,6 +297,9 @@ internal fun redactUrlForLog(url: String?): String {
  * Enhanced with addon management
  */
 private object StreamRepoRegexes {
+    val hubHrefRegex = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    val hubVarUrlRegex = Regex("""var\s+url\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+
     private val filterRegexCache = object : java.util.LinkedHashMap<String, Regex>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Regex>?): Boolean {
             return size > 128
@@ -1292,12 +1305,15 @@ class StreamRepository @Inject constructor(
             return normalized
         }
         val request = Request.Builder().url(normalized).build()
-        val body = runCatching {
+        val body = try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return normalized
                 response.body?.string().orEmpty()
             }
-        }.getOrDefault("")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            ""
+        }
         val link = body.lineSequence()
             .map { it.trim() }
             .firstOrNull { line ->
@@ -1362,7 +1378,16 @@ class StreamRepository @Inject constructor(
             val encodedType = URLEncoder.encode(typeCandidate, "UTF-8")
             val query = queryParams?.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
             val url = "$baseUrl/meta/$encodedType/$encodedId.json$query"
-            val meta = runCatching { streamApi.getAddonMeta(url).meta }.getOrNull()
+            val meta = try {
+                streamApi.getAddonMeta(url).meta
+            } catch (e: retrofit2.HttpException) {
+                null
+            } catch (e: java.io.IOException) {
+                null
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }
             if (meta != null) return@withContext meta
         }
         null
@@ -3309,13 +3334,13 @@ class StreamRepository @Inject constructor(
 
     private fun shouldAvoidPlaybackProbe(url: String, stream: StreamSource): Boolean {
         if (isLikelyEphemeralPlaybackUrl(url, stream)) return true
-        val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
+        val host = try { java.net.URI(url).host?.lowercase(Locale.US) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }.orEmpty()
         if (host.isBlank()) return true
         return false
     }
 
     private fun shouldResolveRedirectBeforePlayback(url: String, stream: StreamSource): Boolean {
-        val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
+        val host = try { java.net.URI(url).host?.lowercase(Locale.US) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }.orEmpty()
         if (host.isBlank()) return false
         if (!stream.behaviorHints?.proxyHeaders?.request.isNullOrEmpty()) return false
         if (url.contains(".m3u8", ignoreCase = true) || url.contains(".mpd", ignoreCase = true)) return false
@@ -3427,19 +3452,17 @@ class StreamRepository @Inject constructor(
     private fun htmlUnescape(value: String): String =
         value.replace("&amp;", "&").replace("&#38;", "&").replace("&quot;", "\"").replace("&#39;", "'")
 
-    private val hubHrefRegex = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-    private val hubVarUrlRegex = Regex("""var\s+url\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
 
     private suspend fun resolveHubCloudChain(pageUrl: String): String? = withContext(Dispatchers.IO) {
         runCatching {
             withTimeout(STREAM_REDIRECT_RESOLUTION_TIMEOUT_MS) {
                 var driveUrl = pageUrl
-                val host = runCatching { java.net.URI(pageUrl).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
+                val host = try { java.net.URI(pageUrl).host?.lowercase(Locale.US) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }.orEmpty()
 
                 // HubDrive pages wrap a HubCloud link — hop to it first.
                 if (host.contains("hubdrive")) {
                     val driveHtml = httpGetStringOrNull(pageUrl, pageUrl) ?: return@withTimeout null
-                    val innerHub = hubHrefRegex.findAll(driveHtml)
+                    val innerHub = StreamRepoRegexes.hubHrefRegex.findAll(driveHtml)
                         .map { htmlUnescape(it.groupValues[1]) }
                         .firstOrNull { it.contains("hubcloud", true) && it.contains("/drive/", true) }
                         ?: return@withTimeout null
@@ -3448,11 +3471,11 @@ class StreamRepository @Inject constructor(
 
                 val driveHtml = httpGetStringOrNull(driveUrl, driveUrl) ?: return@withTimeout null
                 // The real links live on the gamerxyt page referenced by `var url`.
-                val linksPageUrl = hubVarUrlRegex.find(driveHtml)?.groupValues?.get(1)
+                val linksPageUrl = StreamRepoRegexes.hubVarUrlRegex.find(driveHtml)?.groupValues?.get(1)
                     ?: return@withTimeout null
 
                 val linksHtml = httpGetStringOrNull(htmlUnescape(linksPageUrl), driveUrl) ?: return@withTimeout null
-                val hrefs = hubHrefRegex.findAll(linksHtml)
+                val hrefs = StreamRepoRegexes.hubHrefRegex.findAll(linksHtml)
                     .map { htmlUnescape(it.groupValues[1]) }
                     .filter { it.startsWith("http", true) }
                     // Drop nav/util links (Login points back at /drive/, plus VPN/TG/etc).
@@ -3480,7 +3503,7 @@ class StreamRepository @Inject constructor(
         if (isLikelyEphemeralPlaybackUrl(url, stream)) return true
         if (shouldResolveRedirectBeforePlayback(url, stream)) return true
 
-        val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
+        val host = try { java.net.URI(url).host?.lowercase(Locale.US) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }.orEmpty()
         if (host.isBlank()) return true
         if (hostContainsAny(host, SIDE_EFFECT_PRONE_PREWARM_HOST_MARKERS)) return true
 
@@ -3846,7 +3869,7 @@ class StreamRepository @Inject constructor(
 
     // See GATED_HOST_DEFAULT_REFERERS above for why this exists.
     private fun defaultHeadersForGatedHost(url: String): Map<String, String> {
-        val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
+        val host = try { java.net.URI(url).host?.lowercase(Locale.US) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }.orEmpty()
         if (host.isBlank()) return emptyMap()
         val label = gatedHubHostLabel(host) ?: return emptyMap()
         val referer = GATED_HOST_DEFAULT_REFERERS[label] ?: return emptyMap()
