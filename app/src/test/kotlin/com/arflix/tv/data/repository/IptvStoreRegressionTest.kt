@@ -46,6 +46,22 @@ class IptvStoreRegressionTest {
     }
 
     @Test
+    fun variantLookupFindsUnloadedChannelsWithoutFuzzyMatches() {
+        val base = IptvChannel(id = "p:hd", name = "News HD", group = "News", streamUrl = "https://example.invalid/hd", epgId = " News.ID ")
+        val filler = List(300) { base.copy(id = "p:$it", epgId = "other.$it") }
+        channels.replaceAll(key, listOf(base) + filler + listOf(
+            base.copy(id = "p:sd", epgId = "news.id"),
+            base.copy(id = "p:name", epgId = null, tvgName = "NEWS.ID"),
+            base.copy(id = "p:similar", epgId = "news.id.extra"),
+        ), now)
+        assertEquals(listOf("p:hd", "p:sd", "p:name"), channels.findChannelVariants(key, "NEWS.ID").map { it.id })
+        assertEquals(emptyList<IptvChannel>(), channels.findChannelVariants("another-profile", "news.id"))
+        assertEquals(emptyList<IptvChannel>(), channels.findChannelVariants(key, " "))
+        assertEquals(emptyList<IptvChannel>(), channels.findChannelVariants(key, null))
+        assertEquals(listOf("p:hd"), channels.findChannelVariants(key, "news.id", 1).map { it.id })
+    }
+
+    @Test
     fun partialUpdatesNeverPretendToBeACompletedFullGuideRefresh() {
         val guide = mapOf("channel" to IptvNowNext(now = IptvProgram("Live",
             startUtcMillis = now, endUtcMillis = now + quarterHour)))

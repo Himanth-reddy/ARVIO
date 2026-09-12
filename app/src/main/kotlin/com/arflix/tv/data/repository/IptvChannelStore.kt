@@ -411,6 +411,23 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    fun findChannelVariants(sourceKey: String, targetId: String?, limit: Int = 200): List<IptvChannel> {
+        if (sourceKey.isBlank() || targetId.isNullOrBlank()) return emptyList()
+
+        // Normalize both operands in SQLite so matching is independent of the device locale.
+        val sql = "SELECT * FROM channels WHERE source_key = ? AND (LOWER(TRIM(epg_id)) = LOWER(?) OR LOWER(TRIM(tvg_name)) = LOWER(?)) ORDER BY ord LIMIT ?"
+        val args = arrayOf(sourceKey, targetId.trim(), targetId.trim(), limit.coerceIn(1, 200).toString())
+
+        return readableDatabase.rawQuery(sql, args).use { cursor ->
+            val out = ArrayList<IptvChannel>()
+            val cols = ColumnIndices(cursor)
+            while (cursor.moveToNext()) {
+                out.add(readChannel(cursor, cols))
+            }
+            out
+        }
+    }
+
     /** (group_title, count) for the category sidebar — computed in SQL, no object materialisation. */
     fun groupCounts(sourceKey: String): List<Pair<String, Int>> {
         if (sourceKey.isBlank()) return emptyList()

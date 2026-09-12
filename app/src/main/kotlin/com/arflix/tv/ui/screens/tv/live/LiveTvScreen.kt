@@ -1851,6 +1851,35 @@ fun LiveTvScreen(
     var fullscreenGuideOpen by remember { mutableStateOf(false) }
     var quickZapOpen by remember { mutableStateOf(false) }
     var variantPickerChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
+    var sourcesChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
+    var sourcesLoading by remember { mutableStateOf(false) }
+    var sourcesFailed by remember { mutableStateOf(false) }
+    var sourcesVariants by remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
+    LaunchedEffect(sourcesChannel, hiddenGroupSet, restrictedGroupSet) {
+        val channel = sourcesChannel ?: return@LaunchedEffect
+        sourcesLoading = true
+        sourcesFailed = false
+        sourcesVariants = emptyList()
+        try {
+            sourcesVariants = withContext(Dispatchers.IO) {
+                val targetId = channel.source.epgId?.takeIf { it.isNotBlank() }
+                    ?: channel.source.tvgName?.takeIf { it.isNotBlank() }
+                val candidates = viewModel.iptvRepository.pagedChannelVariants(targetId)
+                    .mapIndexed { index, source -> source.enrichForFastStartup(index + 1) }
+                    .filterNot { isRestrictedPlaylistGroup(it, hiddenGroupSet + restrictedGroupSet) }
+                (listOf(channel) + candidates).distinctBy { it.id }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            sourcesFailed = true
+        } finally {
+            sourcesLoading = false
+        }
+    }
+    LaunchedEffect(isFullScreen) {
+        if (!isFullScreen) sourcesChannel = null
+    }
     // Channel long-press menu (favourite, reorder favourites, quality variants).
     var channelMenu by remember { mutableStateOf<ChannelMenuState?>(null) }
     // True once the current OK hold has already opened the menu. Lives on the screen, not
@@ -3932,6 +3961,14 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
+                        onOpenVariants = playingChannel?.takeIf { playingCatchupProgram == null }?.let { channel ->
+                            {
+                                sourcesLoading = true
+                                sourcesFailed = false
+                                sourcesVariants = emptyList()
+                                sourcesChannel = channel
+                            }
+                        },
                         onPlayPauseClick = {
                             if (playingCatchupProgram != null) {
                                 toggleCatchupPlayback()
@@ -4156,6 +4193,29 @@ fun LiveTvScreen(
         }
 
         if (!searchOpen) {
+            sourcesChannel?.let { channel ->
+                FullscreenSourcesDialog(
+                    channel = channel,
+                    variants = sourcesVariants,
+                    loading = sourcesLoading,
+                    failed = sourcesFailed,
+                    onDismiss = {
+                        sourcesChannel = null
+                        hudPokeSignal++
+                    },
+                    onPick = { variant ->
+                        sourcesChannel = null
+                        if (variant.id != playingChannelId) {
+                            retainedPlayingChannel = variant
+                            playingChannelId = variant.id
+                            epgPrefetchAnchorId = variant.id
+                            playingCatchupProgram = null
+                            catchupPlaybackOffsetMs = 0L
+                        }
+                        hudPokeSignal++
+                    },
+                )
+            }
             val pickerChannel = variantPickerChannel
             VariantPickerOverlay(
                 channel = pickerChannel,

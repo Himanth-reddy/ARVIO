@@ -94,6 +94,7 @@ fun FullscreenHud(
     playbackDurationMs: Long = 0L,
     onBackClick: (() -> Unit)? = null,
     onGuideClick: (() -> Unit)? = null,
+    onOpenVariants: (() -> Unit)? = null,
     onPlayPauseClick: (() -> Unit)? = null,
     onRewindClick: (() -> Unit)? = null,
     onFastForwardClick: (() -> Unit)? = null,
@@ -547,6 +548,12 @@ fun FullscreenHud(
                             }
 
                             // Guide button at far right
+                            if (onOpenVariants != null) {
+                                HudActionButton(
+                                    label = stringResource(R.string.live_label_choose_source),
+                                    onClick = onOpenVariants,
+                                )
+                            }
                             if (onGuideClick != null) {
                                 HudActionButton(
                                     label = stringResource(R.string.live_btn_guide),

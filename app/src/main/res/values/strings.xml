@@ -1625,4 +1625,6 @@
     <string name="discord_qr_instructions">1. Scan QR code on your phone\n2. Tap \'Authorize\' on Discord\n3. Connects automatically</string>
     <string name="discord_not_included_in_build">Not included in this build</string>
     <string name="discord_rpc_help_desc">Show your watch status on your Discord profile.</string>
+    <string name="live_sources_empty">No other sources found for this channel.</string>
+    <string name="live_sources_failed">Could not load sources. Please try again.</string>
 </resources>
