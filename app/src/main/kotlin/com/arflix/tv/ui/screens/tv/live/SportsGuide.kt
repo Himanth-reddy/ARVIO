@@ -113,7 +113,7 @@ internal enum class GuideSport(val title: String, val asset: String, val terms: 
     companion object {
         private val priority = listOf(AMERICAN_FOOTBALL, AUSTRALIAN_FOOTBALL, BASKETBALL, F1, MOTORSPORT, TENNIS, MMA, BOXING,
             CRICKET, BASEBALL, HOCKEY, RUGBY, GOLF, SNOOKER, DARTS, CYCLING, ATHLETICS, VOLLEYBALL, HANDBALL, FOOTBALL)
-        private val anySport = Regex(priority.joinToString("|") { it.terms.pattern })
+        private val anySport by lazy { Regex(priority.joinToString("|") { it.terms.pattern }) }
         fun fromText(text: String): GuideSport? {
             val value = text.lowercase(Locale.ROOT)
             // Most provider labels are not sports. One negative scan replaces twenty.

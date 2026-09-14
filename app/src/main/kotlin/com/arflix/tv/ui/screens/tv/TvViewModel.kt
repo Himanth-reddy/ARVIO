@@ -1128,12 +1128,12 @@ class TvViewModel @Inject constructor(
             return
         }
         val indexedGuideChannels = if (largeList) {
-            runCatching { iptvRepository.indexedGuideChannelCount() }.getOrDefault(0)
+            try { iptvRepository.indexedGuideChannelCount() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0 }
         } else {
             0
         }
         val indexedGuidePrograms = if (largeList) {
-            runCatching { iptvRepository.indexedGuideProgramCount() }.getOrDefault(0)
+            try { iptvRepository.indexedGuideProgramCount() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0 }
         } else {
             0
         }
@@ -1286,8 +1286,8 @@ class TvViewModel @Inject constructor(
                     mergeNowNext(visibleGuide)
                     lastCompleteEpgBackfillCompletedAt = System.currentTimeMillis()
                     val covered = visibleGuide.count { (_, item) -> hasProgramData(item) }
-                    val indexedAfter = runCatching { iptvRepository.indexedGuideChannelCount() }.getOrDefault(0)
-                    val programsAfter = runCatching { iptvRepository.indexedGuideProgramCount() }.getOrDefault(0)
+                    val indexedAfter = try { iptvRepository.indexedGuideChannelCount() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0 }
+                    val programsAfter = try { iptvRepository.indexedGuideProgramCount() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0 }
                     System.err.println(
                         "[EPG-Complete] indexed full guide; index=$indexedAfter channels/" +
                             "$programsAfter programs; merged visible guide $covered/${priorityIds.size} channels"
