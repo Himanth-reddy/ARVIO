@@ -397,7 +397,7 @@ class HomeServerRepository @Inject constructor(
                 saveConnection(connection)
                 Result.success(connection)
             } catch (e: Throwable) {
-                if (e is CancellationException) throw e
+                if (e is kotlin.coroutines.cancellation.CancellationException) throw e
                 Result.failure(e)
             }
         }
@@ -419,7 +419,7 @@ class HomeServerRepository @Inject constructor(
                 saveConnection(connection)
                 Result.success(connection)
             } catch (e: Throwable) {
-                if (e is CancellationException) throw e
+                if (e is kotlin.coroutines.cancellation.CancellationException) throw e
                 Result.failure(e)
             }
         }
@@ -436,7 +436,7 @@ class HomeServerRepository @Inject constructor(
             saveConnections(refreshed)
             Result.success(refreshed)
         } catch (e: Throwable) {
-            if (e is CancellationException) throw e
+            if (e is kotlin.coroutines.cancellation.CancellationException) throw e
             Result.failure(e)
         }
     }
@@ -466,7 +466,7 @@ class HomeServerRepository @Inject constructor(
             }
             Result.success(session)
         } catch (e: Throwable) {
-            if (e is CancellationException) throw e
+            if (e is kotlin.coroutines.cancellation.CancellationException) throw e
             Result.failure(e)
         }
     }
@@ -475,7 +475,7 @@ class HomeServerRepository @Inject constructor(
         try {
             Result.success(startPlexPinAuthInternal())
         } catch (e: Throwable) {
-            if (e is CancellationException) throw e
+            if (e is kotlin.coroutines.cancellation.CancellationException) throw e
             Result.failure(e)
         }
     }
@@ -558,7 +558,7 @@ class HomeServerRepository @Inject constructor(
             }
             Result.success(token)
         } catch (e: Throwable) {
-            if (e is CancellationException) throw e
+            if (e is kotlin.coroutines.cancellation.CancellationException) throw e
             Result.failure(e)
         }
     }
@@ -587,7 +587,7 @@ class HomeServerRepository @Inject constructor(
             }
             Result.success(conn)
         } catch (e: Throwable) {
-            if (e is CancellationException) throw e
+            if (e is kotlin.coroutines.cancellation.CancellationException) throw e
             Result.failure(e)
         }
     }
@@ -2575,7 +2575,7 @@ class HomeServerRepository @Inject constructor(
             rating = string("CommunityRating").toDoubleOrNull(),
             primaryImageTag = obj("ImageTags")?.string("Primary").orEmpty().ifBlank { string("PrimaryImageTag") },
             backdropImageTag = array("BackdropImageTags").firstOrNull()?.asStringOrNull().orEmpty(),
-            addedAt = runCatching { Instant.parse(string("DateCreated")).toEpochMilli() }.getOrDefault(0L),
+            addedAt = try { Instant.parse(string("DateCreated")).toEpochMilli() } catch (e: Exception) { if (e is kotlin.coroutines.cancellation.CancellationException) throw e; 0L },
             librarySectionId = "",
             indexNumber = int("IndexNumber"),
             parentIndexNumber = int("ParentIndexNumber"),

@@ -9,8 +9,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.arflix.tv.R
 
+private val youtubeKeyRegex = Regex("[A-Za-z0-9_-]{11}")
+
 internal fun youtubeTrailerUrl(key: String): String? =
-    key.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+    key.takeIf { it.matches(youtubeKeyRegex) }
         ?.let { "https://www.youtube.com/watch?v=$it" }
 
 /** Keep YouTube's own playback surface, including controls and rights restrictions. */

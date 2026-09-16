@@ -6,6 +6,14 @@ import java.util.Locale
 data class ChannelLogoEntry(val id: String, val country: String, val names: List<String>, val urls: List<String>)
 
 /** Exact identity matching only; unknown and ambiguous names intentionally have no logo. */
+private object ChannelLogoRegexes {
+    val qualityPrefix = Regex("^(?:4K|8K|UHD|FHD|HD)\\s*[|:]\\s*", RegexOption.IGNORE_CASE)
+    val countryPrefix = Regex("^([A-Za-z]{2,3})(?:-[A-Za-z0-9]+)?\\s*[|:]\\s*")
+    val quality = Regex("(?:[\\s|_-]+(?:SD|HD|FHD|UHD|4K|8K|HEVC|H265|H264|RAW|BACKUP|1080P|720P|2160P))+$", RegexOption.IGNORE_CASE)
+    val marks = Regex("\\p{M}+")
+    val punctuation = Regex("[^\\p{L}\\p{N}+]")
+}
+
 class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
     private val byId = entries.associateBy { it.id.lowercase(Locale.ROOT) }
     private val byName = buildMap<String, List<ChannelLogoEntry>> {
@@ -16,8 +24,8 @@ class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
 
     fun candidates(epgId: String?, name: String): List<String> {
         byId[epgId?.trim()?.lowercase(Locale.ROOT)]?.let { return it.urls }
-        val cleaned = name.trim().replace(Regex("^(?:4K|8K|UHD|FHD|HD)\\s*[|:]\\s*", RegexOption.IGNORE_CASE), "")
-        val prefix = countryPrefix.find(cleaned)
+        val cleaned = name.trim().replace(ChannelLogoRegexes.qualityPrefix, "")
+        val prefix = ChannelLogoRegexes.countryPrefix.find(cleaned)
         val country = prefix?.groupValues?.get(1)?.uppercase(Locale.ROOT)?.let { countries[it] }
         val title = if (country != null) cleaned.substring(prefix!!.range.last + 1) else cleaned
         val matches = byName[nameKey(title)].orEmpty().filter {
@@ -33,11 +41,8 @@ class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
             "BR" to "BR", "BE" to "BE", "CH" to "CH", "AT" to "AT", "IE" to "IE",
             "DK" to "DK", "DNK" to "DK", "SE" to "SE", "NO" to "NO", "FI" to "FI",
             "PL" to "PL", "RO" to "RO", "TR" to "TR", "IN" to "IN", "AR" to "AR")
-        private val countryPrefix = Regex("^([A-Za-z]{2,3})(?:-[A-Za-z0-9]+)?\\s*[|:]\\s*")
-        private val quality = Regex("(?:[\\s|_-]+(?:SD|HD|FHD|UHD|4K|8K|HEVC|H265|H264|RAW|BACKUP|1080P|720P|2160P))+$", RegexOption.IGNORE_CASE)
-        private val marks = Regex("\\p{M}+")
-        private val punctuation = Regex("[^\\p{L}\\p{N}+]")
-        fun nameKey(value: String): String = punctuation.replace(marks.replace(Normalizer.normalize(
-            quality.replace(value.trim(), ""), Normalizer.Form.NFKD), ""), "").lowercase(Locale.ROOT)
+
+        fun nameKey(value: String): String = ChannelLogoRegexes.punctuation.replace(ChannelLogoRegexes.marks.replace(Normalizer.normalize(
+            ChannelLogoRegexes.quality.replace(value.trim(), ""), Normalizer.Form.NFKD), ""), "").lowercase(Locale.ROOT)
     }
 }
