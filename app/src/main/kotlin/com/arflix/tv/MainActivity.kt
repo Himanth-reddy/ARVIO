@@ -271,7 +271,11 @@ class MainActivity : ComponentActivity() {
         }
 
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { iptvRepository.get().warmupFromCacheOnly() }
+            try {
+                iptvRepository.get().warmupFromCacheOnly()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
 
         setContent {
@@ -401,9 +405,17 @@ class MainActivity : ComponentActivity() {
             ArflixApplication.instance.scheduleTraktSyncIfNeeded()
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val repo = iptvRepository.get()
-                runCatching { repo.warmupFromCacheOnly() }
+                try {
+                    repo.warmupFromCacheOnly()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
                 kotlinx.coroutines.delay(60_000L)
-                runCatching { repo.prefetchFreshStartupData() }
+                try {
+                    repo.prefetchFreshStartupData()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
         }
     }

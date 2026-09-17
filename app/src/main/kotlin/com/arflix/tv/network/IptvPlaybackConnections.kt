@@ -27,8 +27,18 @@ internal class IptvPlaybackConnections : Interceptor {
         val closing = (calls.toList() + client.dispatcher.queuedCalls() + client.dispatcher.runningCalls()).distinct()
         return CoroutineScope(dispatcher).launch {
             // TLS socket cancellation may write close_notify, so it must not run on main.
-            closing.forEach { call -> runCatching { call.cancel() } }
-            runCatching { client.connectionPool.evictAll() }
+            closing.forEach { call ->
+                try {
+                    call.cancel()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
+            }
+            try {
+                client.connectionPool.evictAll()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
     }
 

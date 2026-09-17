@@ -171,10 +171,13 @@ internal fun iptvProviderCooldownMs(status: Int, retryAfter: String?, nowMs: Lon
     }
     val requested = retryAfter?.trim()?.let { value ->
         value.toLongOrNull()?.coerceIn(0, 86_400)?.times(1000L)
-            ?: runCatching {
+            ?: try {
                 (ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME)
                     .toInstant().toEpochMilli() - nowMs).coerceIn(0L, 86_400_000L)
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }
     } ?: 0L
     return maxOf(baseline, requested)
 }
