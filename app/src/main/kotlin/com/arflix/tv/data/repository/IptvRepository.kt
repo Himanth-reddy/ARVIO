@@ -1469,7 +1469,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun normalizePlaylistEpgUrls(playlist: IptvPlaylistEntry): List<String> {
-        val epgUrl = runCatching { playlist.epgUrl }.getOrNull().orEmpty()
+        val epgUrl = try { playlist.epgUrl ?: "" } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; "" }
         val epgUrls = runCatching { playlist.epgUrls }.getOrNull().orEmpty()
         return buildList {
             add(epgUrl)
@@ -1505,7 +1505,7 @@ class IptvRepository @Inject constructor(
         }
         return listOf(Base64.DEFAULT, Base64.URL_SAFE or Base64.NO_WRAP)
             .mapNotNull { flags ->
-                runCatching { String(Base64.decode(trimmed, flags), StandardCharsets.UTF_8).trim() }.getOrNull()
+                try { String(Base64.decode(trimmed, flags), StandardCharsets.UTF_8).trim() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             }
             .firstOrNull { decoded ->
                 decoded.startsWith("http://", ignoreCase = true) ||
