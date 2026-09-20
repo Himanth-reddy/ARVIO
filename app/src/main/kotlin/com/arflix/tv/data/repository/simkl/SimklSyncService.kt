@@ -892,9 +892,11 @@ class SimklSyncService @Inject constructor(
         .replace(NON_ALPHA_NUM_REGEX, " ")
         .trim()
 
-    private fun parseTimestamp(value: String?): Long = runCatching {
-        value?.let(Instant::parse)?.toEpochMilli()
-    }.getOrNull() ?: 0L
+    private fun parseTimestamp(value: String?): Long = try {
+        value?.let(Instant::parse)?.toEpochMilli() ?: 0L
+    } catch (e: java.time.format.DateTimeParseException) {
+        0L
+    }
 
     suspend fun getWatchedMovies(): Set<Int> {
         syncIfNeeded()
