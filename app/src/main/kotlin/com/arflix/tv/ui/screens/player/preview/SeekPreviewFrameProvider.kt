@@ -774,12 +774,18 @@ internal class SeekPreviewDiskCache(private val root: File, private val limitByt
     }
 }
 
+private object SeekPreviewRegexes {
+    val BYTES_RANGE = Regex("bytes (\\d+)-(\\d+)/(\\d+|\\*)", RegexOption.IGNORE_CASE)
+    val BYTES_WILDCARD = Regex("bytes \\*/(\\d+)", RegexOption.IGNORE_CASE)
+    val BYTES_HEADER = Regex("bytes=(\\d+)-(\\d*)")
+}
+
 internal class UnsupportedPreviewException(message: String) : IOException(message)
 
 internal data class PreviewContentRange(val start: Long, val end: Long, val total: Long?)
 
 internal fun parsePreviewContentRange(value: String?): PreviewContentRange? {
-    val match = Regex("bytes (\\d+)-(\\d+)/(\\d+|\\*)", RegexOption.IGNORE_CASE).matchEntire(value?.trim() ?: return null) ?: return null
+    val match = SeekPreviewRegexes.BYTES_RANGE.matchEntire(value?.trim() ?: return null) ?: return null
     val start = match.groupValues[1].toLongOrNull() ?: return null
     val end = match.groupValues[2].toLongOrNull() ?: return null
     val total = match.groupValues[3].takeUnless { it == "*" }?.toLongOrNull()
@@ -852,7 +858,7 @@ internal class HttpRangeReader(
         val end = minOf(start + RANGE_CHUNK_BYTES - 1, resolvedSize?.minus(1) ?: Long.MAX_VALUE)
         return request(builder().header("Range", "bytes=$start-$end").build()) { response ->
             if (response.code == 416) {
-                val match = Regex("bytes \\*/(\\d+)", RegexOption.IGNORE_CASE).matchEntire(response.header("Content-Range")?.trim().orEmpty())
+                val match = SeekPreviewRegexes.BYTES_WILDCARD.matchEntire(response.header("Content-Range")?.trim().orEmpty())
                 val total = match?.groupValues?.get(1)?.toLongOrNull()
                     ?: throw UnsupportedPreviewException("Invalid range EOF")
                 if (start < total) throw UnsupportedPreviewException("Premature range EOF")
@@ -993,7 +999,7 @@ internal class SeekPreviewRangeProxy(private val reader: HttpRangeReader) : Nano
         val current = lease
             ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, MIME_PLAINTEXT, "")
         val rangeHeader = session.headers["range"]
-        val range = rangeHeader?.let { Regex("bytes=(\\d+)-(\\d*)").matchEntire(it) }
+        val range = rangeHeader?.let { SeekPreviewRegexes.BYTES_HEADER.matchEntire(it) }
         val start = if (rangeHeader == null) 0L else range?.groupValues?.get(1)?.toLongOrNull() ?: -1
         val requestedEnd = range?.groupValues?.get(2)?.takeIf { it.isNotEmpty() }
         val end = if (requestedEnd == null) mediaSize - 1 else requestedEnd.toLongOrNull()?.coerceAtMost(mediaSize - 1) ?: -1

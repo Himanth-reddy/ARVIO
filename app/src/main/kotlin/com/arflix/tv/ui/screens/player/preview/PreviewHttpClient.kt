@@ -153,9 +153,13 @@ internal class PreviewHttpClient(
         active.get()?.cancel()
     }
 
+    private object PreviewHttpClientRegexes {
+        val BYTES_RANGE = Regex("bytes (\\d+)-(\\d+)/(\\d+)")
+    }
+
     companion object {
         internal fun parseContentRange(value: String?): Triple<Long, Long, Long>? {
-            val match = value?.let { Regex("bytes (\\d+)-(\\d+)/(\\d+)").matchEntire(it) } ?: return null
+            val match = value?.let { PreviewHttpClientRegexes.BYTES_RANGE.matchEntire(it) } ?: return null
             val start = match.groupValues[1].toLongOrNull() ?: return null
             val end = match.groupValues[2].toLongOrNull() ?: return null
             val total = match.groupValues[3].toLongOrNull() ?: return null

@@ -442,10 +442,11 @@ class StreamRepository @Inject constructor(
 
     private fun decodeStreamResultCacheBundle(raw: String): Map<String, PersistedStreamResultPayload> {
         if (raw.isBlank()) return emptyMap()
-        return runCatching {
+        return try {
             gson.fromJson(raw, streamResultCacheBundleType) as? Map<String, PersistedStreamResultPayload> ?: emptyMap()
-        }.getOrElse {
-            Log.w(TAG, "[StreamCache][Decode] malformed stream result cache payload")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "[StreamCache][Decode] malformed stream result cache payload", e)
             emptyMap()
         }
     }
@@ -479,7 +480,7 @@ class StreamRepository @Inject constructor(
             createdAtMs = cached.createdAtMs
         )
         repositoryScope.launch {
-            runCatching {
+            try {
                 val bundleKey = streamResultCacheBundleKey(profileId)
                 val now = System.currentTimeMillis()
                 val raw = context.streamDataStore.data.first()[bundleKey].orEmpty()
@@ -497,8 +498,9 @@ class StreamRepository @Inject constructor(
                         prefs[bundleKey] = gson.toJson(trimmed)
                     }
                 }
-            }.onFailure {
-                Log.w(TAG, "[StreamCache][Persist] failed key=$cacheKey reason=${it::class.java.simpleName}")
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.e(TAG, "Failed to persist stream result cache", e)
             }
         }
     }
