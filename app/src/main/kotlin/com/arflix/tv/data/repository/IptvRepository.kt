@@ -4676,7 +4676,11 @@ class IptvRepository @Inject constructor(
         val tmdbMap: Map<String, List<ResolverSeriesEntry>>,
         val imdbMap: Map<String, List<ResolverSeriesEntry>>,
         val canonicalTitleMap: Map<String, List<ResolverSeriesEntry>>,
-        val tokenMap: Map<String, List<ResolverSeriesEntry>>
+        val tokenMap: Map<String, List<ResolverSeriesEntry>>,
+        // Series id -> catalog name. The name is where a provider puts its
+        // quality marker ("UHD - The Gentlemen"), and the episode paths that
+        // resolve from a stored binding never see the catalog entry itself.
+        val idNameMap: Map<Int, String> = emptyMap()
     )
 
     private data class ResolverCandidate(
@@ -4698,6 +4702,13 @@ class IptvRepository @Inject constructor(
         val confidence: Float,
         val method: String,
         val title: String? = null,
+        // Nullable on purpose: this class is stored as Gson JSON and has
+        // parameters without defaults, so Gson allocates it without running the
+        // Kotlin constructor and skips every default value. A non-null
+        // `String = ""` would therefore arrive as null from older cache entries
+        // and crash on first touch - the same trap documented on
+        // [StalkerPortalEntry]. Always read it with `?.takeIf { ... }`.
+        val seriesName: String? = null,
         val savedAtMs: Long
     )
 
@@ -4910,6 +4921,7 @@ class IptvRepository @Inject constructor(
                     confidence = 0.995f,
                     method = "fast_path_cache",
                     title = best.episode.title,
+                    seriesName = cachedSeriesName(providerKey, seriesId),
                     savedAtMs = now
                 )
             }
@@ -4987,6 +4999,7 @@ class IptvRepository @Inject constructor(
                                 confidence = 0.995f,
                                 method = "series_binding",
                                 title = hit.episode.title,
+                                seriesName = cachedSeriesName(providerKey, seriesId),
                                 savedAtMs = System.currentTimeMillis()
                             )
                         }
@@ -5077,6 +5090,7 @@ class IptvRepository @Inject constructor(
                         confidence = hit.first.confidence,
                         method = hit.first.method,
                         title = hit.second.title,
+                        seriesName = hit.first.entry.name.takeIf { it.isNotBlank() },
                         savedAtMs = System.currentTimeMillis()
                     )
                 }
@@ -5261,9 +5275,24 @@ class IptvRepository @Inject constructor(
                 tmdbMap = tmdbMap,
                 imdbMap = imdbMap,
                 canonicalTitleMap = canonicalTitleMap,
-                tokenMap = tokenMap
+                tokenMap = tokenMap,
+                idNameMap = normalizedEntries
+                    .filter { it.name.isNotBlank() }
+                    .associate { it.seriesId to it.name }
             )
         }
+
+        /**
+         * Catalog name of a series, from whatever is already in memory. Used by
+         * the episode paths that resolve from a stored binding and therefore
+         * never hold the catalog entry itself.
+         *
+         * Memory only, no disk and no network: this sits in the source-list hot
+         * path, and a missing name costs nothing but a fallback to the episode
+         * title. The catalog is in memory after the start-up pre-warm.
+         */
+        fun cachedSeriesName(providerKey: String, seriesId: Int): String? =
+            catalogMemory[providerKey]?.idNameMap?.get(seriesId)?.takeIf { it.isNotBlank() }
 
         private fun buildCandidates(
             catalog: ResolverCatalogIndex,
@@ -6078,7 +6107,7 @@ class IptvRepository @Inject constructor(
             source = sourceName,
             addonName = "IPTV VOD",
             addonId = IptvVodSourceIds.STALKER,
-            quality = stalkerVodQuality(sourceName, hd),
+            quality = stalkerVodQuality(hd, sourceName),
             size = "",
             url = marker,
             description = stalkerVodDescription(portal, time, ratingImdb)
@@ -6087,11 +6116,11 @@ class IptvRepository @Inject constructor(
 
     /**
      * Stalker knows no resolution field - the portal only flags `hd` - so the
-     * title is still the better source when it names one. Falling back to the
-     * flag at least separates HD entries from the rest.
+     * titles are still the better source when one of them names a resolution.
+     * Falling back to the flag at least separates HD entries from the rest.
      */
-    private fun stalkerVodQuality(sourceName: String, hdFlag: String?): String {
-        val inferred = inferQuality(sourceName)
+    private fun stalkerVodQuality(hdFlag: String?, vararg names: String?): String {
+        val inferred = inferQualityFrom(*names)
         if (inferred != "VOD") return inferred
         return if (hdFlag?.trim() == "1") "HD" else "VOD"
     }
@@ -6481,9 +6510,11 @@ class IptvRepository @Inject constructor(
             source = sourceName,
             addonName = "IPTV Series VOD",
             addonId = IptvVodSourceIds.STALKER,
-            // The season entry's own name ("Staffel 2") says nothing about
-            // quality, so the show's name is what gets inspected.
-            quality = stalkerVodQuality(showName, hd ?: show.hd),
+            // The show's name carries the provider's marker ("UHD - ..."), so it
+            // is asked first; the season entry's own name ("Staffel 2") usually
+            // says nothing, but a portal that labels the season instead still
+            // gets read rather than dropped to the bare "VOD" badge.
+            quality = stalkerVodQuality(hd ?: show.hd, showName, name),
             size = "",
             url = marker,
             description = stalkerVodDescription(portal, time ?: show.time, ratingImdb ?: show.ratingImdb)
@@ -6587,11 +6618,19 @@ class IptvRepository @Inject constructor(
                 val ext = resolved.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
                 val streamUrl = "${creds.baseUrl}/series/${creds.username}/${creds.password}/${resolved.streamId}.$ext"
                 val sourceName = resolvedTitle.ifBlank { "$title S${season}E${episode}" }
+                // The provider marks its variants on the SERIES ("UHD - The
+                // Gentlemen"), while `sourceName` is the episode title ("Episode
+                // 2") and names no resolution at all. Asking the series name
+                // first is what makes three variants of one episode tellable
+                // apart; the episode title stays as the fallback for providers
+                // who label it the other way round.
+                val seriesName = resolved.seriesName?.takeIf { it.isNotBlank() }
+                    ?: seriesResolver.cachedSeriesName(providerKey, resolved.seriesId)
                 StreamSource(
                     source = sourceName,
                     addonName = "IPTV Series VOD",
                     addonId = IptvVodSourceIds.XTREAM,
-                    quality = inferQuality(sourceName),
+                    quality = inferQualityFrom(seriesName, sourceName),
                     size = "",
                     url = streamUrl
                 )
@@ -7603,25 +7642,59 @@ class IptvRepository @Inject constructor(
         return score
     }
 
-    private fun inferQuality(value: String): String {
-        val lower = value.lowercase(Locale.US)
+    /**
+     * Reads a resolution out of whatever text a provider gives us.
+     *
+     * IPTV providers mark their variants with words, not numbers - "UHD - The
+     * Gentlemen", "FHD - The Gentlemen". Only the live-TV path ([inferQualityLabel])
+     * ever knew those words, so every VOD entry fell through to the bare "VOD"
+     * badge and three variants of one episode looked identical in the source list.
+     * The word list is now the same on both paths.
+     *
+     * "HD" without a number stays "HD" on purpose: providers use it for both 720p
+     * and 1080i, so claiming either would be a guess printed as a fact.
+     */
+    internal fun inferQuality(value: String): String {
+        val upper = value.uppercase(Locale.US)
         return when {
-            lower.contains("2160") || lower.contains("4k") -> "4K"
-            lower.contains("1080") -> "1080p"
-            lower.contains("720") -> "720p"
-            lower.contains("480") -> "480p"
+            VOD_QUALITY_4K_REGEX.containsMatchIn(upper) -> "4K"
+            VOD_QUALITY_1080_REGEX.containsMatchIn(upper) -> "1080p"
+            VOD_QUALITY_720_REGEX.containsMatchIn(upper) -> "720p"
+            VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> "HD"
+            VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> "480p"
+            VOD_QUALITY_SD_REGEX.containsMatchIn(upper) -> "SD"
             else -> "VOD"
         }
     }
 
-    private fun vodQualityRank(value: String): Int {
-        val lower = value.lowercase(Locale.US)
+    /**
+     * First candidate that actually names a resolution wins. Providers disagree
+     * about where they put the marker - some on the series ("UHD - The Gentlemen"),
+     * some on the episode ("The Gentlemen S02E02 1080p") - so both get looked at,
+     * in the order the caller considers most trustworthy.
+     */
+    internal fun inferQualityFrom(vararg candidates: String?): String {
+        candidates.forEach { candidate ->
+            val value = candidate?.trim().orEmpty()
+            if (value.isNotBlank()) {
+                val inferred = inferQuality(value)
+                if (inferred != "VOD") return inferred
+            }
+        }
+        return "VOD"
+    }
+
+    internal fun vodQualityRank(value: String): Int {
+        val upper = value.uppercase(Locale.US)
         return when {
-            lower.contains("2160") || lower.contains("4k") -> 500
-            lower.contains("1080") -> 400
-            lower.contains("720") -> 300
-            lower.contains("480") -> 200
-            lower.contains("360") -> 100
+            VOD_QUALITY_4K_REGEX.containsMatchIn(upper) -> 500
+            VOD_QUALITY_1080_REGEX.containsMatchIn(upper) -> 400
+            VOD_QUALITY_720_REGEX.containsMatchIn(upper) -> 300
+            // Between 720p and 480p: better than SD, and never claimed to be more.
+            VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> 250
+            VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> 200
+            VOD_QUALITY_SD_REGEX.containsMatchIn(upper) -> 150
+            VOD_QUALITY_360_REGEX.containsMatchIn(upper) -> 100
             else -> 0
         }
     }
@@ -11689,6 +11762,26 @@ class IptvRepository @Inject constructor(
         private val URL_QUERY_SECRETS_REGEX = Regex("""(?i)([?&](?:username|user|uname|password|pass|pwd)=)[^&]+""")
         private val URL_PATH_SECRETS_REGEX = Regex("""(?i)(/(?:live|movie|series|timeshift)/)([^/]+)/([^/]+)(/)""")
         private val QUALITY_WORDS_REGEX = Regex("""\b(4K|UHD|FHD|HD|SD|2160P?|1080P?|720P?|576P?|480P?)\b""", RegexOption.IGNORE_CASE)
+
+        // VOD quality words, in the order they must be tested: the more specific
+        // token always wins, so "FHD" is never read as the "HD" inside it.
+        //
+        // Three different guards, each for a reason that cost a regression once:
+        //  - Every token refuses a letter or digit IN FRONT of it, so "UHD" does
+        //    not fire inside a word like "NEUHDORF".
+        //  - Numbers only refuse a digit AFTER them, never a letter: "1920x1080"
+        //    and "1080p" are how providers actually spell a resolution.
+        //  - 4K/UHD/FHD also allow a letter after them ("UHDRemux", "4KHDR") -
+        //    they are unambiguous, so a run-together name still resolves. HD and
+        //    SD do NOT get that freedom: "HDR" is a colour range, not a
+        //    resolution, and reading it as HD would be a wrong fact on screen.
+        private val VOD_QUALITY_4K_REGEX = Regex("""(?<![A-Z0-9])(?:4K|UHD)(?![0-9])|(?<!\d)2160(?!\d)""")
+        private val VOD_QUALITY_1080_REGEX = Regex("""(?<![A-Z0-9])FHD(?![0-9])|(?<!\d)1080(?!\d)""")
+        private val VOD_QUALITY_720_REGEX = Regex("""(?<!\d)720(?!\d)""")
+        private val VOD_QUALITY_HD_REGEX = Regex("""(?<![A-Z0-9])HD(?![A-Z0-9])""")
+        private val VOD_QUALITY_480_REGEX = Regex("""(?<!\d)(?:576|480)(?!\d)""")
+        private val VOD_QUALITY_SD_REGEX = Regex("""(?<![A-Z0-9])SD(?![A-Z0-9])""")
+        private val VOD_QUALITY_360_REGEX = Regex("""(?<!\d)360(?!\d)""")
         private val BRACKET_PAREN_REGEX = Regex("""\[[^\]]*]|\([^)]*\)""")
 
         const val ENC_PREFIX = "encv1:"
