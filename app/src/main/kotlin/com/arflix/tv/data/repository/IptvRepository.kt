@@ -6130,7 +6130,7 @@ class IptvRepository @Inject constructor(
             quality = stalkerVodQuality(sourceName, hd),
             size = "",
             url = marker,
-            description = stalkerVodDescription(portal, time, ratingImdb)
+            description = stalkerVodDescription(time, ratingImdb)
         )
     }
 
@@ -6146,17 +6146,21 @@ class IptvRepository @Inject constructor(
     }
 
     /**
-     * The little the portal knows beyond the title, which is what makes two
-     * entries of the same movie tellable apart: which portal it came from, how
-     * long it runs, and its IMDb rating.
+     * The little the portal knows beyond the title: how long it runs and its
+     * IMDb rating.
+     *
+     * The portal NAME used to lead this line, and the `portal` parameter with
+     * it. Both are gone: the name now travels in `behaviorHints.provider`, where
+     * the source menu prints it next to the add-on name for every IPTV source,
+     * Xtream and Stalker alike. Leaving it here as well showed it twice in one
+     * row - measured on a device on 22.09.2026, "IPTV VOD - Portal 100" sat
+     * directly above "Portal 100 - 192 min - IMDb 7.601".
      */
     private fun stalkerVodDescription(
-        portal: StalkerPortalEntry,
         runtime: String?,
         ratingImdb: String?
     ): String? {
         val parts = mutableListOf<String>()
-        portal.name.trim().takeIf { it.isNotBlank() }?.let(parts::add)
         runtime?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
             val minutes = value.toIntOrNull()
             parts += if (minutes != null && minutes > 0) "$minutes min" else value
@@ -6535,7 +6539,7 @@ class IptvRepository @Inject constructor(
             quality = stalkerVodQuality(showName, hd ?: show.hd),
             size = "",
             url = marker,
-            description = stalkerVodDescription(portal, time ?: show.time, ratingImdb ?: show.ratingImdb)
+            description = stalkerVodDescription(time ?: show.time, ratingImdb ?: show.ratingImdb)
         )
     }
 

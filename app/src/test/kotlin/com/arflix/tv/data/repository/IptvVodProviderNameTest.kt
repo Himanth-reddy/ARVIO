@@ -82,6 +82,24 @@ class IptvVodProviderNameTest {
         }
     }
 
+    /**
+     * Measured on a device on 22.09.2026: the Stalker description line used to
+     * begin with the portal name, so once the name was stamped as well, the row
+     * read "IPTV VOD - Portal 100" directly above "Portal 100 - 192 min -
+     * IMDb 7.601". The description keeps the facts only it carries; the name
+     * lives in one place now.
+     */
+    @Test fun `the stalker description no longer repeats the provider name`() {
+        val repository = newRepository()
+        with(repository) {
+            val stamped = source(
+                hints = null
+            ).copy(description = "192 min \u00b7 IMDb 7.601").withIptvProvider("Portal 100")
+            assertEquals("Portal 100", stamped.behaviorHints?.provider)
+            assertEquals(false, stamped.description.orEmpty().contains("Portal 100"))
+        }
+    }
+
     private fun source(hints: StreamBehaviorHints? = null) = StreamSource(
         source = "The Gentlemen (2024) - S02E02 - Episode 2",
         addonName = "IPTV Series VOD",
