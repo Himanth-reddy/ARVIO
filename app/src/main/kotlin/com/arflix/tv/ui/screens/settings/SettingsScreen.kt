@@ -2889,6 +2889,7 @@ fun SettingsScreen(
                 },
                 openUrlLabel = stringResource(R.string.settings_open_trakt_page),
                 showCopyCode = false,
+                qrData = traktActivationUrl(traktCode.verificationUrl, traktCode.userCode),
                 onDismiss = { viewModel.cancelTraktAuth() }
             )
         }
@@ -4009,7 +4010,8 @@ private fun TraktActivationModal(
     instruction: String? = null,
     onOpenUrl: (() -> Unit)? = null,
     openUrlLabel: String? = null,
-    showCopyCode: Boolean = true
+    showCopyCode: Boolean = true,
+    qrData: String? = null
 ) {
     val resolvedTitle = title ?: stringResource(R.string.settings_connect_trakt)
     val resolvedInstruction = instruction ?: stringResource(R.string.settings_trakt_instruction, verificationUrl)
@@ -4018,8 +4020,11 @@ private fun TraktActivationModal(
     val accentContentColor = contrastingContentColor(accentColor)
     val focusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val qrContainerSize = if (isMobile) 0.dp else 172.dp
+    val qrContainerSize = if (isMobile) 0.dp else 224.dp
     val qrBitmapSizePx = if (isMobile) 0 else 512
+    // Services that can embed the user code in the QR payload pass it via [qrData]; everyone
+    // else keeps scanning the bare verification URL.
+    val qrPayload = qrData?.takeIf { it.isNotBlank() } ?: verificationUrl
     val clipboardManager = LocalClipboardManager.current
 
     LaunchedEffect(userCode) {
@@ -4079,7 +4084,7 @@ private fun TraktActivationModal(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
-                    if (!isMobile && verificationUrl.isNotBlank()) {
+                    if (!isMobile && qrPayload.isNotBlank()) {
                         Box(
                             modifier = Modifier
                                 .size(qrContainerSize)
@@ -4088,7 +4093,7 @@ private fun TraktActivationModal(
                             contentAlignment = Alignment.Center
                         ) {
                             QrCodeImage(
-                                data = verificationUrl,
+                                data = qrPayload,
                                 sizePx = qrBitmapSizePx,
                                 modifier = Modifier.fillMaxSize(),
                                 foreground = android.graphics.Color.BLACK,
