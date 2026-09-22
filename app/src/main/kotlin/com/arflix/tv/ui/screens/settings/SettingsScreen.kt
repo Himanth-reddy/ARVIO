@@ -2901,6 +2901,8 @@ fun SettingsScreen(
                 showCopyCode = false,
                 qrData = traktActivationUrl(traktCode.verificationUrl, traktCode.userCode),
                 expiresAtMillis = uiState.traktCodeExpiresAtMillis,
+                outcome = uiState.traktAuthOutcome,
+                onRetry = { viewModel.startTraktAuth() },
                 onDismiss = { viewModel.cancelTraktAuth() }
             )
         }
@@ -4023,7 +4025,9 @@ private fun TraktActivationModal(
     openUrlLabel: String? = null,
     showCopyCode: Boolean = true,
     qrData: String? = null,
-    expiresAtMillis: Long? = null
+    expiresAtMillis: Long? = null,
+    outcome: TraktAuthOutcome? = null,
+    onRetry: (() -> Unit)? = null
 ) {
     val resolvedTitle = title ?: stringResource(R.string.settings_connect_trakt)
     val resolvedInstruction = instruction ?: stringResource(R.string.settings_trakt_instruction, verificationUrl)
@@ -4031,6 +4035,7 @@ private fun TraktActivationModal(
     val accentColor = resolveAccentColor(fallback = Pink)
     val accentContentColor = contrastingContentColor(accentColor)
     val focusRequester = remember { FocusRequester() }
+    val retryFocusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val qrContainerSize = if (isMobile) 0.dp else 224.dp
     val qrBitmapSizePx = if (isMobile) 0 else 512
@@ -4057,8 +4062,14 @@ private fun TraktActivationModal(
         }
     }
 
-    LaunchedEffect(userCode) {
-        focusRequester.requestFocus()
+    // The dialog grabs focus for the code; once it turns into the expired panel the retry button
+    // has to take over, or the remote would have nothing to act on.
+    LaunchedEffect(userCode, outcome) {
+        if (outcome == TraktAuthOutcome.EXPIRED) {
+            runCatching { retryFocusRequester.requestFocus() }
+        } else {
+            runCatching { focusRequester.requestFocus() }
+        }
     }
 
     androidx.compose.ui.window.Dialog(
@@ -4089,8 +4100,14 @@ private fun TraktActivationModal(
                                 true
                             }
                             Key.Enter, Key.DirectionCenter -> {
-                                onDismiss()
-                                true
+                                // The expired panel has its own buttons; swallowing OK here
+                                // would dismiss the dialog instead of retrying.
+                                if (outcome == TraktAuthOutcome.EXPIRED) {
+                                    false
+                                } else {
+                                    onDismiss()
+                                    true
+                                }
                             }
                             else -> false
                         }
@@ -4101,98 +4118,211 @@ private fun TraktActivationModal(
                     style = ArflixTypography.sectionTitle,
                     color = TextPrimary
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = resolvedInstruction,
-                    style = ArflixTypography.body,
-                    color = TextSecondary
-                )
+                if (outcome == null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = resolvedInstruction,
+                        style = ArflixTypography.body,
+                        color = TextSecondary
+                    )
+                }
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(24.dp)
-                ) {
-                    if (!isMobile && qrPayload.isNotBlank()) {
+                if (outcome != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        val isConnected = outcome == TraktAuthOutcome.CONNECTED
                         Box(
                             modifier = Modifier
-                                .size(qrContainerSize)
-                                .background(Color.White, RoundedCornerShape(14.dp))
-                                .padding(12.dp),
+                                .size(48.dp)
+                                .background(
+                                    if (isConnected) {
+                                        Color(0xFF4CAF50) // Green checkmark
+                                    } else {
+                                        Color.White.copy(alpha = 0.08f)
+                                    },
+                                    RoundedCornerShape(percent = 50)
+                                )
+                                .then(
+                                    if (isConnected) {
+                                        Modifier
+                                    } else {
+                                        Modifier.border(
+                                            1.dp,
+                                            TextPrimary.copy(alpha = 0.24f),
+                                            RoundedCornerShape(percent = 50)
+                                        )
+                                    }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
-                            QrCodeImage(
-                                data = qrPayload,
-                                sizePx = qrBitmapSizePx,
-                                modifier = Modifier.fillMaxSize(),
-                                foreground = android.graphics.Color.BLACK,
-                                background = android.graphics.Color.WHITE
+                            Icon(
+                                imageVector = if (isConnected) {
+                                    Icons.Default.Check
+                                } else {
+                                    Icons.Default.Schedule
+                                },
+                                contentDescription = null,
+                                tint = if (isConnected) {
+                                    BackgroundElevated
+                                } else {
+                                    TextPrimary.copy(alpha = 0.70f)
+                                },
+                                modifier = Modifier.size(if (isConnected) 26.dp else 24.dp)
                             )
                         }
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = userCode,
-                            style = ArflixTypography.heroTitle.copy(fontSize = 42.sp),
-                            color = accentColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            text = stringResource(
+                                if (isConnected) {
+                                    R.string.settings_trakt_connected
+                                } else {
+                                    R.string.settings_trakt_code_expired
+                                }
+                            ),
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.settings_waiting_for_authorization),
-                                style = ArflixTypography.caption,
-                                color = TextSecondary.copy(alpha = 0.78f),
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (totalMillis != null) {
-                                val remainingSeconds = remainingMillis / 1000L
-                                Text(
-                                    text = "%d:%02d".format(
-                                        remainingSeconds / 60,
-                                        remainingSeconds % 60
-                                    ),
-                                    style = ArflixTypography.caption.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        fontFeatureSettings = "tnum"
-                                    ),
-                                    color = TextSecondary.copy(alpha = 0.78f)
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        if (!isMobile && qrPayload.isNotBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .size(qrContainerSize)
+                                    .background(Color.White, RoundedCornerShape(14.dp))
+                                    .padding(12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                QrCodeImage(
+                                    data = qrPayload,
+                                    sizePx = qrBitmapSizePx,
+                                    modifier = Modifier.fillMaxSize(),
+                                    foreground = android.graphics.Color.BLACK,
+                                    background = android.graphics.Color.WHITE
                                 )
                             }
                         }
-                        if (totalMillis != null) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .background(
-                                        Color.White.copy(alpha = 0.20f),
-                                        RoundedCornerShape(percent = 50)
-                                    )
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = userCode,
+                                style = ArflixTypography.heroTitle.copy(fontSize = 42.sp),
+                                color = accentColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                Text(
+                                    text = stringResource(R.string.settings_waiting_for_authorization),
+                                    style = ArflixTypography.caption,
+                                    color = TextSecondary.copy(alpha = 0.78f),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (totalMillis != null) {
+                                    val remainingSeconds = remainingMillis / 1000L
+                                    Text(
+                                        text = "%d:%02d".format(
+                                            remainingSeconds / 60,
+                                            remainingSeconds % 60
+                                        ),
+                                        style = ArflixTypography.caption.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontFeatureSettings = "tnum"
+                                        ),
+                                        color = TextSecondary.copy(alpha = 0.78f)
+                                    )
+                                }
+                            }
+                            if (totalMillis != null) {
+                                Spacer(modifier = Modifier.height(12.dp))
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth(
-                                            (remainingMillis.toFloat() / totalMillis.toFloat())
-                                                .coerceIn(0f, 1f)
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .background(
+                                            Color.White.copy(alpha = 0.20f),
+                                            RoundedCornerShape(percent = 50)
                                         )
-                                        .fillMaxHeight()
-                                        .background(accentColor, RoundedCornerShape(percent = 50))
-                                )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(
+                                                (remainingMillis.toFloat() / totalMillis.toFloat())
+                                                    .coerceIn(0f, 1f)
+                                            )
+                                            .fillMaxHeight()
+                                            .background(accentColor, RoundedCornerShape(percent = 50))
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
+                if (outcome == TraktAuthOutcome.CONNECTED) {
+                    // Nothing to do here: the dialog closes itself in two seconds.
+                    return@Column
+                }
+
                 Spacer(modifier = Modifier.height(28.dp))
+
+                if (outcome == TraktAuthOutcome.EXPIRED) {
+                    if (isMobile) {
+                        ActivationDialogButton(
+                            label = stringResource(R.string.retry),
+                            isPrimary = true,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = true,
+                            focusRequester = retryFocusRequester,
+                            onClick = { onRetry?.invoke() }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        ActivationDialogButton(
+                            label = stringResource(R.string.cancel),
+                            isPrimary = false,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = true,
+                            focusRequester = null,
+                            onClick = onDismiss
+                        )
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ActivationDialogButton(
+                                label = stringResource(R.string.retry),
+                                isPrimary = true,
+                                accentColor = accentColor,
+                                accentContentColor = accentContentColor,
+                                fillWidth = false,
+                                focusRequester = retryFocusRequester,
+                                onClick = { onRetry?.invoke() }
+                            )
+                            ActivationDialogButton(
+                                label = stringResource(R.string.cancel),
+                                isPrimary = false,
+                                accentColor = accentColor,
+                                accentContentColor = accentContentColor,
+                                fillWidth = false,
+                                focusRequester = null,
+                                onClick = onDismiss
+                            )
+                        }
+                    }
+                    return@Column
+                }
 
                 if (isMobile && onOpenUrl != null) {
                     Box(
@@ -4251,6 +4381,74 @@ private fun TraktActivationModal(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * A button for the activation dialog's expired panel. It draws its own focus ring because the
+ * dialog stops handling the OK key once two buttons compete for it, so the remote user has to see
+ * which one is selected.
+ */
+@Composable
+private fun ActivationDialogButton(
+    label: String,
+    isPrimary: Boolean,
+    accentColor: Color,
+    accentContentColor: Color,
+    fillWidth: Boolean,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+            .then(
+                if (isFocused) {
+                    Modifier.border(3.dp, Color.White, RoundedCornerShape(13.dp))
+                } else {
+                    Modifier
+                }
+            )
+            .padding(3.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+                .background(
+                    if (isPrimary) accentColor else Color.White.copy(alpha = 0.08f),
+                    RoundedCornerShape(10.dp)
+                )
+                .then(
+                    if (isPrimary) {
+                        Modifier
+                    } else {
+                        Modifier.border(
+                            1.dp,
+                            Color.White.copy(alpha = 0.14f),
+                            RoundedCornerShape(10.dp)
+                        )
+                    }
+                )
+                .then(
+                    if (focusRequester != null) {
+                        Modifier.focusRequester(focusRequester)
+                    } else {
+                        Modifier
+                    }
+                )
+                .onFocusChanged { isFocused = it.isFocused }
+                .clickable { onClick() }
+                .padding(vertical = 12.dp, horizontal = 18.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = ArflixTypography.button,
+                color = if (isPrimary) accentContentColor else TextPrimary
+            )
         }
     }
 }
