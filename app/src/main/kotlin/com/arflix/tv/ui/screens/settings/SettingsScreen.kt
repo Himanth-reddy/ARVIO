@@ -2881,6 +2881,16 @@ fun SettingsScreen(
             TraktActivationModal(
                 verificationUrl = traktCode.verificationUrl,
                 userCode = traktCode.userCode,
+                // Same split Plex already makes: the TV tells you to scan, the phone tells you to
+                // tap. Deliberately service-neutral names so SIMKL can reuse them.
+                instruction = if (LocalDeviceType.current.isTouchDevice()) {
+                    stringResource(R.string.settings_activation_instruction_touch)
+                } else {
+                    stringResource(
+                        R.string.settings_activation_instruction_tv,
+                        traktCode.verificationUrl
+                    )
+                },
                 onOpenUrl = {
                     openExternalUrl(
                         context,
