@@ -6121,8 +6121,8 @@ class IptvRepository @Inject constructor(
      */
     private fun stalkerVodQuality(hdFlag: String?, vararg names: String?): String {
         val inferred = inferQualityFrom(*names)
-        if (inferred != "VOD") return inferred
-        return if (hdFlag?.trim() == "1") "HD" else "VOD"
+        if (inferred.isNotBlank()) return inferred
+        return if (hdFlag?.trim() == "1") "HD" else ""
     }
 
     /**
@@ -7653,6 +7653,11 @@ class IptvRepository @Inject constructor(
      *
      * "HD" without a number stays "HD" on purpose: providers use it for both 720p
      * and 1080i, so claiming either would be a guess printed as a fact.
+     *
+     * Returns a BLANK string when the text names no resolution. It used to return
+     * "VOD", which the source menu printed as a badge - a badge that told the user
+     * nothing they could not already see from the add-on name, and that looked
+     * exactly like a real quality. Saying nothing is the honest answer.
      */
     internal fun inferQuality(value: String): String {
         val upper = value.uppercase(Locale.US)
@@ -7662,8 +7667,7 @@ class IptvRepository @Inject constructor(
             VOD_QUALITY_720_REGEX.containsMatchIn(upper) -> "720p"
             VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> "HD"
             VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> "480p"
-            VOD_QUALITY_SD_REGEX.containsMatchIn(upper) -> "SD"
-            else -> "VOD"
+            else -> ""
         }
     }
 
@@ -7678,10 +7682,10 @@ class IptvRepository @Inject constructor(
             val value = candidate?.trim().orEmpty()
             if (value.isNotBlank()) {
                 val inferred = inferQuality(value)
-                if (inferred != "VOD") return inferred
+                if (inferred.isNotBlank()) return inferred
             }
         }
-        return "VOD"
+        return ""
     }
 
     internal fun vodQualityRank(value: String): Int {
@@ -7693,7 +7697,6 @@ class IptvRepository @Inject constructor(
             // Between 720p and 480p: better than SD, and never claimed to be more.
             VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> 250
             VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> 200
-            VOD_QUALITY_SD_REGEX.containsMatchIn(upper) -> 150
             VOD_QUALITY_360_REGEX.containsMatchIn(upper) -> 100
             else -> 0
         }
@@ -11772,15 +11775,19 @@ class IptvRepository @Inject constructor(
         //  - Numbers only refuse a digit AFTER them, never a letter: "1920x1080"
         //    and "1080p" are how providers actually spell a resolution.
         //  - 4K/UHD/FHD also allow a letter after them ("UHDRemux", "4KHDR") -
-        //    they are unambiguous, so a run-together name still resolves. HD and
-        //    SD do NOT get that freedom: "HDR" is a colour range, not a
-        //    resolution, and reading it as HD would be a wrong fact on screen.
+        //    they are unambiguous, so a run-together name still resolves. HD does
+        //    NOT get that freedom: "HDR" is a colour range, not a resolution, and
+        //    reading it as HD would be a wrong fact on screen.
+        //
+        // "SD" is deliberately absent. It is also the language code for Sindhi,
+        // and portals that prefix a title with the language ("AL - ", "AR - ",
+        // "SD - ") are common - there is no way to tell the two apart, so the
+        // badge stays empty rather than claim the worst quality for a language.
         private val VOD_QUALITY_4K_REGEX = Regex("""(?<![A-Z0-9])(?:4K|UHD)(?![0-9])|(?<!\d)2160(?!\d)""")
         private val VOD_QUALITY_1080_REGEX = Regex("""(?<![A-Z0-9])FHD(?![0-9])|(?<!\d)1080(?!\d)""")
         private val VOD_QUALITY_720_REGEX = Regex("""(?<!\d)720(?!\d)""")
         private val VOD_QUALITY_HD_REGEX = Regex("""(?<![A-Z0-9])HD(?![A-Z0-9])""")
         private val VOD_QUALITY_480_REGEX = Regex("""(?<!\d)(?:576|480)(?!\d)""")
-        private val VOD_QUALITY_SD_REGEX = Regex("""(?<![A-Z0-9])SD(?![A-Z0-9])""")
         private val VOD_QUALITY_360_REGEX = Regex("""(?<!\d)360(?!\d)""")
         private val BRACKET_PAREN_REGEX = Regex("""\[[^\]]*]|\([^)]*\)""")
 
