@@ -4930,6 +4930,9 @@ private fun MobileSettingsSubPage(
 ) {
 
     val scrollState = rememberScrollState()
+    LaunchedEffect(page) {
+        scrollState.scrollTo(0)
+    }
     var showStalkerRename by remember { mutableStateOf(false) }
     var stalkerRenameId by remember { mutableStateOf("") }
     var stalkerRenameName by remember { mutableStateOf("") }

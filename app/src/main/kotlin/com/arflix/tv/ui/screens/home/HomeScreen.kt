@@ -124,6 +124,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
@@ -2995,6 +2996,7 @@ private fun MobileHomeRowsLayer(
                 availableHeightDp = (maxHeight - bottomBarHeight).coerceAtLeast(1.dp).value,
             )
         }
+        val rowStates = remember { mutableMapOf<String, LazyListState>() }
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 16.dp + LocalBottomBarInset.current),
@@ -3027,7 +3029,7 @@ private fun MobileHomeRowsLayer(
             val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
             val isPortrait = category.isPortrait(rowUsePosterCards)
             val rowMobileItemWidth = if (isPortrait) 120.dp else 200.dp
-            val rowState = rememberLazyListState()
+            val rowState = rowStates.getOrPut(category.id) { LazyListState() }
 
             LaunchedEffect(rowState, category.id) {
                 snapshotFlow {
