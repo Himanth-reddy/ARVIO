@@ -209,6 +209,8 @@ data class SettingsUiState(
     // Trakt
     val isTraktAuthenticated: Boolean = false,
     val traktCode: TraktDeviceCode? = null,
+    /** Wall clock time the current activation code dies, so the dialog can count down. */
+    val traktCodeExpiresAtMillis: Long? = null,
     val isTraktAuthStarting: Boolean = false,
     val isTraktPolling: Boolean = false,
     val traktExpiration: String? = null,
@@ -4167,6 +4169,7 @@ class SettingsViewModel @Inject constructor(
         traktStartupJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
+                traktCodeExpiresAtMillis = null,
                 isTraktAuthStarting = true,
                 isTraktPolling = false,
                 traktUsername = null,
@@ -4180,6 +4183,8 @@ class SettingsViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(
                     traktCode = deviceCode,
+                    traktCodeExpiresAtMillis = System.currentTimeMillis() +
+                        (deviceCode.expiresIn * 1000L),
                     isTraktAuthStarting = false,
                     isTraktAuthenticated = false,
                     traktUsername = null,
@@ -4205,6 +4210,7 @@ class SettingsViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(
                     traktCode = null,
+                    traktCodeExpiresAtMillis = null,
                     isTraktAuthStarting = false,
                     isTraktPolling = false,
                     traktUsername = null,
@@ -4261,6 +4267,7 @@ class SettingsViewModel @Inject constructor(
                         simklUserCode = null,
                         simklVerificationUrl = null,
                         traktCode = null,
+                        traktCodeExpiresAtMillis = null,
                         isTraktAuthStarting = false,
                         isTraktPolling = false,
                         traktExpiration = expirationDate,
@@ -4325,6 +4332,7 @@ class SettingsViewModel @Inject constructor(
             // Expired or failed
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
+                traktCodeExpiresAtMillis = null,
                 isTraktAuthStarting = false,
                 isTraktPolling = false,
                 traktUsername = null,
@@ -4339,6 +4347,7 @@ class SettingsViewModel @Inject constructor(
         traktStartupJob?.cancel()
         _uiState.value = _uiState.value.copy(
             traktCode = null,
+            traktCodeExpiresAtMillis = null,
             isTraktAuthStarting = false,
             isTraktPolling = false,
             traktUsername = null

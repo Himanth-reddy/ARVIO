@@ -2890,6 +2890,7 @@ fun SettingsScreen(
                 openUrlLabel = stringResource(R.string.settings_open_trakt_page),
                 showCopyCode = false,
                 qrData = traktActivationUrl(traktCode.verificationUrl, traktCode.userCode),
+                expiresAtMillis = uiState.traktCodeExpiresAtMillis,
                 onDismiss = { viewModel.cancelTraktAuth() }
             )
         }
@@ -4011,7 +4012,8 @@ private fun TraktActivationModal(
     onOpenUrl: (() -> Unit)? = null,
     openUrlLabel: String? = null,
     showCopyCode: Boolean = true,
-    qrData: String? = null
+    qrData: String? = null,
+    expiresAtMillis: Long? = null
 ) {
     val resolvedTitle = title ?: stringResource(R.string.settings_connect_trakt)
     val resolvedInstruction = instruction ?: stringResource(R.string.settings_trakt_instruction, verificationUrl)
@@ -4026,6 +4028,24 @@ private fun TraktActivationModal(
     // else keeps scanning the bare verification URL.
     val qrPayload = qrData?.takeIf { it.isNotBlank() } ?: verificationUrl
     val clipboardManager = LocalClipboardManager.current
+    // Only callers that know when their code dies pass [expiresAtMillis]. Without it neither the
+    // countdown nor the progress bar is drawn, so the SIMKL and Plex dialogs look as before.
+    val totalMillis = remember(expiresAtMillis) {
+        expiresAtMillis?.let { (it - System.currentTimeMillis()).coerceAtLeast(1L) }
+    }
+    var remainingMillis by remember(expiresAtMillis) {
+        mutableLongStateOf(totalMillis ?: 0L)
+    }
+
+    if (expiresAtMillis != null) {
+        LaunchedEffect(expiresAtMillis) {
+            while (true) {
+                remainingMillis = (expiresAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+                if (remainingMillis <= 0L) break
+                kotlinx.coroutines.delay(1_000L)
+            }
+        }
+    }
 
     LaunchedEffect(userCode) {
         focusRequester.requestFocus()
@@ -4111,11 +4131,54 @@ private fun TraktActivationModal(
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = stringResource(R.string.settings_waiting_for_authorization),
-                            style = ArflixTypography.caption,
-                            color = TextSecondary.copy(alpha = 0.78f)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.settings_waiting_for_authorization),
+                                style = ArflixTypography.caption,
+                                color = TextSecondary.copy(alpha = 0.78f),
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (totalMillis != null) {
+                                val remainingSeconds = remainingMillis / 1000L
+                                Text(
+                                    text = "%d:%02d".format(
+                                        remainingSeconds / 60,
+                                        remainingSeconds % 60
+                                    ),
+                                    style = ArflixTypography.caption.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontFeatureSettings = "tnum"
+                                    ),
+                                    color = TextSecondary.copy(alpha = 0.78f)
+                                )
+                            }
+                        }
+                        if (totalMillis != null) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .background(
+                                        Color.White.copy(alpha = 0.20f),
+                                        RoundedCornerShape(percent = 50)
+                                    )
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(
+                                            (remainingMillis.toFloat() / totalMillis.toFloat())
+                                                .coerceIn(0f, 1f)
+                                        )
+                                        .fillMaxHeight()
+                                        .background(accentColor, RoundedCornerShape(percent = 50))
+                                )
+                            }
+                        }
                     }
                 }
 
