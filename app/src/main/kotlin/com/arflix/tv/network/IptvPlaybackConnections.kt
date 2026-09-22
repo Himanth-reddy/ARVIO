@@ -19,12 +19,20 @@ internal class IptvPlaybackConnections : Interceptor {
     private val calls = ConcurrentHashMap.newKeySet<Call>()
 
     fun cancelAll() {
-        calls.toList().forEach { it.cancel() }
+        val snapshot = ArrayList(calls)
+        snapshot.forEach { call ->
+            try {
+                call.cancel()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+        }
     }
 
     fun cancelAllAsync(client: OkHttpClient, dispatcher: CoroutineDispatcher = Dispatchers.IO): Job {
         // Snapshot before dispatch: a quick resume must not cancel the new channel's calls.
-        val closing = (calls.toList() + client.dispatcher.queuedCalls() + client.dispatcher.runningCalls()).distinct()
+        val snapshot = ArrayList(calls)
+        val closing = (snapshot + client.dispatcher.queuedCalls() + client.dispatcher.runningCalls()).distinct()
         return CoroutineScope(dispatcher).launch {
             // TLS socket cancellation may write close_notify, so it must not run on main.
             closing.forEach { call ->
