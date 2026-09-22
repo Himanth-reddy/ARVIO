@@ -174,7 +174,7 @@ fun AppNavigation(
         // popBackStack also clears everything stacked above Home, which is what the previous
         // comment here wanted (no stale Details pages); the fallback covers the case it worried
         // about, Home not being on the stack at all.
-        if (!navController.popBackStack(Screen.Home.route, inclusive = false)) {
+        if (!navController.popBackStack(Screen.Home.route, inclusive = false, saveState = true)) {
             navController.navigate(Screen.Home.route) {
                 popUpTo(Screen.Home.route) { inclusive = true; saveState = false }
                 launchSingleTop = true

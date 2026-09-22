@@ -73,7 +73,7 @@ fun WatchlistScreen(
     currentProfile: Profile? = null,
     onNavigateToDetails: (MediaType, Int) -> Unit = { _, _ -> },
     onNavigateToHome: () -> Unit = {}, onNavigateToSearch: () -> Unit = {},
-    onNavigateToTv: () -> Unit = {}, onNavigateToSettings: (String) -> Unit = {},
+    onNavigateToTv: () -> Unit = {}, onNavigateToSettings: (String?) -> Unit = {},
     onSwitchProfile: () -> Unit = {}, onBack: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -181,7 +181,7 @@ fun WatchlistScreen(
                             Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
                                 when(topBarFocusedItem(topIndex, currentProfile != null)) {
                                     SidebarItem.HOME -> onNavigateToHome(); SidebarItem.SEARCH -> onNavigateToSearch()
-                                    SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings("general")
+                                    SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings(null)
                                     SidebarItem.WATCHLIST -> firstTab.requestFocus(); null -> onSwitchProfile()
                                 }; true
                             }
