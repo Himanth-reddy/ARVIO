@@ -311,8 +311,8 @@
     <string name="settings_use_email_password_short">E-Mail/Passwort verwenden</string>
     <string name="settings_connect_trakt">Trakt.tv verbinden</string>
     <string name="settings_trakt_instruction">Gehe zu %1$s und gib diesen Code ein</string>
-    <string name="settings_activation_instruction_tv">Scanne den QR-Code mit dem Handy — der Code ist schon darin. Oder öffne %1$s und gib ihn ein.</string>
-    <string name="settings_activation_instruction_touch">Tippe auf den Knopf und melde dich an. Den Code musst du nicht eingeben — das Fenster ist danach von allein fertig.</string>
+    <string name="settings_activation_instruction_tv">Scanne den QR-Code mit dem Handy. Der Code ist schon darin. Oder öffne %1$s und gib ihn ein.</string>
+    <string name="settings_activation_instruction_touch">Tippe auf die Schaltfläche und melde dich an. Den Code musst du nicht eingeben. Das Fenster ist danach von allein fertig.</string>
     <string name="settings_waiting_for_authorization">Warten auf Autorisierung</string>
     <string name="settings_open_auth_page">Authentifizierungsseite öffnen</string>
     <string name="settings_open_trakt_page">Trakt-Seite öffnen</string>

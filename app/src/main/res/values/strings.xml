@@ -444,8 +444,8 @@
     <string name="settings_use_email_password_short">Use Email/Password</string>
     <string name="settings_connect_trakt">Connect Trakt.tv</string>
     <string name="settings_trakt_instruction">Go to %1$s and enter this code</string>
-    <string name="settings_activation_instruction_tv">Scan the QR code with your phone — the code is already included. Or open %1$s and enter it.</string>
-    <string name="settings_activation_instruction_touch">Tap the button and sign in. You don\'t have to enter the code — this window finishes on its own.</string>
+    <string name="settings_activation_instruction_tv">Scan the QR code with your phone. It already contains the code. Or open %1$s and enter it.</string>
+    <string name="settings_activation_instruction_touch">Tap the button and sign in. You don\'t have to enter the code. This window finishes on its own.</string>
     <string name="settings_waiting_for_authorization">Waiting for authorization</string>
     <string name="settings_open_auth_page">Open auth page</string>
     <string name="settings_open_trakt_page">Open Trakt page</string>
