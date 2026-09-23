@@ -19,6 +19,12 @@ import java.util.concurrent.ConcurrentHashMap
 object AddonRateLimitTracker {
     private const val ADDON_COOLDOWN_MS = 30_000L
 
+    // A bare "429" substring over-matches (ports, counts, titles). Only treat it
+    // as a rate limit when it sits next to an HTTP/status/code token or
+    // rate-limit phrasing.
+    private val HTTP_429_TOKEN =
+        Regex("(?i)\\b(http|status|code|error)\\b[^\\w]{0,10}\\b429\\b|\\b429\\b[^\\w]{0,10}(too many|rate limit|ratelimit)")
+
     private val cooldownUntilMs = ConcurrentHashMap<String, Long>()
 
     fun recordRateLimit(addonId: String) {
@@ -43,10 +49,11 @@ object AddonRateLimitTracker {
         if (throwable == null) return false
         val http = throwable as? HttpException
         if (http != null && http.code() == 429) return true
-        val message = throwable.message?.lowercase(Locale.US).orEmpty()
-        if (message.contains("429")) return true
-        if (message.contains("too many requests")) return true
-        if (message.contains("rate limit") || message.contains("ratelimit")) return true
+        val message = throwable.message.orEmpty()
+        if (HTTP_429_TOKEN.containsMatchIn(message)) return true
+        val lower = message.lowercase(Locale.US)
+        if (lower.contains("too many requests")) return true
+        if (lower.contains("rate limit") || lower.contains("ratelimit")) return true
         val cause = throwable.cause
         return cause != null && cause !== throwable && isRateLimitError(cause)
     }
