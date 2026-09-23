@@ -151,6 +151,9 @@ private fun TrailerPlayerSurface(
     // modal surface is the single YouTube WebView site to protect.)
     var boundPlayer by remember { mutableStateOf<YouTubePlayer?>(null) }
     var loadedKey by remember { mutableStateOf<String?>(null) }
+    // Remembers the init-time autoplay decision so a mid-modal key switch
+    // starts the new playback lifecycle the same way (load vs cue).
+    var autoplayOnReady by remember { mutableStateOf<Boolean?>(null) }
 
     AndroidView(
         factory = { ctx ->
@@ -178,7 +181,9 @@ private fun TrailerPlayerSurface(
                         override fun onReady(youTubePlayer: YouTubePlayer) {
                             boundPlayer = youTubePlayer
                             loadedKey = youtubeKey
-                            if (onReadyCb(youTubePlayer)) {
+                            val autoplay = onReadyCb(youTubePlayer)
+                            autoplayOnReady = autoplay
+                            if (autoplay) {
                                 youTubePlayer.loadVideo(youtubeKey, 0f)
                             } else {
                                 youTubePlayer.cueVideo(youtubeKey, 0f)
@@ -220,11 +225,17 @@ private fun TrailerPlayerSurface(
         modifier = modifier,
         update = {
             // Key changed while the WebView is alive (e.g. trailer metadata
-            // resolving mid-modal): cue into the existing player — no WebView
-            // reinit, no iframe JS re-parse, no teardown race.
+            // resolving mid-modal): start the new video the same way init
+            // would — no WebView reinit, no iframe JS re-parse, no teardown race.
             if (loadedKey != null && loadedKey != youtubeKey) {
                 loadedKey = youtubeKey
-                runCatching { boundPlayer?.cueVideo(youtubeKey, 0f) }
+                runCatching {
+                    if (autoplayOnReady == true) {
+                        boundPlayer?.loadVideo(youtubeKey, 0f)
+                    } else {
+                        boundPlayer?.cueVideo(youtubeKey, 0f)
+                    }
+                }
             }
         },
         onRelease = { playerView ->
@@ -328,11 +339,12 @@ fun YouTubeTrailerModal(
     KeepScreenOn(active = isPlaying)
     var currentSecond by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
-    // New video cued into the persistent player: drop stale progress until the
-    // player's own onSecond/onDuration callbacks repopulate.
+    // New video cued into the persistent player: drop stale progress and
+    // playback state until the player's own callbacks repopulate.
     LaunchedEffect(youtubeKey) {
         currentSecond = 0f
         duration = 0f
+        isPlaying = false
     }
 
     // Our own bar starts hidden and is only ever shown on a key press (TV).
