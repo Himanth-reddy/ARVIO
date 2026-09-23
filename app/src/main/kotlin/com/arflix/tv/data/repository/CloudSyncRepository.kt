@@ -292,6 +292,7 @@ class CloudSyncRepository @Inject constructor(
         val trailerDelaySeconds: Int = 2,
         val trailerInCards: Boolean = true,
         val clockFormat: String = "24h",
+        val guideRowCount: Int? = null,
         val showBudget: Boolean = true,
         val showEpisodeRatings: Boolean = false,
         val animeEpisodeStructuring: String = AnimeStructuringStyle.BROADCAST.id,
@@ -332,6 +333,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "trailer_delay_seconds")
     private fun clockFormatKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "clock_format")
+    private fun guideRowCountKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "guide_row_count")
     private fun showBudgetKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "show_budget_on_home")
     private fun showEpisodeRatingsKeyFor(profileId: String) =
@@ -667,6 +670,8 @@ class CloudSyncRepository @Inject constructor(
                         trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 2,
                         trailerInCards = prefs[trailerInCardsKeyFor(profile.id)] ?: true,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
+                        guideRowCount = prefs[guideRowCountKeyFor(profile.id)]?.toIntOrNull()
+                            ?.takeIf { it in 6..10 } ?: 0,
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
                         showEpisodeRatings = prefs[showEpisodeRatingsKeyFor(profile.id)] ?: false,
                         animeEpisodeStructuring = prefs[animeEpisodeStructuringKeyFor(profile.id)] ?: AnimeStructuringStyle.BROADCAST.id,
@@ -1569,6 +1574,11 @@ class CloudSyncRepository @Inject constructor(
                         prefs[trailerDelayKeyFor(profileId)] = state.trailerDelaySeconds.toString()
                         prefs[trailerInCardsKeyFor(profileId)] = state.trailerInCards
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
+                        // Older clients omit this field; keep the local preference in that case.
+                        state.guideRowCount?.let { count ->
+                            prefs[guideRowCountKeyFor(profileId)] =
+                                (count.takeIf { it in 6..10 } ?: 0).toString()
+                        }
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
                         prefs[showEpisodeRatingsKeyFor(profileId)] = state.showEpisodeRatings
                         prefs[animeEpisodeStructuringKeyFor(profileId)] = state.animeEpisodeStructuring.ifBlank { AnimeStructuringStyle.BROADCAST.id }
