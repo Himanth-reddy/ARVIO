@@ -38,6 +38,8 @@ import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.network.NetworkMonitor
 import com.arflix.tv.network.NetworkType
+import com.arflix.tv.network.TmdbPriorityDispatcher
+import com.arflix.tv.network.TmdbPriorityDispatcher.Priority
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.data.repository.WatchHistoryRepository
@@ -227,6 +229,7 @@ class DetailsViewModel @Inject constructor(
     private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val streamRepository: StreamRepository,
     private val networkMonitor: NetworkMonitor,
+    private val tmdbPriorityDispatcher: TmdbPriorityDispatcher,
     private val animeMapper: AnimeMapper,
     private val tmdbApi: TmdbApi,
     private val watchHistoryRepository: WatchHistoryRepository,
@@ -506,12 +509,16 @@ class DetailsViewModel @Inject constructor(
                     }
                 }
 
+                // Issue 1: primary TMDB metadata funnels through the shared
+                // IMMEDIATE budget so Home background decoration yields to it.
                 val itemDeferred = async {
-                    loadDetailsPart("item") {
-                        if (mediaType == MediaType.TV) {
-                            mediaRepository.getTvDetails(mediaId)
-                        } else {
-                            mediaRepository.getMovieDetails(mediaId)
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                        loadDetailsPart("item") {
+                            if (mediaType == MediaType.TV) {
+                                mediaRepository.getTvDetails(mediaId)
+                            } else {
+                                mediaRepository.getMovieDetails(mediaId)
+                            }
                         }
                     }
                 }
@@ -521,17 +528,27 @@ class DetailsViewModel @Inject constructor(
                     } ?: false
                 }
                 // Fetch real IMDB ID and TVDB ID from TMDB external_ids endpoint
-                val externalIdsDeferred = async { resolveExternalIds(mediaType, mediaId) }
+                val externalIdsDeferred = async {
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                        resolveExternalIds(mediaType, mediaId)
+                    }
+                }
                 val resumeDeferred = async { fetchResumeInfo(mediaId, mediaType, initialSeason, initialEpisode) }
                 // Fetch logo URL concurrently with details to avoid ~1s delay
-                val logoDeferred = async { mediaRepository.getLogoUrl(mediaType, mediaId) }
+                val logoDeferred = async {
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                        mediaRepository.getLogoUrl(mediaType, mediaId)
+                    }
+                }
 
                 // For TV shows, also load episodes
                 val episodesDeferred = if (mediaType == MediaType.TV) {
                     async {
-                        loadDetailsPart("season $seasonToLoad episodes") {
-                            mediaRepository.getSeasonEpisodes(mediaId, seasonToLoad)
-                        } ?: emptyList<Episode>()
+                        tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                            loadDetailsPart("season $seasonToLoad episodes") {
+                                mediaRepository.getSeasonEpisodes(mediaId, seasonToLoad)
+                            } ?: emptyList<Episode>()
+                        }
                     }
                 } else null
 
@@ -782,9 +799,12 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(180L)
+                    // Issue 1: permit-gated, not delay()-staggered. Fast networks
+                    // start immediately; slow networks queue behind IMMEDIATE.
                     val trailerKey = try {
-                        mediaRepository.getTrailerKey(mediaType, mediaId)
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getTrailerKey(mediaType, mediaId)
+                        }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         null
@@ -795,22 +815,32 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(220L)
-                    val cast = runCatching { mediaRepository.getCast(mediaType, mediaId) }.getOrNull()
+                    val cast = runCatching {
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getCast(mediaType, mediaId)
+                        }
+                    }.getOrNull()
                     if (!cast.isNullOrEmpty()) {
                         updateState { state -> state.copy(cast = cast) }
                     }
                 }
 
                 launch {
-                    delay(320L)
-                    val similar = runCatching { mediaRepository.getSimilar(mediaType, mediaId) }.getOrNull()
+                    val similar = runCatching {
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getSimilar(mediaType, mediaId)
+                        }
+                    }.getOrNull()
                     if (!similar.isNullOrEmpty()) {
+                        // Issue 1: the 8-logo fan-out trickles through the single
+                        // shared DEFERRED slot instead of landing simultaneously.
                         val logos = similar.take(8).map { item ->
                             async {
                                 val key = "${item.mediaType}_${item.id}"
                                 val logo = runCatching {
-                                    mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                    tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                                        mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                    }
                                 }.getOrNull()
                                 if (logo.isNullOrBlank()) null else key to logo
                             }
@@ -825,10 +855,11 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(420L)
                     val externalIds = runCatching { externalIdsDeferred.await() }.getOrNull()
                     val reviews = runCatching {
-                        loadCommunityReviews(mediaType, mediaId, externalIds?.imdbId)
+                        tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                            loadCommunityReviews(mediaType, mediaId, externalIds?.imdbId)
+                        }
                     }.getOrNull()
                     if (!reviews.isNullOrEmpty()) {
                         updateState { state -> state.copy(reviews = reviews) }
@@ -839,7 +870,9 @@ class DetailsViewModel @Inject constructor(
                 launch {
                     if (mediaType != MediaType.MOVIE) return@launch
                     val collectionRef = runCatching {
-                        mediaRepository.getMovieCollectionRef(mediaId)
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getMovieCollectionRef(mediaId)
+                        }
                     }.getOrNull()
                     if (collectionRef != null) {
                         updateState { state ->
@@ -852,7 +885,9 @@ class DetailsViewModel @Inject constructor(
                         // Fetch collection items in background
                         launch {
                             val items = runCatching {
-                                mediaRepository.getTmdbCollectionItems(collectionRef.id)
+                                tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                                    mediaRepository.getTmdbCollectionItems(collectionRef.id)
+                                }
                             }.getOrNull() ?: emptyList()
                             updateState { state ->
                                 if (state.collectionId == collectionRef.id) {
@@ -864,13 +899,15 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(260L)
+                    // Issue 1: permit-gated, not delay()-staggered (see trailer wave).
                     val servicesResult = runCatching {
-                        mediaRepository.getStreamingServices(
-                            mediaType = mediaType,
-                            mediaId = mediaId,
-                            preferredRegion = Locale.getDefault().country
-                        )
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getStreamingServices(
+                                mediaType = mediaType,
+                                mediaId = mediaId,
+                                preferredRegion = Locale.getDefault().country
+                            )
+                        }
                     }.getOrNull()
                     if (servicesResult != null) {
                         updateState { state ->
