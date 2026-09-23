@@ -2275,7 +2275,9 @@ class StreamRepository @Inject constructor(
         forceRefresh: Boolean = false,
         sequential: Boolean = false
     ): Flow<ProgressiveStreamResult> = callbackFlow {
-        repositoryScope.launch {
+        // Retained so cancelling the collector (back-nav, superseded prefetch)
+        // also stops the scrape instead of leaking it in repositoryScope.
+        val workerJob = repositoryScope.launch {
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
@@ -2511,7 +2513,7 @@ class StreamRepository @Inject constructor(
                 }
             }
         }
-        awaitClose { }
+        awaitClose { workerJob.cancel() }
     }
 
     suspend fun resolveMovieVodOnly(
@@ -2875,7 +2877,9 @@ class StreamRepository @Inject constructor(
         airDate: String? = null,
         sequential: Boolean = false
     ): Flow<ProgressiveStreamResult> = callbackFlow {
-        repositoryScope.launch {
+        // Retained so cancelling the collector (back-nav, superseded prefetch)
+        // also stops the scrape instead of leaking it in repositoryScope.
+        val workerJob = repositoryScope.launch {
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
@@ -3137,7 +3141,7 @@ class StreamRepository @Inject constructor(
                 }
             }
         }
-        awaitClose { }
+        awaitClose { workerJob.cancel() }
     }
 
     suspend fun resolveEpisodeVodOnly(
