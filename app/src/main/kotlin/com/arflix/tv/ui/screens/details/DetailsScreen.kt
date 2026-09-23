@@ -577,7 +577,15 @@ fun DetailsScreen(
     }
 
     BackHandler(enabled = !showStreamSelector && !showEpisodeContextMenu && !showSeasonContextMenu && !uiState.showPersonModal && !showTrailerPlayer) {
+        // Issue 2: leaving within the dwell window must not leak a scraping session.
+        viewModel.cancelStreamPrefetch()
         onBack()
+    }
+
+    // Issue 2: leaving the composition by any path (nav pop, player launch,
+    // Similar-chain replace) cancels the pending dwell / running prefetch.
+    DisposableEffect(mediaType, mediaId) {
+        onDispose { viewModel.cancelStreamPrefetch() }
     }
 
     // D-pad key handler — only used on TV (skipped on mobile/touch devices)

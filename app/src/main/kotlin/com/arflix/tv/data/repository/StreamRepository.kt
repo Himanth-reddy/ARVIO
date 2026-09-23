@@ -1483,7 +1483,10 @@ class StreamRepository @Inject constructor(
         }
 
         // Apply id-prefix filtering per-call (varies by id, cheap string ops).
+        // Skip addons in 429 backoff (see AddonRateLimitTracker) so a rate-limited
+        // addon is not re-scraped by every Details entry / Play press for ~30s.
         return baseCandidates.filter { addon ->
+            if (AddonRateLimitTracker.isCoolingDown(addon.id)) return@filter false
             if (SportsAddonCapabilities.isSportsOnlyLiveTvAddon(addon)) return@filter false
             if (addon.type == AddonType.CUSTOM) return@filter true
             val manifest = addon.manifest
@@ -1846,6 +1849,9 @@ class StreamRepository @Inject constructor(
                 success = false,
                 latencyMs = System.currentTimeMillis() - startedAt
             )
+            if (AddonRateLimitTracker.isRateLimitError(error)) {
+                AddonRateLimitTracker.recordRateLimit(addon.id)
+            }
             emptyList()
         }
     }
@@ -1995,6 +2001,9 @@ class StreamRepository @Inject constructor(
                             throw timeout
                         } catch (error: Exception) {
                             lastError = error
+                            if (AddonRateLimitTracker.isRateLimitError(error)) {
+                                AddonRateLimitTracker.recordRateLimit(addon.id)
+                            }
                             Log.w(
                                 TAG,
                                 "[StreamFetch][Episode] $label failure addon=${addon.name} addonId=${addon.id} type=$requestType error=${error.toShortLogMessage()}"
@@ -2162,6 +2171,9 @@ class StreamRepository @Inject constructor(
                 success = false,
                 latencyMs = System.currentTimeMillis() - startedAt
             )
+            if (AddonRateLimitTracker.isRateLimitError(error)) {
+                AddonRateLimitTracker.recordRateLimit(addon.id)
+            }
             emptyList()
         }
     }

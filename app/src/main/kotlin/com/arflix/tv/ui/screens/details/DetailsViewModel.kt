@@ -36,6 +36,10 @@ import com.arflix.tv.data.repository.StreamIntegrationRepository
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.TraktRepository
+import com.arflix.tv.network.NetworkMonitor
+import com.arflix.tv.network.NetworkType
+import com.arflix.tv.util.DeviceType
+import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.util.AppLogger
@@ -222,6 +226,7 @@ class DetailsViewModel @Inject constructor(
     private val traktRepository: TraktRepository,
     private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val streamRepository: StreamRepository,
+    private val networkMonitor: NetworkMonitor,
     private val animeMapper: AnimeMapper,
     private val tmdbApi: TmdbApi,
     private val watchHistoryRepository: WatchHistoryRepository,
@@ -237,6 +242,12 @@ class DetailsViewModel @Inject constructor(
         private const val MAX_COMMUNITY_REVIEW_CHARS = 1400
         private const val MIN_COMMUNITY_REVIEW_WORDS = 8
         private const val MIN_COMMUNITY_REVIEW_COUNT = 1
+        // Issue 2: dwell before proactive scraping. TV users D-pad through Similar
+        // chains quickly; mobile users browse on metered connections. The dwell lets
+        // fast navigation outrun the scrape. Play/Sources focus can fast-path via
+        // requestStreamPrefetchNow() (wired fully once DetailsActionSection exists).
+        private const val STREAM_PREFETCH_DWELL_TV_MS = 1000L
+        private const val STREAM_PREFETCH_DWELL_MOBILE_MS = 600L
     }
 
     private val _uiState = MutableStateFlow(DetailsUiState())
@@ -394,6 +405,11 @@ class DetailsViewModel @Inject constructor(
         focusedStreamPrewarmJob?.cancel()
         seasonLoadJob?.cancel()
         seasonPrefetchJob?.cancel()
+        prefetchDwellJob?.cancel()
+        prefetchDwellJob = null
+        pendingPrefetchImdbId = null
+        prefetchJob?.cancel()
+        prefetchJob = null
         seasonLoadRequestedSeason = -1
         lastStreamListPrewarmKey = ""
 
@@ -734,7 +750,12 @@ class DetailsViewModel @Inject constructor(
                         // cached in StreamRepository, so loading appears near-instant.
                         val prefetchSeason = if (mediaType == MediaType.TV) (initialSeason ?: 1) else null
                         val prefetchEpisode = if (mediaType == MediaType.TV) (initialEpisode ?: 1) else null
-                        prefetchStreamsInBackground(imdbId, prefetchSeason, prefetchEpisode)
+                        // Issue 2: dwell-gated (TV 1000ms / mobile 600ms + WiFi-only on
+                        // mobile) so fast Similar-chain browsing does not fan out to
+                        // every addon. Back-nav cancels via cancelStreamPrefetch().
+                        if (isCurrentRequest()) {
+                            scheduleStreamPrefetch(imdbId, prefetchSeason, prefetchEpisode)
+                        }
 
                         launch {
                             val imdbRating = runCatching {
@@ -1660,6 +1681,70 @@ class DetailsViewModel @Inject constructor(
      * it only populates StreamRepository's internal cache.
      */
     private var prefetchJob: kotlinx.coroutines.Job? = null
+    private var prefetchDwellJob: kotlinx.coroutines.Job? = null
+    private var pendingPrefetchImdbId: String? = null
+    private var pendingPrefetchSeason: Int? = null
+    private var pendingPrefetchEpisode: Int? = null
+
+    /**
+     * Cancel any pending or running proactive scrape. Called on back-nav / dispose
+     * so leaving within the dwell window does not leak a scraping session, and on
+     * each new loadDetails() so Similar-chain browsing supersedes the previous job.
+     */
+    fun cancelStreamPrefetch() {
+        prefetchDwellJob?.cancel()
+        prefetchDwellJob = null
+        pendingPrefetchImdbId = null
+        prefetchJob?.cancel()
+        prefetchJob = null
+    }
+
+    /**
+     * TV intent fast-path: fired when focus reaches the Play/Sources action row
+     * (to be wired by DetailsActionSection in Issue 5 Layer 2). Fires the pending
+     * scrape immediately instead of waiting out the dwell.
+     */
+    fun requestStreamPrefetchNow() {
+        val imdbId = pendingPrefetchImdbId ?: return
+        val dwell = prefetchDwellJob ?: return
+        if (!dwell.isActive) return
+        val season = pendingPrefetchSeason
+        val episode = pendingPrefetchEpisode
+        prefetchDwellJob?.cancel()
+        prefetchDwellJob = null
+        pendingPrefetchImdbId = null
+        prefetchStreamsInBackground(imdbId, season, episode)
+    }
+
+    private fun scheduleStreamPrefetch(imdbId: String, season: Int?, episode: Int?) {
+        prefetchDwellJob?.cancel()
+        pendingPrefetchImdbId = imdbId
+        pendingPrefetchSeason = season
+        pendingPrefetchEpisode = episode
+        val scheduledMediaId = currentMediaId
+        val scheduledMediaType = currentMediaType
+        val isTv = try {
+            detectDeviceType(context) == DeviceType.TV
+        } catch (_: Exception) {
+            false
+        }
+        val dwellMs = if (isTv) STREAM_PREFETCH_DWELL_TV_MS else STREAM_PREFETCH_DWELL_MOBILE_MS
+        prefetchDwellJob = viewModelScope.launch {
+            delay(dwellMs)
+            // Similar-chain guard: a new loadDetails() supersedes this pending scrape.
+            if (currentMediaId != scheduledMediaId || currentMediaType != scheduledMediaType) return@launch
+            if (pendingPrefetchImdbId != imdbId) return@launch
+            // Mobile metered-network gate: Cellular browsing must not trigger full
+            // parallel addon scraping + TLS prewarming. Play still scrapes on demand.
+            if (!isTv) {
+                val networkType = runCatching { networkMonitor.getNetworkType() }.getOrNull()
+                if (networkType == NetworkType.CELLULAR || networkType == NetworkType.NONE) return@launch
+            }
+            pendingPrefetchImdbId = null
+            prefetchDwellJob = null
+            prefetchStreamsInBackground(imdbId, season, episode)
+        }
+    }
     private fun prefetchStreamsInBackground(imdbId: String, season: Int?, episode: Int?) {
         prefetchJob?.cancel()
         val requestMediaType = currentMediaType
