@@ -3378,10 +3378,10 @@ class HomeViewModel @Inject constructor(
         }
         tmdbConfigs.forEach { cfg ->
             viewModelScope.launch(networkDispatcher) {
-                // Issue 1: home catalog pages are BACKGROUND in the shared TMDB
-                // budget so Details IMMEDIATE metadata never queues behind them.
+                // Initial rows must not wait for speculative artwork. Keep this
+                // batch capped at two, leaving the immediate lane for user intent.
                 val page = runCatching {
-                    tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                    tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
                         mediaRepository.loadHomeCategoryPage(cfg.id, 1)
                     }
                 }.getOrNull()
@@ -3715,8 +3715,9 @@ class HomeViewModel @Inject constructor(
                 ) {
                     // Pure TMDB preinstalled catalog (no MDBList source)
                     val nextPage = (realItems.size / 20) + 1
-                    // Issue 1: pagination refills are BACKGROUND — Details primary wins.
-                    tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                    // The viewer is reaching these cards now. Use the bounded
+                    // foreground lane rather than waiting behind artwork preloads.
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
                         mediaRepository.loadHomeCategoryPage(categoryId, nextPage)
                     }
                 } else {

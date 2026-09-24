@@ -40,7 +40,6 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -1095,7 +1094,6 @@ private fun RowsLayer(
     val focusBleedPadding = if (isTouchDevice) 16.dp else 22.dp
 
     val listState = rememberLazyListState()
-    val rowStates = remember { mutableMapOf<String, LazyListState>() }
     var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
     val targetIndex = currentRowIndex.coerceIn(0, (categories.size - 1).coerceAtLeast(0))
 
@@ -1188,7 +1186,8 @@ private fun RowsLayer(
                             )
                         }
 
-                        val rowState = rowStates.getOrPut(category.id) { LazyListState() }
+                        // The keyed lazy item saves this state across disposal and navigation.
+                        val rowState = rememberLazyListState()
                         // Keep visible cards still; only scroll enough to reveal a clipped selection.
                         if (!isTouchDevice) {
                             LaunchedEffect(isCurrentRow, currentItemIndex) {

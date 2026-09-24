@@ -769,7 +769,7 @@ fun ArflixApp(
         maxOf(measuredBarHeight, (barSpec.itemHeightDp ?: 52).dp + navigationInset)
     } else 0.dp
 
-    val nestedScrollConnection = remember(measuredBarHeightPx) {
+    val nestedScrollConnection = remember(measuredBarHeightPx, currentMainRoute, showBottomBar) {
         object : NestedScrollConnection {
             private fun animateToOffset(target: Float, durationMs: Int = 220) {
                 settleJob?.cancel()
