@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -12,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -72,13 +78,12 @@ internal fun IptvAccountSubtitle(
             }
             else -> Unit
         }
-        info.maxConnections?.let {
-            add(
-                if (it == 1) stringResource(R.string.iptv_account_one_stream)
-                else stringResource(R.string.iptv_account_streams, it)
-            )
-        }
     }.joinToString(" · ") + suffix
+    val streams = info.maxConnections
+    val streamsDescription = streams?.let {
+        if (it == 1) stringResource(R.string.iptv_account_one_stream)
+        else stringResource(R.string.iptv_account_streams, it)
+    }
 
     Row(
         modifier = modifier,
@@ -91,6 +96,25 @@ internal fun IptvAccountSubtitle(
                 .padding(horizontal = 8.dp, vertical = 1.dp)
         ) {
             Text(label, style = style.copy(fontWeight = FontWeight.SemiBold), color = color, maxLines = 1)
+        }
+        // Icon plus number, not "3 streams": on a phone row the words were cut
+        // off to "3 Stre…", and the stream limit is the part worth keeping.
+        if (streams != null) {
+            Row(
+                modifier = Modifier.semantics(mergeDescendants = true) {
+                    contentDescription = streamsDescription.orEmpty()
+                },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.People,
+                    contentDescription = null,
+                    tint = textColor,
+                    modifier = Modifier.size(15.dp),
+                )
+                Text(streams.toString(), style = style, color = textColor, maxLines = 1)
+            }
         }
         if (detail.isNotBlank()) {
             Text(detail.trim(), style = style, color = textColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
