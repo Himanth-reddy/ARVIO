@@ -772,7 +772,7 @@
     <string name="iptv_account_checked_at">Stand: %1$s</string>
     <string name="iptv_account_refresh">Jetzt aktualisieren</string>
     <string name="iptv_account_refreshing">Wird abgefragt…</string>
-    <string name="iptv_account_refresh_failed">Der Anbieter hat nicht geantwortet. Es bleiben die zuletzt bekannten Angaben.</string>
+    <string name="iptv_account_refresh_failed">Der Anbieter hat nicht geantwortet. Bitte in einer Minute noch einmal versuchen.</string>
     <string name="settings_section_stalker_portals">STALKER-PORTALE</string>
     <string name="settings_stalker_add_hint">Bis zu 3 Stalker-/Ministra-Portale hinzufügen</string>
     <string name="settings_stalker_create_another">Weiteres Stalker-Portal hinzufügen</string>

@@ -1120,9 +1120,11 @@ class IptvRepository @Inject constructor(
 
     /**
      * Asks the provider behind [playlist] for its account details. Plain M3U
-     * files have none and cost no request.
+     * files have none and cost no request. Null means the provider did not
+     * answer (offline, HTML page, or the request guard deferred it) - which is
+     * not the same as "answered without details".
      */
-    suspend fun fetchAccountInfo(playlist: IptvPlaylistEntry): IptvAccountInfo {
+    suspend fun fetchAccountInfo(playlist: IptvPlaylistEntry): IptvAccountInfo? {
         val fingerprint = IptvAccountInfoParser.fingerprint(playlist)
         val now = System.currentTimeMillis()
         val creds = resolveXtreamCredentials(playlist)
@@ -1136,25 +1138,30 @@ class IptvRepository @Inject constructor(
             ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
         val body: JsonObject? = requestJson(url, JsonObject::class.java, client = xtreamLookupHttpClient)
         return IptvAccountInfoParser.parseXtream(body?.toString(), fingerprint, System.currentTimeMillis())
-            ?: IptvAccountInfoParser.unavailable(fingerprint, System.currentTimeMillis())
     }
 
     /**
-     * Asks a Stalker portal for its account details in a session of its own,
-     * the same handshake → profile → request order the channel download uses:
-     * a cached session may sit on a socket the portal closed long ago.
+     * Asks a Stalker portal for its account details. The session the channel
+     * download opened is asked first: a second handshake for the same MAC can
+     * replace the token that session plays with. Only when that session is
+     * gone or does not answer is a fresh one opened, in the handshake →
+     * profile → request order the channel download uses. Null means the portal
+     * did not answer.
      */
-    suspend fun fetchAccountInfo(portal: StalkerPortalEntry): IptvAccountInfo = withContext(Dispatchers.IO) {
+    suspend fun fetchAccountInfo(portal: StalkerPortalEntry): IptvAccountInfo? = withContext(Dispatchers.IO) {
         val fingerprint = IptvAccountInfoParser.fingerprint(portal)
+        fun parse(body: String?) =
+            IptvAccountInfoParser.parseStalker(body, fingerprint, System.currentTimeMillis())
+        cachedStalkerApis[portal.id]?.let { api ->
+            parse(api.getAccountInfoBody())?.let { return@withContext it }
+        }
         val body = runCatching {
             val api = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
             if (!api.handshake()) return@runCatching null
             api.getProfile()
             api.getAccountInfoBody()
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
-        val now = System.currentTimeMillis()
-        IptvAccountInfoParser.parseStalker(body, fingerprint, now)
-            ?: IptvAccountInfoParser.unavailable(fingerprint, now)
+        parse(body)
     }
 
     suspend fun saveAccountInfo(sourceId: String, info: IptvAccountInfo) {
