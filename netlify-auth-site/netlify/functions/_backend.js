@@ -1827,6 +1827,14 @@ function payloadMetrics(payload) {
 // version, so the server refuses catastrophic shrinks: if an existing list has
 // >= 3 addons and an incoming push keeps <= 1, the existing addons are merged
 // back in (union). Deliberate one-by-one removals (5→4→3→2→1) still work.
+//
+// A push whose set-level `addonsUpdatedAt` is strictly newer than the stored one
+// is a deliberate change made on the device (the app only bumps it on user
+// add/remove/toggle/reorder, never when applying a pull), so it is let through —
+// otherwise removing several addons at once (3→1) is silently undone. Pushes
+// without the stamp (older app versions) keep the full protection. When the
+// guard does engage, the stored stamp is kept so clients don't adopt the
+// merged-back list as if it were their own newer change.
 function addonIdentity(addon) {
   if (!addon || typeof addon !== "object") return "";
   return String(addon.manifestUrl || addon.url || addon.transportUrl || addon.id || "").trim().toLowerCase();
@@ -1845,17 +1853,25 @@ function unionAddonLists(existingList, incomingList) {
   return Array.from(merged.values());
 }
 
+function addonsUpdatedAtOf(payload) {
+  const value = Number(payload && payload.addonsUpdatedAt);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 function applyAddonWipeGuard(existingSnapshot, incomingPayload) {
   const existingPayload = existingSnapshot && existingSnapshot.payload;
   if (!existingPayload || !incomingPayload || typeof incomingPayload !== "object") {
     return { payload: incomingPayload, guarded: false };
   }
+  const deliberateChange = addonsUpdatedAtOf(incomingPayload) > addonsUpdatedAtOf(existingPayload);
   let guarded = false;
+  let restored = false;
   const guardList = (existingListRaw, incomingListRaw) => {
     const existingList = Array.isArray(existingListRaw) ? existingListRaw.filter(Boolean) : [];
     const incomingList = Array.isArray(incomingListRaw) ? incomingListRaw.filter(Boolean) : [];
-    if (existingList.length >= 3 && incomingList.length <= 1) {
+    if (!deliberateChange && existingList.length >= 3 && incomingList.length <= 1) {
       guarded = true;
+      restored = true;
       return unionAddonLists(existingList, incomingList);
     }
     return incomingListRaw;
@@ -1878,6 +1894,10 @@ function applyAddonWipeGuard(existingSnapshot, incomingPayload) {
       output.addonsByProfile = existingByProfile;
       guarded = true;
     }
+  }
+
+  if (restored && Object.prototype.hasOwnProperty.call(existingPayload, "addonsUpdatedAt")) {
+    output.addonsUpdatedAt = existingPayload.addonsUpdatedAt;
   }
 
   return { payload: output, guarded };
