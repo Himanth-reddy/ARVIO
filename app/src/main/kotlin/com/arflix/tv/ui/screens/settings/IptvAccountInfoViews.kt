@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,6 +50,8 @@ internal fun IptvAccountSubtitle(
     suffix: String,
     textColor: Color,
     modifier: Modifier = Modifier,
+    /** Phone layout: remaining time on the first line, streams and EPG on a second. */
+    stacked: Boolean = false,
 ) {
     val style = ArflixTypography.caption.copy(fontSize = 13.sp)
     if (info == null || info.sourceFingerprint != fingerprint) {
@@ -69,58 +72,88 @@ internal fun IptvAccountSubtitle(
         is IptvAccountBadge.Expired -> stringResource(R.string.iptv_account_expired) to ErrorRed
         IptvAccountBadge.Unavailable -> stringResource(R.string.iptv_account_no_info) to TextSecondary
     }
-    val detail = buildList {
-        when (badge) {
-            is IptvAccountBadge.Warning ->
-                add(stringResource(R.string.iptv_account_until, dateFormat.format(Date(badge.expiresAtMs))))
-            is IptvAccountBadge.Expired -> badge.expiredAtMs?.takeIf { it <= now }?.let {
-                add(stringResource(R.string.iptv_account_since, dateFormat.format(Date(it))))
-            }
-            else -> Unit
+    val dateDetail = when (badge) {
+        is IptvAccountBadge.Warning ->
+            stringResource(R.string.iptv_account_until, dateFormat.format(Date(badge.expiresAtMs)))
+        is IptvAccountBadge.Expired -> badge.expiredAtMs?.takeIf { it <= now }?.let {
+            stringResource(R.string.iptv_account_since, dateFormat.format(Date(it)))
         }
-    }.joinToString(" · ") + suffix
+        else -> null
+    }
     val streams = info.maxConnections
     val streamsDescription = streams?.let {
         if (it == 1) stringResource(R.string.iptv_account_one_stream)
         else stringResource(R.string.iptv_account_streams, it)
     }
 
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    @Composable
+    fun Badge() = Box(
+        modifier = Modifier
+            .background(color.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 8.dp, vertical = 1.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .background(color.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
-                .padding(horizontal = 8.dp, vertical = 1.dp)
+        Text(label, style = style.copy(fontWeight = FontWeight.SemiBold), color = color, maxLines = 1)
+    }
+
+    // Icon plus number, not "3 streams": on a phone row the words were cut off
+    // to "3 Stre…", and the stream limit is the part worth keeping.
+    @Composable
+    fun Streams() {
+        if (streams == null) return
+        Row(
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                contentDescription = streamsDescription.orEmpty()
+            },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            Text(label, style = style.copy(fontWeight = FontWeight.SemiBold), color = color, maxLines = 1)
+            Icon(
+                imageVector = Icons.Default.People,
+                contentDescription = null,
+                tint = StreamsBlue,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(streams.toString(), style = style, color = textColor, maxLines = 1)
         }
-        // Icon plus number, not "3 streams": on a phone row the words were cut
-        // off to "3 Stre…", and the stream limit is the part worth keeping.
-        if (streams != null) {
-            Row(
-                modifier = Modifier.semantics(mergeDescendants = true) {
-                    contentDescription = streamsDescription.orEmpty()
-                },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.People,
-                    contentDescription = null,
-                    tint = textColor,
-                    modifier = Modifier.size(15.dp),
-                )
-                Text(streams.toString(), style = style, color = textColor, maxLines = 1)
+    }
+
+    @Composable
+    fun Detail(text: String) {
+        if (text.isNotBlank()) {
+            Text(text.trim(), style = style, color = textColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+
+    if (stacked) {
+        // Phone rows are narrow: the remaining time gets the first line to
+        // itself, the stream limit and the EPG note move to a second one.
+        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Badge()
+                Detail(dateDetail.orEmpty())
+            }
+            if (streams != null || suffix.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Streams()
+                    Detail(if (streams == null) suffix.removePrefix(" • ") else suffix)
+                }
             }
         }
-        if (detail.isNotBlank()) {
-            Text(detail.trim(), style = style, color = textColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    } else {
+        Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Badge()
+            Streams()
+            Detail(listOfNotNull(dateDetail).joinToString() + suffix)
         }
     }
 }
+
+/** The colour of the "concurrent streams" heads, as in the approved mock-up. */
+private val StreamsBlue = Color(0xFF4DA3FF)
 
 /** "Last checked: …" for the edit dialog, or null when the source was never asked. */
 @Composable

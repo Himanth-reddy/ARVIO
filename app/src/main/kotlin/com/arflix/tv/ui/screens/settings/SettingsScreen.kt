@@ -7842,7 +7842,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary)
+                                IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
@@ -7896,7 +7896,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary)
+                                IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
