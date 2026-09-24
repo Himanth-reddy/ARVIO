@@ -179,10 +179,13 @@ class SearchViewModelTest {
         coEvery { repository.searchWithPeople("Loki", any()) } returns MediaSearchResults(listOf(loki), emptyList())
         model.updateQuery("Loki"); model.search()
         assertFalse(awaitResults("Loki").results.single().isWatched)
-        // Watched in the meantime: the cached answer is reused, the tick is not.
+        // Watched in the meantime: the cached answer is reused, the tick is not. Typing the
+        // query again goes through updateQuery, which cancels the first search's leftover logo
+        // work; a bare second search() would be ignored while that work is still running.
         every { trakt.hasWatchedEpisodes(2) } returns true
-        model.search()
-        withTimeout(5_000) { model.uiState.first { it.results.single().isWatched } }
+        model.updateQuery("Lok")
+        model.updateQuery("Loki")
+        withTimeout(5_000) { model.uiState.first { it.results.singleOrNull()?.isWatched == true } }
         coVerify(exactly = 1) { repository.searchWithPeople("Loki", any()) }
     }
 
