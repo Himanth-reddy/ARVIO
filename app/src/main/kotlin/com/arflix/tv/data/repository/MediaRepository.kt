@@ -2134,7 +2134,10 @@ class MediaRepository @Inject constructor(
                 missingRefs += (type to tmdbId)
             }
         }
-        val semaphore = Semaphore(2)
+        // Each item costs two sequential rounds (TMDB details + external ids, then the IMDb
+        // rating), so two at a time left a first page of 8 waiting through four rounds. Same
+        // limit as custom catalog rows.
+        val semaphore = Semaphore(6)
         val jobs = missingRefs.map { (type, tmdbId) ->
             async {
                 semaphore.withPermit {
