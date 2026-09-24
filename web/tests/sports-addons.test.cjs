@@ -190,6 +190,18 @@ test('promotional links are excluded and playable video precedes external handof
   assert.deepEqual(Array.from(result, s => s.name), ['Channel HD', 'Watch on provider']);
 });
 
+test('sports provider notices cannot become playable sources while genuine media remains', async () => {
+  const m = modules({ jsonRequest: async () => ({ streams: [
+    { name: 'Join Discord', url: 'https://discord.gg/example' },
+    { name: 'Match not found or has ended', url: 'https://example.com/unavailable.html' },
+    { name: 'Unavailable', title: 'Match not found or has ended', url: 'https://www.google.com/' },
+    { name: 'Match not found or has ended', url: 'https://example.com/live.m3u8' }
+  ] }) });
+  const result = await m.resolveSportsAddon(m.toSportsAddonEvent(meta, addon, catalog, now), [addon], new AbortController().signal);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].url, 'https://example.com/live.m3u8');
+});
+
 test('hybrid PenguPlay includes general live/upcoming catalogs and emoji status without promoting replays', () => {
   const m = modules();
   const pengu = { ...addon, id: 'com.penguplay', name: 'PenguPlay', types: ['movie', 'series', 'tv'], catalogs: [

@@ -15,8 +15,8 @@ const code = ts.transpileModule(source, {
 }).outputText;
 const flush = () => new Promise(setImmediate);
 
-function harness(probeOverrides = {}) {
-  const state = { trace: [], timeouts: new Set(), revoked: [], terminated: 0, errors: [] };
+function harness(probeOverrides = {}, onProbe) {
+  const state = { trace: [], timeouts: new Set(), revoked: [], terminated: 0, errors: [], probes: [] };
 
   class SourceBufferMock extends EventTarget {
     constructor() {
@@ -40,9 +40,10 @@ function harness(probeOverrides = {}) {
       assert.equal(this.updating, true);
       this.updating = false;
       this.ranges = [[0, 25]];
-      state.video.readyState = 4;
+      state.video.readyState = state.metadataOnly ? 1 : 4;
       this.dispatchEvent(new Event('updateend'));
-      queueMicrotask(() => state.video.dispatchEvent(new Event('loadeddata')));
+      queueMicrotask(() => state.video.dispatchEvent(new Event('loadedmetadata')));
+      if (!state.metadataOnly) queueMicrotask(() => state.video.dispatchEvent(new Event('loadeddata')));
     }
     remove() {
       assert.equal(this.updating, false, 'SourceBuffer operations must be serialized');
@@ -93,6 +94,8 @@ function harness(probeOverrides = {}) {
     postMessage(message) {
       this.messages.push(message);
       if (message.type === 'probe') {
+        state.probes.push(message);
+        if (onProbe?.(message, this, state)) return;
         queueMicrotask(() => this.emit({ type: 'probe', probe: {
           container: 'Matroska', videoCodec: 'avc1.42001e', videoPlayable: true,
           audioTracks: [], chosenAudioIndex: -1, duration: 100, ...probeOverrides
@@ -136,6 +139,66 @@ function harness(probeOverrides = {}) {
   return state;
 }
 
+test('IPTV remux retries the relay after a direct CORS failure without premature recovery', async () => {
+  const state = harness({}, (message, worker) => {
+    if (message.url.includes('direct.example')) {
+      queueMicrotask(() => worker.emit({ type: 'error', message: 'Failed to fetch' }));
+      return true;
+    }
+  });
+  const handle = await state.prepare('https://direct.example/file.mkv', undefined, undefined, {
+    fallbackUrl: 'https://relay.example/media', onError: message => state.errors.push(message)
+  });
+  assert.ok(handle);
+  assert.deepEqual(state.probes.map(p => p.url), ['https://direct.example/file.mkv', 'https://relay.example/media']);
+  assert.equal(state.probes[1].headers, undefined);
+  assert.equal(state.terminated, 1, 'failed worker is destroyed before fallback');
+  assert.deepEqual(state.errors, []);
+  await handle.start(state.video);
+  state.worker.emit({ type: 'error', generation: 0, message: 'Playback network failure' });
+  assert.deepEqual(state.errors, ['Playback network failure'], 'playback errors still reach recovery');
+  handle.destroy();
+  assert.equal(state.timeouts.size, 0);
+});
+
+test('successful direct remux and unsupported codecs do not contact the relay', async () => {
+  for (const videoPlayable of [true, false]) {
+    const state = harness({ videoPlayable });
+    const handle = await state.prepare('https://direct.example/file.mkv', undefined, undefined, { fallbackUrl: 'https://relay.example/media' });
+    assert.equal(state.probes.length, 1);
+    assert.equal(handle.probe.videoPlayable, videoPlayable);
+    handle.destroy();
+  }
+});
+
+test('cancelled direct probing never starts a relay connection', async () => {
+  const controller = new AbortController();
+  const state = harness({}, () => { queueMicrotask(() => controller.abort()); return true; });
+  const handle = await state.prepare('https://direct.example/file.mkv', undefined, undefined, {
+    fallbackUrl: 'https://relay.example/media', signal: controller.signal, onError: message => state.errors.push(message)
+  });
+  assert.equal(handle, null);
+  assert.equal(state.probes.length, 1);
+  assert.equal(state.terminated, 1);
+  assert.equal(state.timeouts.size, 0);
+  assert.deepEqual(state.errors, []);
+});
+
+test('two failed probe routes report one final error and release both workers', async () => {
+  const state = harness({}, (_message, worker) => {
+    queueMicrotask(() => worker.emit({ type: 'error', message: 'Failed to fetch' }));
+    return true;
+  });
+  const handle = await state.prepare('https://direct.example/file.mkv', undefined, undefined, {
+    fallbackUrl: 'https://relay.example/media', onError: message => state.errors.push(message)
+  });
+  assert.equal(handle, null);
+  assert.deepEqual(state.errors, ['Failed to fetch']);
+  assert.equal(state.probes.length, 2);
+  assert.equal(state.terminated, 2);
+  assert.equal(state.timeouts.size, 0);
+});
+
 test('A container-safety rejection cannot be overwritten by HEVC MSE support', async () => {
   const state = harness({ videoCodec: 'hev1.2.4.L153.B0', videoPlayable: false,
     videoReason: 'Dolby Vision profile 5 requires compatible conversion' });
@@ -146,6 +209,17 @@ test('A container-safety rejection cannot be overwritten by HEVC MSE support', a
   handle.destroy();
   assert.equal(state.terminated, 1);
   assert.equal(state.timeouts.size, 0);
+});
+
+test('remux becomes ready for play even when iPad defers loadeddata until user playback', async () => {
+  const state = harness();
+  state.metadataOnly = true;
+  const handle = await state.prepare('https://fixture.invalid/film.mkv');
+  try {
+    await handle.start(state.video);
+    assert.equal(state.video.readyState, 1, 'no decoded frame or loadeddata event was required');
+    assert.equal(state.timeouts.size, 0);
+  } finally { handle.destroy(); }
 });
 
 async function playing(t) {

@@ -4,5 +4,6 @@
   "Watching": "Katselussa",
   "Completed": "Valmiit",
   "Dropped": "Keskeytetyt",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: käytä Jellyfin-yhteensopivaa osoitetta. Valinnainen profiili: username#ProfileName. Suojattu profiili: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: käytä Jellyfin-yhteensopivaa osoitetta. Valinnainen profiili: username#ProfileName. Suojattu profiili: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Mikään käytössä olevista lisäosistasi ei tarjoa toistolähteitä."
 }

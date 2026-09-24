@@ -4,5 +4,6 @@
   "Watching": "Gledam",
   "Completed": "Dovršeno",
   "Dropped": "Odustao",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: koristite adresu kompatibilnu s Jellyfinom. Neobavezan profil: username#ProfileName. Zaštićen profil: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: koristite adresu kompatibilnu s Jellyfinom. Neobavezan profil: username#ProfileName. Zaštićen profil: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Nijedan od vaših omogućenih dodataka ne pruža izvore za reprodukciju."
 }

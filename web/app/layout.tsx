@@ -3,6 +3,7 @@ import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
 import "./globals.css";
 import "./premium.css";
 import "./tv-guide.css";
+import "./source-setup.css";
 
 export const metadata: Metadata = {
   title: "ARVIO",

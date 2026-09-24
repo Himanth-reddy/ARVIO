@@ -12,8 +12,10 @@ exports.handler = async (event) => {
   try {
     const days = event.queryStringParameters?.days ||
       new URLSearchParams(event.rawQuery || event.rawQueryString || "").get("days") || 30;
-    return json(200, await premiumFunnelReport(event, days));
+    const endDate = event.queryStringParameters?.end_date || new URLSearchParams(event.rawQuery || event.rawQueryString || "").get("end_date") || undefined;
+    return json(200, await premiumFunnelReport(event, days, endDate));
   } catch (error) {
+    if (error.statusCode === 400) return json(400, { error: "invalid_report_end_date" });
     console.error("premium-funnel-report failed", error);
     return json(500, { error: "premium_report_failed" });
   }

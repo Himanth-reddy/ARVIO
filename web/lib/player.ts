@@ -12,6 +12,8 @@ export type PlaybackError = {
   retryable: boolean;
   message: string;
   code?: string | number;
+  /** Capture before the failed engine destroys/reset its MediaSource. */
+  positionSeconds?: number;
 };
 
 export type PlaybackAudioTrack = { id: string; label: string; language?: string };
@@ -159,11 +161,12 @@ export function attachPlayback(video: HTMLVideoElement, url: string, options: Pl
     const active = () => !disposed && !failed && session === generation;
     const fail = (kind: PlaybackError["kind"], message: string, code?: string | number, retryable = kind === "network" || kind === "unknown") => {
       if (!active()) return;
+      const positionSeconds = Number.isFinite(video.currentTime) ? video.currentTime : 0;
       failed = true;
       release();
       // Return the handle before notifying initial failures, and cancel queued notifications too.
       void Promise.resolve().then(() => {
-        if (!disposed && session === generation) options.onError?.({ transport, kind, fatal: true, retryable, message, code });
+        if (!disposed && session === generation) options.onError?.({ transport, kind, fatal: true, retryable, message, code, positionSeconds });
       });
     };
     const publish = (tracks: PlaybackTracks) => { if (active()) options.onTracks?.(tracks); };

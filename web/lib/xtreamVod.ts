@@ -111,7 +111,7 @@ function seriesVodUrl(info: XtreamInfo, streamId: string | number, ext?: string)
   return `${info.baseUrl}/series/${encodeURIComponent(info.username)}/${encodeURIComponent(info.password)}/${streamId}.${extension}`;
 }
 
-function toSource(name: string, url: string, quality: string, addonName: string): StreamSource {
+function toSource(name: string, url: string, quality: string, addonName: string, userAgent?: string): StreamSource {
   return {
     source: name,
     addonName,
@@ -119,6 +119,9 @@ function toSource(name: string, url: string, quality: string, addonName: string)
     quality,
     size: "",
     url,
+    // Catalogue access and media playback must use the same configured player
+    // identity. Browser-controlled headers are forwarded by playback preparation.
+    behaviorHints: { proxyHeaders: { request: playlistProxyHeaders(userAgent) } },
     // Honest expectation: these play through the user's own IPTV line. Panels
     // gate streams by IP/region/player and can flip policy at any time — when
     // they refuse the user's network, NO player (browser, VLC, the app) can
@@ -171,7 +174,7 @@ export async function findMovieVodSources(
     .slice(0, 8)
     .map((movie) => {
       const name = movie.name?.trim() || item.title;
-      return toSource(name, movieVodUrl(info, movie.stream_id!, movie.container_extension), inferQuality(name), "IPTV VOD");
+      return toSource(name, movieVodUrl(info, movie.stream_id!, movie.container_extension), inferQuality(name), "IPTV VOD", userAgent);
     });
 }
 
@@ -191,19 +194,32 @@ export async function findEpisodeVodSource(
   const wantImdb = item.imdbId?.toLowerCase() ?? "";
   const wantTitle = normalizeTitle(item.title);
 
-  const match =
-    series.find((entry) => (wantTmdb && tmdbOf(entry) === wantTmdb) || (wantImdb && imdbOf(entry) === wantImdb)) ??
-    series.find((entry) => normalizeTitle(entry.name ?? "") === wantTitle);
-  if (!match?.series_id) return [];
-
+  const idMatches = series.filter((entry) => (wantTmdb && tmdbOf(entry) === wantTmdb) || (wantImdb && imdbOf(entry) === wantImdb));
+  const seen = new Set<string>();
+  const matches = (idMatches.length ? idMatches : series.filter((entry) => normalizeTitle(entry.name ?? "") === wantTitle))
+    .filter((entry) => {
+      if (!entry.series_id || seen.has(String(entry.series_id))) return false;
+      seen.add(String(entry.series_id));
+      return true;
+    });
+  // Providers often list 4K and HD as separate series. The first match must not
+  // hide the other versions (or make the episode disappear if one is missing).
   const headers = playlistProxyHeaders(userAgent);
   const infoUrl = buildXtreamPlayerApiUrl(info.baseUrl, info.username, info.password, "get_series_info");
-  const seriesInfo = await fetchXtreamJson<XtreamSeriesInfo>(`${infoUrl}&series_id=${match.series_id}`, headers).catch(() => null);
-  const episodes = seriesInfo?.episodes?.[String(season)] ?? [];
-  const found = episodes.find((ep) => Number(ep.episode_num ?? ep.episode_number) === episode);
-  if (!found?.id) return [];
-
-  const ext = found.container_extension ?? found.info?.container_extension;
-  const name = found.title?.trim() || `${item.title} S${season}E${episode}`;
-  return [toSource(name, seriesVodUrl(info, found.id, ext), inferQuality(name), "IPTV Series VOD")];
+  const results: StreamSource[][] = new Array(matches.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(2, matches.length) }, async () => {
+    while (next < matches.length) {
+      const index = next++;
+      const match = matches[index];
+      const seriesInfo = await fetchXtreamJson<XtreamSeriesInfo>(`${infoUrl}&series_id=${encodeURIComponent(match.series_id!)}`, headers).catch(() => null);
+      const episodes = seriesInfo?.episodes?.[String(season)] ?? [];
+      const found = episodes.find((ep) => Number(ep.episode_num ?? ep.episode_number) === episode);
+      if (!found?.id) { results[index] = []; continue; }
+      const ext = found.container_extension ?? found.info?.container_extension;
+      const name = found.title?.trim() || `${match.name?.trim() || item.title} S${season}E${episode}`;
+      results[index] = [toSource(name, seriesVodUrl(info, found.id, ext), inferQuality(`${match.name ?? ""} ${name}`), "IPTV Series VOD", userAgent)];
+    }
+  }));
+  return results.flat();
 }

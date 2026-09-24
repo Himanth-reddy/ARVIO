@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: August 19, 2026**
+**Last updated: September 22, 2026**
 
 ## 1. Scope And Controller
 
@@ -46,6 +46,8 @@ These activities are based on ARVIO's legitimate interests in finding crashes, m
 
 The public website uses Netlify's server-side traffic analytics to count page requests, approximate unique visitors, referrers, and countries from delivery logs. ARVIO does not add advertising trackers or cross-site profiling cookies.
 
+Premium pages also measure page views and clicks to ARVIO Web or Ko-fi using a random, short-lived navigation ID and coarse campaign tags. The website keeps this ID in memory and passes it only between ARVIO pages; it is not sent to Ko-fi. ARVIO Web can retain this attribution in session storage for up to 24 hours to connect a visit with the subsequent sign-in. Browser Do Not Track and Global Privacy Control signals disable this browser measurement. The endpoint uses short-lived keyed network hashes to limit abuse; it does not store raw IP addresses in these measurement records.
+
 After you sign in to ARVIO Web, ARVIO records a small set of Premium service events such as viewing the membership screen, starting a trial, opening checkout, linking a membership, and completing the first successful playback. Account identifiers are converted into a keyed pseudonymous value before storage. Events can contain coarse campaign attribution and device or outcome labels, but not your email address, watched title, stream URL, addon URL, or payment details. Ko-fi separately handles payment details under its own privacy policy.
 
 These measurements are used to understand whether account connection, trials, playback, and membership activation work correctly and where the service needs improvement. They are not used for advertising or sold to third parties. They are based on ARVIO's legitimate interests in operating and improving the optional Premium service (Article 6(1)(f)).
@@ -78,6 +80,7 @@ ARVIO sends only the data needed for the requested integration. Third-party serv
 - ARVIO Cloud account and sync data remains while the account is active and is deleted when account deletion completes, except for a minimal record required to prove or secure the deletion.
 - Stored first-party app-open events are retained for up to 31 days.
 - Pseudonymous Premium funnel events are retained for up to 90 days.
+- Public Premium navigation events are removed after a 30-day calendar window, and measurement rate-limit records after two days. Cleanup runs periodically.
 - Completed Premium trial email jobs are removed within 14 days. Pending jobs contain an encrypted email address only until delivery finishes or retries end.
 - Password-reset and device-pairing codes expire after a short operational period.
 - Crash diagnostics follow the configured Sentry or Firebase retention period and are kept only as long as needed to investigate app stability.

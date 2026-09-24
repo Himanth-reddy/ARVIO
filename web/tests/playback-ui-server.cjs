@@ -15,10 +15,26 @@ const port = Number(process.env.PORT || 3099);
   const files = new Map(bundle.outputFiles.map(file => [path.basename(file.path), file.contents]));
   const testSources = process.env.PLAYBACK_TEST_SOURCES
     ? JSON.parse(fs.readFileSync(process.env.PLAYBACK_TEST_SOURCES, 'utf8')) : [];
+  const failureCases = new Set();
   http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
     const url = new URL(req.url, 'http://localhost');
+    // Test-only deterministic retry fixture: the selected URL fails once, then
+    // serves the same generated MP4. Nothing is exposed by the production app.
+    if (url.pathname.startsWith('/failure-once/') && /^\/failure-once\/[a-z0-9-]+\.mp4$/i.test(url.pathname)) {
+      res.setHeader('Cache-Control', 'no-store');
+      if (!failureCases.has(url.pathname)) {
+        if (failureCases.size >= 64) failureCases.delete(failureCases.values().next().value);
+        failureCases.add(url.pathname);
+        res.writeHead(503).end('Synthetic first-attempt failure'); return;
+      }
+      url.pathname = '/media/aac.mp4';
+    }
+    if (url.pathname === '/always-fail.mp4') {
+      res.setHeader('Cache-Control', 'no-store');
+      res.writeHead(503).end('Synthetic unavailable source'); return;
+    }
     if (url.pathname.startsWith('/test-sources')) {
       // Optional local diagnostics only. Never expose configured stream URLs to
       // another website, including through the synthetic fixture's permissive CORS.

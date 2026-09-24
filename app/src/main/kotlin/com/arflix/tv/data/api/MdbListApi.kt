@@ -3,6 +3,7 @@ package com.arflix.tv.data.api
 import com.google.gson.annotations.SerializedName
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.Headers
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -77,9 +78,20 @@ interface MdbListApi {
 
     // ===== Scrobble / Continue Watching =====
 
-    /** Paused sessions that power Continue Watching. */
+    /**
+     * Paused sessions that power Continue Watching.
+     *
+     * The response carries `cache-control: max-age=900`, so OkHttp will answer
+     * this from disk for fifteen minutes. That is fine for a routine read and
+     * wrong for a deliberate refresh, hence [cacheControl]: a refresh asked for
+     * because the app just came back to the foreground has to reach the server,
+     * or another device's progress stays invisible for a quarter of an hour.
+     */
     @GET("sync/playback")
-    suspend fun getPlayback(@Query("apikey") apiKey: String): List<MdbPlaybackItem>
+    suspend fun getPlayback(
+        @Query("apikey") apiKey: String,
+        @Header("Cache-Control") cacheControl: String? = null
+    ): List<MdbPlaybackItem>
 
     /** action = "start" | "pause" | "stop". */
     @POST("scrobble/{action}")
@@ -237,7 +249,8 @@ data class MdbPlaybackItem(
 )
 
 data class MdbScrobbleBody(
-    val progress: Int,
+    /** 0-100. Fractional values are accepted and stored (verified: 25.5 -> "25.50"). */
+    val progress: Float,
     val movie: MdbScrobbleMovie? = null,
     val show: MdbScrobbleShow? = null
 )

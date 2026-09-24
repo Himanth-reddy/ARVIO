@@ -66,7 +66,10 @@ class TraktRemoteProvider @Inject constructor(
         episode: Int?,
         isAnime: Boolean
     ) {
-        traktRepository.scrobbleStart(mediaType, tmdbId, progress, season, episode)
+        // Not a start: that opens a session, which deletes the resume point
+        // instead of writing one, so losing power mid-episode discarded
+        // everything watched since playback began.
+        traktRepository.scrobbleHeartbeat(mediaType, tmdbId, progress, season, episode)
     }
 
     override suspend fun scrobbleStop(

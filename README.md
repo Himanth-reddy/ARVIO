@@ -121,7 +121,7 @@ ARVIO is a free hobby project built and maintained with a lot of time, testing, 
 
 If ARVIO helps you and you want to support development, donations are appreciated:
 
-[Support ARVIO on Ko-fi](https://ko-fi.com/arvio)
+[Support ARVIO on Ko-fi](https://ko-fi.com/arvio/tiers)
 
 ## Screenshots
 

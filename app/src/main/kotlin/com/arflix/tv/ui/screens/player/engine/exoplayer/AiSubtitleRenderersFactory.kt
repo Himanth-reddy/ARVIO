@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.player.engine.exoplayer
 
 import android.content.Context
 import android.os.Handler
+import androidx.media3.common.Format
 import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationManager
 import com.arflix.tv.ui.screens.player.subtitles.AudioCaptureProcessor
 import com.arflix.tv.ui.screens.player.subtitles.SubtitleAutoSync
@@ -13,6 +14,7 @@ import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.video.VideoRendererEventListener
@@ -46,6 +48,12 @@ class AiSubtitleRenderersFactory(
 
     var audioCaptureProcessor: AudioCaptureProcessor? = null
         private set
+
+    private val audioDecoderFallback = AudioDecoderFallback()
+
+    /** Retry a crashed decoder only when another renderer can handle the failing track. */
+    fun blockAudioDecoder(decoderName: String, format: Format?): Boolean =
+        audioDecoderFallback.blockIfSupported(decoderName, format)
 
     private val offsetRenderers = mutableListOf<SubtitleOffsetRenderer>()
 
@@ -109,10 +117,14 @@ class AiSubtitleRenderersFactory(
         // MediaCodecAudioRenderer (whose DefaultAudioSink auto-detects AVR capabilities and
         // bitstreams via bypass) goes first; FFmpeg stays strictly a fallback for codecs the
         // device can neither passthrough nor decode.
+        val firstNewIndex = out.size
         super.buildAudioRenderers(
-            context, EXTENSION_RENDERER_MODE_ON, mediaCodecSelector,
+            context, EXTENSION_RENDERER_MODE_ON, audioDecoderFallback.wrapSelector(mediaCodecSelector),
             enableDecoderFallback, audioSink, eventHandler, eventListener, out
         )
+        audioDecoderFallback.softwareCapabilities = out.subList(firstNewIndex, out.size)
+            .filterNot { it is MediaCodecAudioRenderer }
+            .map { it.capabilities }
     }
 
     override fun buildVideoRenderers(

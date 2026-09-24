@@ -278,7 +278,7 @@ test('HLS recovers network twice with backoff, then reports one structured termi
   hls.fatal('network'); hls.fatal('network');
   await flush();
   assert.equal(errors.length, 1);
-  assert.deepEqual(plain(errors[0]), { transport: 'hls', kind: 'network', fatal: true, retryable: true, message: 'HLS playback recovery exhausted.', code: 'fragLoadError' });
+  assert.deepEqual(plain(errors[0]), { transport: 'hls', kind: 'network', fatal: true, retryable: true, message: 'HLS playback recovery exhausted.', code: 'fragLoadError', positionSeconds: 0 });
   assert.equal(hls.destroyed, 1);
   assert.equal(e.timerQueue.size, 0);
   handle();
@@ -293,6 +293,19 @@ test('HLS manifest failure reloads the manifest and 403 fails without retry', as
   await flush();
   assert.equal(errors[0].retryable, false);
   assert.equal(e.timerQueue.size, 0);
+  handle();
+});
+
+test('terminal errors capture the last playback position before engine teardown resets the element', async () => {
+  const e = environment(); const errors = []; const video = new Video();
+  const handle = e.attachPlayback(video, '/a.m3u8', { onError: error => errors.push(error) }); await flush();
+  video.currentTime = 724;
+  const hls = e.hls[0];
+  hls.destroy = () => { hls.destroyed++; video.currentTime = 0; video.paused = true; };
+  hls.fatal('network', 'fragLoadError', 403);
+  await flush();
+  assert.equal(video.currentTime, 0);
+  assert.equal(errors[0].positionSeconds, 724);
   handle();
 });
 

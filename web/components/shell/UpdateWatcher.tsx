@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { shouldApplyUpdate } from "@/lib/updatePolicy";
 
 // iOS home-screen webapps cache the start page HTML for days and there is no
 // service worker to invalidate it — users end up running old bundles long
@@ -8,13 +9,17 @@ import { useEffect } from "react";
 // the server's /version.json (no-store) on boot, on return-to-foreground and
 // every 10 minutes, and reloads the app when a newer deploy exists.
 const RELOAD_GUARD_KEY = "arvio.web.lastUpdateReload";
-const RELOAD_GUARD_MS = 4 * 60 * 1000;
+const ATTEMPTED_VERSION_KEY = "arvio.web.attemptedUpdateVersion";
 
 export function UpdateWatcher() {
   useEffect(() => {
     const baked = process.env.NEXT_PUBLIC_BUILD_STAMP;
     if (!baked) return undefined;
     let disposed = false;
+    let checking = false;
+    let reloading = false;
+    let attempted = new URLSearchParams(window.location.search).get("_v") || "";
+    try { attempted ||= window.localStorage.getItem(ATTEMPTED_VERSION_KEY) || ""; } catch { /* storage is optional */ }
 
     // Strip the cache-bust param left by a prior update reload so the URL stays
     // clean and doesn't keep growing across updates.
@@ -25,19 +30,27 @@ export function UpdateWatcher() {
     }
 
     const check = async () => {
+      if (checking || reloading) return;
+      checking = true;
       try {
         const response = await fetch("/version.json", { cache: "no-store" });
         if (!response.ok) return;
         const payload = (await response.json()) as { v?: string | number };
-        if (disposed || !payload?.v || String(payload.v) === baked) return;
-        // Never interrupt active playback — try again on the next check.
-        const video = document.querySelector("video");
-        if (video && !video.paused && !video.ended) return;
-        // Guard against reload loops if an intermediary keeps serving stale
-        // HTML: at most one automatic reload per window.
-        const last = Number(window.localStorage.getItem(RELOAD_GUARD_KEY) ?? 0);
-        if (Date.now() - last < RELOAD_GUARD_MS) return;
-        window.localStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
+        if (disposed) return;
+        // A paused/buffering player or an embedded trailer must not be closed by
+        // an update. Wait for the player to close and a later scheduled check.
+        const playerPresent = Boolean(document.querySelector('video, iframe[src*="youtube.com"], iframe[src*="youtube-nocookie.com"]'));
+        let last = 0;
+        try { last = Number(window.localStorage.getItem(RELOAD_GUARD_KEY) ?? 0); } catch { /* storage is optional */ }
+        if (!shouldApplyUpdate({ current: baked, remote: payload?.v, attempted, playerPresent, now: Date.now(), lastReloadAt: last })) return;
+        // Remember this exact version, not merely a four-minute cooldown. A
+        // stale response can never repeatedly reset the user's current screen.
+        attempted = String(payload.v);
+        reloading = true;
+        try {
+          window.localStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
+          window.localStorage.setItem(ATTEMPTED_VERSION_KEY, attempted);
+        } catch { /* the _v URL also guards the next load when storage is blocked */ }
         // location.reload() can re-serve cached HTML on iOS; navigating to a
         // fresh URL forces the document to be re-fetched so it references the
         // newest hashed CSS/JS. The cache-bust param is stripped on load.
@@ -46,6 +59,8 @@ export function UpdateWatcher() {
         window.location.replace(url.toString());
       } catch {
         // Offline or blocked — retry on the next trigger.
+      } finally {
+        checking = false;
       }
     };
 

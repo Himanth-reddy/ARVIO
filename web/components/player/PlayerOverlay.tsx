@@ -41,9 +41,9 @@ import {
   bufferedAhead,
   bufferedEndAt,
   classifyMediaError,
-  isStalled,
+  monitorPlaybackStall,
   monitorVideoFrames,
-  nextStallAction,
+  playbackFailureKind,
 } from "@/lib/playerRecovery";
 import { authClient, useApp } from "@/lib/store";
 import { trackPremiumDaily, trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
@@ -53,9 +53,6 @@ import { getLogoUrl } from "@/lib/tmdb";
 import type { AppSettings, InstalledAddon, MediaItem, StreamSource } from "@/lib/types";
 
 type PlayerPanel = "sources" | "subtitles" | "audio" | "settings" | null;
-
-/** How often the stall watchdog samples playback progress. */
-const STALL_POLL_MS = 1_000;
 
 /**
  * Seconds of no forward progress before the remux path is declared dead.
@@ -324,6 +321,7 @@ function VideoPlayer({
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [playing, setPlaying] = useState(false);
+  const [playBlocked, setPlayBlocked] = useState(false);
   // Boot screen (like the app): backdrop + pulsing clearlogo covers the player
   // and blocks input until first frames are ready.
   const [booted, setBooted] = useState(false);
@@ -372,9 +370,13 @@ function VideoPlayer({
   const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState(false);
   const [errorDetail, setErrorDetail] = useState("");
+  const failureDiagnosticRef = useRef<{ failure_kind: string; phase: "startup" | "playback"; transport?: string }>({ failure_kind: "unknown", phase: "startup" });
   useEffect(() => {
-    if (error) void trackPremiumDaily(authClient, "playback_failed", { playback_type: liveTv ? "live" : "vod" });
-  }, [error, liveTv]);
+    if (error) void trackPremiumDaily(authClient, "playback_failed", {
+      playback_type: liveTv ? "live" : "vod", transport: stream.remux ? "remux" : stream.transport ?? "file",
+      ...failureDiagnosticRef.current
+    });
+  }, [error, liveTv, stream.remux, stream.transport]);
   const [activePanel, setActivePanel] = useState<PlayerPanel>(null);
   const [activeSubtitle, setActiveSubtitle] = useState(-1);
   const [skipOverlay, setSkipOverlay] = useState<number | null>(null);
@@ -514,6 +516,8 @@ function VideoPlayer({
         return;
       }
       if (tryNextSource()) return;
+      failureDiagnosticRef.current = { failure_kind: "format", phase: "playback" };
+      setErrorDetail("This browser could not decode video frames from the selected source.");
       setBuffering(false);
       setShowControls(true);
       setError(true);
@@ -585,31 +589,10 @@ function VideoPlayer({
   // switch once to a substantially lighter playable version of the same title
   // instead of letting the viewer stutter through it.
   useEffect(() => {
-    if (!booted || liveTv) return undefined;
+    if (!booted) return undefined;
     const video = videoRef.current;
     if (!video) return undefined;
     if (stream.remux) return undefined;
-    // Mid-playback stall recovery. Previously this only reacted after three
-    // stalls in 90s AND only if a strictly smaller source existed — so a single
-    // source, an equal-sized source, or a source with unknown size (all common)
-    // meant the video buffered forever with no message and no way to continue.
-    // Now every stall is recovered: nudge the decoder, then re-attach the
-    // source, then fall down the ladder, preferring a lighter source if one
-    // exists because a stall usually means the connection can't keep up.
-    let lastProgressTime = video.currentTime;
-    let stalledSinceMs = 0;
-    let nudged = false;
-    let reloaded = false;
-    let escalated = false;
-    let announced = false;
-
-    const resetStall = () => {
-      stalledSinceMs = 0;
-      nudged = false;
-      reloaded = false;
-      announced = false;
-    };
-
     const lighterSource = () => {
       const current = currentStreamRef.current;
       const currentSize = streamSizeBytes(current);
@@ -623,68 +606,30 @@ function VideoPlayer({
       });
     };
 
-    const tick = window.setInterval(() => {
-      if (escalated) return;
-      const stalledNow = isStalled({
-        paused: video.paused,
-        seeking: video.seeking,
-        ended: video.ended,
-        currentTime: video.currentTime,
-        lastProgressTime,
-      });
-      if (!stalledNow) {
-        lastProgressTime = video.currentTime;
-        resetStall();
-        return;
+    return monitorPlaybackStall(video, {
+      live: liveTv,
+      reload: (position) => transportRef.current?.reload(liveTv ? undefined : position),
+      nudge: liveTv ? () => { transportRef.current?.goLive(); } : undefined,
+      onRecover: () => onToast("Playback stalled — trying to recover…"),
+      onFailure: () => {
+        const lighter = liveTv ? undefined : lighterSource();
+        if (lighter && currentStreamRef.current.autoSelect) {
+          onToast("Your connection can't keep up with this version — switching to a lighter one.");
+          onSelectStream({ ...lighter, autoSelect: true }, { forceBrowser: true });
+          return;
+        }
+        // Nothing lighter: surface the failure instead of buffering silently so
+        // the source list (and the external-player options) are reachable.
+        failureDiagnosticRef.current = { failure_kind: "timeout", phase: "playback" };
+        setErrorDetail("This source stopped responding. Pick another source to continue.");
+        setBuffering(false);
+        setError(true);
+        setShowControls(true);
+        onToast("This source stopped responding. Pick another source to continue.");
       }
-      stalledSinceMs += STALL_POLL_MS;
-      const action = nextStallAction({
-        stalledForMs: stalledSinceMs,
-        currentTime: video.currentTime,
-        nudged,
-        reloaded,
-      });
-      if (action.kind === "wait") return;
-      if (!announced) {
-        announced = true;
-        onToast("Playback stalled — trying to recover…");
-      }
-      if (action.kind === "nudge") {
-        nudged = true;
-        try { video.currentTime = action.seekTo; } catch { /* seek can throw while unbuffered */ }
-        void video.play().catch(() => undefined);
-        return;
-      }
-      if (action.kind === "reload") {
-        reloaded = true;
-        const resumeAt = action.resumeAt;
-        transportRef.current?.reload(resumeAt);
-        return;
-      }
-      // escalate
-      escalated = true;
-      const lighter = lighterSource();
-      if (lighter && currentStreamRef.current.autoSelect) {
-        onToast("Your connection can't keep up with this version — switching to a lighter one.");
-        onSelectStream({ ...lighter, autoSelect: true }, { forceBrowser: true });
-        return;
-      }
-      // Nothing lighter: surface the failure instead of buffering silently so
-      // the source list (and the external-player options) are reachable.
-      setBuffering(false);
-      setError(true);
-      setShowControls(true);
-      onToast("This source stopped responding. Pick another source to continue.");
-    }, STALL_POLL_MS);
-
-    const onSeeked = () => { lastProgressTime = video.currentTime; resetStall(); };
-    video.addEventListener("seeked", onSeeked);
-    return () => {
-      window.clearInterval(tick);
-      video.removeEventListener("seeked", onSeeked);
-    };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booted, stream.url, liveTv]);
+  }, [booted, stream.url, liveTv, remuxRestartKey]);
 
   useEffect(() => {
     setBootLogo(null);
@@ -776,6 +721,7 @@ function VideoPlayer({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !stream.url) return undefined;
+    setPlayBlocked(false);
 
     // In-browser remux path (Tier 3): repackage an MKV direct link and play the
     // browser-safe audio track. Takes over the element entirely for this source.
@@ -789,6 +735,7 @@ function VideoPlayer({
       let remuxWatchdog: number | undefined;
       setError(false);
       setErrorDetail("");
+      failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
       setBuffering(true);
       setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
       setRemuxTracks([]);
@@ -796,6 +743,8 @@ function VideoPlayer({
       const remuxFailed = (message: string) => {
         if (cancelled || recovering) return;
         recovering = true;
+        failureDiagnosticRef.current = { failure_kind: playbackFailureKind({ message }), phase: video.currentTime > 0 ? "playback" : "startup" };
+        if (video.currentTime > 0) resumeAtRef.current = video.currentTime;
         window.clearInterval(remuxWatchdog);
         video.pause();
         // Callback + rejected start() + watchdog can report the same fault.
@@ -815,7 +764,11 @@ function VideoPlayer({
       void (async () => {
         try {
           const { probeAndPrepareRemux } = await import("@/lib/remux");
-          const prepared = await probeAndPrepareRemux(stream.url!, stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal, onError: remuxFailed, expectDolbyVision: hasDolbyVision(stream) });
+          const directIptv = stream.addonId === "iptv_xtream_vod" && stream.originalUrl && stream.originalUrl !== stream.url;
+          const prepared = await probeAndPrepareRemux(directIptv ? stream.originalUrl! : stream.url!,
+            directIptv ? undefined : stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage,
+            { signal: controller.signal, onError: remuxFailed, expectDolbyVision: hasDolbyVision(stream),
+              fallbackUrl: directIptv ? stream.url! : undefined });
           if (cancelled || recovering) { prepared?.destroy(); return; }
           handle = prepared;
           if (!prepared || (prepared.probe.audioTracks.length > 0 && prepared.probe.chosenAudioIndex < 0) || !prepared.probe.videoPlayable) {
@@ -837,7 +790,12 @@ function VideoPlayer({
           }
           if (cancelled || recovering) return;
           resumeAtRef.current = 0;
-          void video.play().catch(() => undefined);
+          void video.play().catch((reason: unknown) => {
+            if (cancelled || recovering) return;
+            if (reason instanceof DOMException && reason.name === "NotAllowedError") {
+              setPlayBlocked(true); setBuffering(false); setShowControls(true);
+            } else if (video.error) remuxFailed("Browser playback could not start.");
+          });
           // A CDN can stop supplying packets without an error. Require clock
           // progress too, and use the same bounded recovery as decoder failures.
           let lastSeen = -1;
@@ -868,6 +826,7 @@ function VideoPlayer({
 
     setError(false);
     setErrorDetail("");
+    failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
     setBuffering(true);
     setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
     lastSavedRef.current = 0;
@@ -875,8 +834,18 @@ function VideoPlayer({
     let handlingError = false;
     let cancelled = false;
     let detach: PlaybackHandle | undefined;
+    let clearAttemptStart = () => {};
     setTransportTracks({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
     const attach = (url: string) => {
+      clearAttemptStart();
+      // URL refreshes/relay fallbacks need their own resume listeners. Keeping
+      // one persistent canplay handler would also resume a user's paused seek.
+      video.addEventListener("loadedmetadata", onReadyToStart, { once: true });
+      video.addEventListener("canplay", onReadyToStart, { once: true });
+      clearAttemptStart = () => {
+        video.removeEventListener("loadedmetadata", onReadyToStart);
+        video.removeEventListener("canplay", onReadyToStart);
+      };
       const handle = attachPlayback(video, url, {
         onError: handlePlaybackError, live: liveTv,
         transport: url === stream.url ? stream.transport : undefined,
@@ -886,28 +855,28 @@ function VideoPlayer({
       transportRef.current = handle;
       return handle;
     };
-    // Set once this source has actually rendered frames. Everything below is
-    // STARTUP logic — "can this URL be opened at all?" — and must stand down
-    // afterwards. Without this, an error five seconds into a working stream ran
-    // the startup ladder and declared the source unplayable, which is why a
-    // source that was visibly playing would suddenly say it can't play in the
-    // browser and hop to the next one. Once playback has proven itself, a later
-    // fault is a stall/interruption and belongs to the recovery watchdog.
+    // A source that has played gets one in-place network recovery before the
+    // startup ladder is used again. Silent stalls use the separate watchdog.
     let hasPlayed = false;
+    let hasEverPlayed = false;
+    let retriedInterruption = false;
     // Playback ladder: direct first (free for CORS-friendly providers), then the
     // Cloudflare resolver media proxy for live TV (fixes CORS/ORB without Netlify
     // bandwidth), then the legacy Netlify fallbacks.
     const attempts: string[] = [stream.url];
     // Catch-up recordings come from the same IPTV panels as live channels, so
     // they get the live relay hops — but keep VOD controls (seekable).
-    const iptvRelay = liveTv || stream.addonName === "Catch-up";
+    const iptvVod = stream.addonId === "iptv_xtream_vod";
+    const iptvRelay = liveTv || stream.addonName === "Catch-up" || iptvVod;
     if (iptvRelay) {
-      const hlsTwin = xtreamHlsVariant(stream.url);
+      const hlsTwin = iptvVod ? null : xtreamHlsVariant(stream.url);
       if (hlsTwin) attempts.push(hlsTwin);
       const workerUrl = resolverMediaUrl(stream.url, { ...liveTvProxyHeaders(), ...headers });
       if (workerUrl) {
         // Browsers cannot set these source-required headers on direct requests.
-        if (needsBrowserHeaderRelay(headers)) attempts.unshift(workerUrl);
+        // IPTV VOD can be subscriber-IP restricted: preserve working native
+        // playback before trying a different network egress through the relay.
+        if (!iptvVod && needsBrowserHeaderRelay(headers)) attempts.unshift(workerUrl);
         else attempts.push(workerUrl);
       }
       if (hlsTwin) {
@@ -942,7 +911,7 @@ function VideoPlayer({
       // data) need a shorter leash than VOD so the ladder keeps moving.
       stallTimer = window.setTimeout(() => {
         if (cancelled) return;
-        if (video.readyState < 1) handlePlaybackError();
+        if (video.readyState < 1) handlePlaybackError({ transport: stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
         // A cold debrid link has to be fetched and cached by the provider
         // before the first byte arrives, which regularly exceeds the VOD
         // budget — condemning sources that were about to work.
@@ -951,19 +920,28 @@ function VideoPlayer({
       // own frame deadline; the original attempt must not cancel a new relay.
       playableWatchdog = window.setTimeout(() => {
         if (cancelled || hasPlayed || video.readyState >= 2) return;
-        handlePlaybackError();
+        handlePlaybackError({ transport: stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
       }, liveTv ? 15000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     };
+    let awaitingGesture = false;
     const requestPlayback = () => {
       if (cancelled || !video.paused) return;
       setError(false);
       setBuffering(true);
       const attempt = video.play();
       if (attempt && typeof attempt.catch === "function") {
-        attempt.catch(() => {
-          if (cancelled) return;
+        attempt.catch((reason: unknown) => {
+          if (cancelled || (reason instanceof DOMException && reason.name === "AbortError")) return;
+          // A rejected play() during source replacement or autoplay blocking
+          // does not establish that the media is broken.
+          if (video.error) { handlePlaybackError(); return; }
+          if (reason instanceof DOMException && reason.name === "NotAllowedError") {
+            awaitingGesture = true;
+            window.clearTimeout(stallTimer);
+            window.clearTimeout(playableWatchdog);
+            setPlayBlocked(true);
+          }
           setBuffering(false);
-          if (video.error) setError(true);
           setShowControls(true);
         });
       }
@@ -971,14 +949,23 @@ function VideoPlayer({
     let refreshedLink = false;
     const handlePlaybackError = (fault?: PlaybackError) => {
       if (cancelled || handlingError) return;
-      if (fault) setErrorDetail(fault.message);
-      // A source that already played is not a startup failure. Walking the
-      // ladder here would re-attach a different URL (or hop to another source)
-      // mid-film; the stall watchdog recovers in place instead, keeping the
-      // user's position and the source they chose. A decode fault is the one
-      // exception — those bytes will never play here, so say so plainly rather
-      // than letting the watchdog retry something that cannot work.
+      if (!fault && video.error) {
+        const code = video.error.code;
+        fault = { transport: stream.transport ?? "file", kind: code === 3 ? "media" : code === 4 ? "unsupported" : "network",
+          fatal: true, retryable: classifyMediaError(code) === "retryable", code, message: code === 3 || code === 4
+            ? "This source could not be played in the browser."
+            : "The source did not respond. Please try again or choose another source." };
+      }
+      if (fault) {
+        setErrorDetail(fault.message);
+        failureDiagnosticRef.current = { failure_kind: playbackFailureKind(fault), phase: hasEverPlayed ? "playback" : "startup", transport: fault.transport };
+      }
+      // Transport teardown may pause the element. Recover an interrupted
+      // connection explicitly: a watchdog that ignores user-paused playback
+      // cannot detect that case. This also covers live streams.
       if (hasPlayed) {
+        const position = fault?.positionSeconds ?? video.currentTime;
+        if (!liveTv && position > 0) resumeAtRef.current = position + (stream.playbackSession?.startOffset ?? 0);
         const decodeFailure = fault ? fault.kind === "media" || fault.kind === "unsupported" : classifyMediaError(video.error?.code) === "fatal";
         if (decodeFailure) {
           if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
@@ -991,8 +978,22 @@ function VideoPlayer({
           setError(true);
           setShowControls(true);
           onToast("This source stopped decoding partway through. Try another source or open it in VLC.");
+          return;
         }
-        return;
+        if (!retriedInterruption && fault?.retryable !== false) {
+          retriedInterruption = true;
+          handlingError = true;
+          hasPlayed = false;
+          setBuffering(true);
+          detach?.reload(liveTv ? undefined : position);
+          armStallTimer();
+          handlingError = false;
+          requestPlayback();
+          return;
+        }
+        // The single in-place recovery failed. Preserve the last good position
+        // and continue the existing bounded fallback ladder.
+        hasPlayed = false;
       }
       handlingError = true;
       // A debrid CDN link is presigned and short-lived. When one expires the
@@ -1066,40 +1067,53 @@ function VideoPlayer({
         detach?.();
         return;
       }
+      cancelled = true;
+      window.clearTimeout(stallTimer);
+      window.clearTimeout(playableWatchdog);
+      detach?.();
       setBuffering(false);
       setError(true);
-      handlingError = false;
+      setShowControls(true);
     };
     detach = attach(uniqueAttempts[0]);
     armStallTimer();
-    const onReadyToStart = () => {
+    function onReadyToStart() {
+      if (cancelled || !video) return;
       window.clearTimeout(stallTimer);
       if (video.playbackRate !== playbackRate) video.playbackRate = playbackRate;
       // Restore the position carried over from a source hop / remux switch.
       // Guarded so it only fires once and never seeks past the end.
       const resumeAt = resumeAtRef.current;
-      if (resumeAt > 5 && video.currentTime < 1) {
-        const target = video.duration > 0 ? Math.min(resumeAt, video.duration - 5) : resumeAt;
-        if (target > 0) { try { video.currentTime = target; } catch { /* not seekable yet */ } }
-        resumeAtRef.current = 0;
+      if (resumeAt > 0 && video.currentTime < 1) {
+        const relativePosition = Math.max(0, resumeAt - (stream.playbackSession?.startOffset ?? 0));
+        const target = video.duration > 0 ? Math.min(relativePosition, Math.max(0, video.duration - 0.1)) : relativePosition;
+        try {
+          if (target > 0) video.currentTime = target;
+          resumeAtRef.current = 0;
+        } catch { /* Keep the pending position for canplay if metadata is not seekable yet. */ }
       }
       requestPlayback();
-    };
+    }
     const startTimer = window.setTimeout(requestPlayback, 0);
-    video.addEventListener("loadedmetadata", onReadyToStart, { once: true });
-    video.addEventListener("canplay", onReadyToStart, { once: true });
-    const onErr = () => handlePlaybackError();
-    video.addEventListener("error", onErr);
+    const onUserPlay = () => {
+      if (cancelled || !awaitingGesture) return;
+      awaitingGesture = false;
+      setPlayBlocked(false);
+      armStallTimer();
+    };
+    video.addEventListener("play", onUserPlay);
+    // Each engine owns its error recovery and emits a terminal typed fault.
+    // Listening to the same raw video error here bypasses HLS recovery and can
+    // run the fallback ladder twice for one failure.
     // The moment real frames arrive this source has proven it plays here, so
-    // retire the startup watchdogs and the ladder. Anything that goes wrong
-    // from now on is handled by the stall watchdog, which recovers in place.
+    // retire the startup watchdogs. Keep listening so a recovered connection
+    // can prove it is delivering playable media again.
     const onFirstPlaying = () => {
       if (video.readyState < 3) return;
       hasPlayed = true;
+      hasEverPlayed = true;
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
-      video.removeEventListener("playing", onFirstPlaying);
-      video.removeEventListener("timeupdate", onFirstPlaying);
     };
     video.addEventListener("playing", onFirstPlaying);
     // `playing` can be missed when a source starts already-buffered; a moving
@@ -1110,11 +1124,10 @@ function VideoPlayer({
       window.clearTimeout(startTimer);
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
+      video.removeEventListener("play", onUserPlay);
       video.removeEventListener("playing", onFirstPlaying);
       video.removeEventListener("timeupdate", onFirstPlaying);
-      video.removeEventListener("loadedmetadata", onReadyToStart);
-      video.removeEventListener("canplay", onReadyToStart);
-      video.removeEventListener("error", onErr);
+      clearAttemptStart();
       detach?.();
       if (transportRef.current === detach) transportRef.current = null;
     };
@@ -1133,7 +1146,7 @@ function VideoPlayer({
       setBufferAheadSec(bufferedAhead(video.buffered, video.currentTime));
     };
     const onDur = () => setDuration(video.duration || 0);
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => { setPlaying(true); setPlayBlocked(false); };
     const onPause = () => setPlaying(false);
     const onWaiting = () => setBuffering(true);
     const onPlaying = () => setBuffering(false);
@@ -1331,6 +1344,16 @@ function VideoPlayer({
       if (videoRef.current && !videoRef.current.paused && !activePanel) setShowControls(false);
     }, 3000);
   }, [activePanel]);
+
+  const retryPlayback = useCallback(() => {
+    setError(false); setErrorDetail(""); setBuffering(true);
+    const position = videoRef.current?.currentTime ?? 0;
+    if (position > 0) resumeAtRef.current = position + (stream.playbackSession?.startOffset ?? 0);
+    // Terminal failure stops a home-server session. Ask the server for a fresh
+    // playback session instead of trying to reopen its stopped conversion URL.
+    if (stream.homeServer) selectStream({ ...stream, resumePositionSeconds: resumeAtRef.current || stream.resumePositionSeconds || 0 }, { forceBrowser: true });
+    else setRemuxRestartKey((key) => key + 1);
+  }, [stream, selectStream]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
@@ -1607,7 +1630,12 @@ function VideoPlayer({
       </div>}
       {!dock.docked && dock.canDock && <button type="button" className="player-dock-return" onClick={dock.collapse} aria-label={translateUi("Return to guide")} title={translateUi("Return to guide")}><Minimize size={22} /></button>}
 
-      {!booted && !error && (
+      {playBlocked && !error && <div className="player-start-prompt">
+        <button type="button" className="player-error-external" onClick={togglePlay}>
+          <Play size={24} fill="currentColor" /> {translateUi("Play")}
+        </button>
+      </div>}
+      {!booted && !error && !playBlocked && (
         <div className="player-boot" style={{ backgroundImage: item?.backdrop ? `url(${item.backdrop})` : undefined }} aria-label={translateUi("Loading playback")}>
           {bootLogo
             ? <img className="player-boot-logo" src={bootLogo} alt={title} />
@@ -1629,11 +1657,15 @@ function VideoPlayer({
             {translateUi(errorDetail) || translateUi("The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player.")}
           </span>
           <div className="player-error-actions">
+            <button type="button" className="player-error-external" onClick={retryPlayback}>
+              <RotateCw size={15} /> {translateUi("Retry")}</button>
+            {!liveTv && <button type="button" className="player-error-external" onClick={() => openPanel("sources")}>
+              <Folder size={15} /> {translateUi("Sources")}</button>}
             <button type="button" className="player-error-external" onClick={() => openExternal("vlc", stream)}>
               <ExternalLink size={15} /> {translateUi(" Open in VLC")}</button>
             <button type="button" className="player-error-external" onClick={() => openAnyPlayer(stream)}>
               <ExternalLink size={15} /> {translateUi(" Open in player")}</button>
-            {!liveTv && !stream.transcoded && parseDebridStream(stream.url) && (
+            {!liveTv && !stream.transcoded && canProviderTranscode(stream) && (
               <button type="button" className="player-error-transcode" onClick={() => onSelectStream(stream, { forceTranscode: true })}>
                 <Play size={15} fill="currentColor" /> {translateUi(" Transcode")}</button>
             )}

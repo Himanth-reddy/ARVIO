@@ -63,6 +63,7 @@ import { defaultSettings, useApp } from "@/lib/store";
 import { PremiumAccount } from "@/components/shell/PremiumAccount";
 import { IptvGroupSettings } from "./IptvGroupSettings";
 import { iptvPlaylistSignature } from "@/lib/iptv";
+import { clearSourceSettingsRequest, requestedSourceSettings, SOURCE_SETTINGS_EVENT } from "@/lib/sourceSetup";
 import type {
   AppSettings,
   CatalogConfig,
@@ -220,9 +221,23 @@ function qualityPresetFilters(
 
 export function SettingsScreen() {
   const translateUi = useTranslation();
-  const [section, setSection] = useState<SectionId>("accounts");
+  const [section, setSection] = useState<SectionId>(() => requestedSourceSettings() ?? "accounts");
   const [collapsed, setCollapsed] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    clearSourceSettingsRequest();
+    const navigate = (event: Event) => {
+      const target = (event as CustomEvent).detail;
+      if (target !== "homeserver" && target !== "tv") return;
+      setSection(target);
+      setMobileMenuOpen(false);
+      clearSourceSettingsRequest();
+      window.scrollTo({ top: 0 });
+    };
+    window.addEventListener(SOURCE_SETTINGS_EVENT, navigate);
+    return () => window.removeEventListener(SOURCE_SETTINGS_EVENT, navigate);
+  }, []);
 
   const activeSectionObj = SECTIONS.find((s) => s.id === section);
 

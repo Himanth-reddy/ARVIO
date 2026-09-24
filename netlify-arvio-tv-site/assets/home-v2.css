@@ -31,3 +31,16 @@
 .nav nav a.nav-community{color:var(--mint)}.hero-community-link{display:inline-flex;align-items:center;gap:14px;min-height:44px;font-size:12px;color:var(--mint);margin-top:8px}.hero-community-link:hover{text-decoration:underline;text-underline-offset:5px}.hero-community-link+.hero-web-link{margin-top:5px}.community-panel{display:grid;grid-template-columns:1.1fr 1fr;gap:70px;align-items:center;padding:56px;border-radius:24px;background:radial-gradient(ellipse at 0 0,#9efbd514,transparent 65%),#0d1413}.community-copy>p:not(.eyebrow){max-width:470px;font-size:14px;line-height:1.8;color:var(--muted);margin:24px 0}.community-copy .button{margin-top:4px}.community-copy>p.community-note{font-size:11px;margin:14px 0 0}.community-topics{display:grid;gap:32px}.community-topics>div{display:flex;gap:20px;align-items:baseline}.community-topics>div>span{color:var(--mint);font-size:11px}.community-topics h3{font-size:18px;margin:0 0 8px;font-weight:550}.community-topics p{color:var(--muted);font-size:13px;line-height:1.8;margin:0;max-width:320px}
 @media(max-width:1000px){.community-panel{padding:36px;gap:35px}.nav nav{gap:17px}}
 @media(max-width:700px){.community-panel{grid-template-columns:1fr;padding:28px 22px;gap:36px;border-radius:18px}.community-copy>p:not(.eyebrow){font-size:13px}.community-copy .button{font-size:12px;gap:12px}.community-topics{gap:25px}.community-topics h3{font-size:16px}.community-topics p{font-size:12px}.hero-community-link{font-size:11px}}
+
+/* Premium is a primary destination; the free APK remains a separate choice. */
+.nav .nav-premium-link{color:var(--mint)}
+.nav .nav-premium{flex-shrink:0}
+.hero-v2 .hero-copy>.preview-button{display:inline-flex;padding:0;margin:17px 24px 0 0;min-height:44px;font-size:12px;vertical-align:middle}
+.hero-v2 .hero-copy>.hero-community-link{vertical-align:middle;margin-top:17px}
+.hero-v2 .hero-copy>.hero-premium-note{font-size:12px;line-height:1.7;color:#b5cdc0;max-width:370px;margin:14px 0 0}
+#premium{scroll-margin-top:90px;padding-top:50px;padding-bottom:30px}
+#premium .premium{background:radial-gradient(ellipse at 0 0,#9efbd51c,transparent 65%),#0d1712;box-shadow:0 0 90px #9efbd507}
+#premium .actions{gap:20px;flex-wrap:wrap}
+#premium .text-link{font-size:12px;gap:8px}
+@media(max-width:850px){.hero-v2 .hero-copy>.hero-premium-note{margin:14px auto 0;max-width:420px}#premium{padding-top:25px}}
+@media(max-width:520px){.nav .nav-premium{font-size:11px;padding:10px 14px;min-height:42px}.hero-v2 .hero-copy>.preview-button{font-size:11px;margin-right:18px}.hero-v2 .hero-copy>.hero-premium-note{font-size:11px}.hero-v2 .hero-note{font-size:10px;flex-wrap:wrap}.hero-v2 .actions{gap:10px}.hero-v2 .actions .button{font-size:11px;padding-inline:15px}#premium .actions{align-items:flex-start;flex-direction:column}}

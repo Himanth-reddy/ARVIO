@@ -78,6 +78,20 @@ object Constants {
     const val MAX_PROGRESS_ENTRIES = 50
     const val MAX_CONTINUE_WATCHING = 50
 
+    /**
+     * How far ahead of a saved position a tracker has to be before that position
+     * is treated as stale.
+     *
+     * A saved position is exact and normally beats the tracker's percentage. But
+     * clients that are not ARVIO — Plex, Infuse, Trakt's own apps — move the
+     * tracker on without writing one, so a position left here by an earlier
+     * session can be far behind what every other client shows. Recency decides
+     * it, with a margin comfortably wider than the gap between a playback
+     * heartbeat and the local save it accompanies, so a device writing both
+     * never invalidates its own position.
+     */
+    const val TRACKER_OVERRIDES_LOCAL_POSITION_AFTER_MS = 2 * 60_000L
+
     // Preferences keys.
     const val PREFS_NAME = "arflix_prefs"
     const val PREF_DEFAULT_SUBTITLE = "default_subtitle"

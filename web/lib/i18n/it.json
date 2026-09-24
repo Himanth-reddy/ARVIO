@@ -4,5 +4,6 @@
   "Watching": "In visione",
   "Completed": "Completati",
   "Dropped": "Abbandonati",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: usa l’indirizzo compatibile con Jellyfin. Profilo facoltativo: username#ProfileName. Profilo protetto: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: usa l’indirizzo compatibile con Jellyfin. Profilo facoltativo: username#ProfileName. Profilo protetto: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Nessuno dei tuoi componenti aggiuntivi abilitati fornisce sorgenti di riproduzione."
 }

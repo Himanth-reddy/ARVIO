@@ -1,4 +1,4 @@
-/* Public copy only. No account data or tracking is collected by this page. */
+/* Localized public copy. Campaign measurement is handled by premium-journey.js. */
 (async function () {
   const response = await fetch('./languages.json');
   if (!response.ok) return;

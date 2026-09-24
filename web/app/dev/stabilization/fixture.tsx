@@ -30,6 +30,11 @@ const channels: IptvChannel[] = Array.from({ length: 55_000 }, (_, i) => ({
 const posters = ["/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg", "/qJ2tW6WMUDux911r6m7haRef0WH.jpg", "/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg", "/5KCVkau1HEl7ZzfPsKAPM0sMiKc.jpg"];
 const titles = ["Dune: Part Two", "The Dark Knight", "Interstellar", "The Shawshank Redemption"];
 const media: MediaItem[] = Array.from({ length: 24 }, (_, i) => ({ id: -i - 1, mediaType: "movie", title: titles[i % 4], year: "2024", image: `https://image.tmdb.org/t/p/w500${posters[i % 4]}`, backdrop: `https://image.tmdb.org/t/p/w780${posters[i % 4]}`, rating: "8.4", overview: "Controlled test data", activityAt: 100 - i }));
+const playbackSources: StreamSource[] = [
+  { source: "Working generated MP4", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/aac.mp4", transport: "file" },
+  { source: "Working generated HLS", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/hls/index.m3u8", transport: "hls" },
+  { source: "Unavailable generated source", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/always-fail.mp4", transport: "file", transcoded: true }
+];
 
 export function StabilizationFixture({ testLiveUrl, useSourceUrls = false }: { testLiveUrl?: string; useSourceUrls?: boolean } = {}) {
   const [ready, setReady] = useState(false);
@@ -69,14 +74,14 @@ export function StabilizationFixture({ testLiveUrl, useSourceUrls = false }: { t
     view: "app", section: page === "onboarding" ? "home" : page, addonsReady: true, closeDetails: noop,
     settings, setSettings, updateSettings: (patch: object) => setSettings((old) => ({ ...old, ...patch })),
     iptvSnapshot: visibleSnapshot, loadIptvGuide, refreshIptv: async () => {}, busy: "", auth: null, activeProfile: { id: "fixture", name: "Test profile" },
-    profiles: [], addons: sportsAddons, watchlist: media, continueWatching: media.slice(0, 4), traktConnected: true, simklConnected: true, mdblistConnected: false,
+    profiles: [], addons: showOnboarding ? sportsAddons.map(addon => ({ ...addon, resources: ["catalog"] })) : sportsAddons, watchlist: media, continueWatching: media.slice(0, 4), traktConnected: true, simklConnected: true, mdblistConnected: false,
     openDetails: (item: MediaItem) => setToast(`Selected: ${item.title}`), openContextMenu: noop, isWatched: () => false,
     loadTrackerLibrary, loadTraktLists, loadTraktListItems: async () => media,
     playChannel: (channel: IptvChannel) => { setPlayRequests(count => count + 1); setActiveChannel(channel); setActiveStream({ source: channel.name, addonName: "Live TV", quality: "Live", size: "", url: testLiveUrl || (useSourceUrls ? channel.streamUrl : "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"), behaviorHints: { proxyHeaders: { request: channel.requestHeaders } } }); }, recordChannelPlayback: noop, playCatchup: noop, setToast,
     trackingPreferences: { watchlistReadMode: "trakt", continueWatchingReadMode: "both", watchedReadMode: "both", writeToTrakt: true, writeToSimkl: true },
     settingsSyncState: "local", saveTrackingPreferences: noop, setSection: setPage, signOut: noop, refreshData: empty,
-    homeServerRows: [], categories: [], catalogConfigs: [], selected: null, streams: [], activeStream, activeChannel, selectedEpisode: null,
-    playStream: setActiveStream, closePlayer, advanceEpisode: async () => false,
+    homeServerRows: [], categories: [], catalogConfigs: [], selected: null, streams: playbackSources, activeStream, activeChannel, selectedEpisode: null,
+    playStream: (stream: StreamSource, options?: { forceRemux?: boolean }) => { setActiveChannel(null); setActiveStream(options?.forceRemux ? { ...stream, remux: true } : stream); }, closePlayer, advanceEpisode: async () => false,
   } as unknown as AppStore;
   return <AppContext.Provider value={app}>
     <div data-fixture-ready={ready} data-play-requests={playRequests} style={{ maxWidth: 1600, margin: "auto", padding: "18px 20px" }}>
@@ -99,6 +104,8 @@ export function StabilizationFixture({ testLiveUrl, useSourceUrls = false }: { t
         <button onClick={() => setActiveStream({ source: "YouTube player example", addonName: "Test fixture", quality: "", size: "", url: "https://www.youtube.com/watch?v=M7lc1UVf-VE" })}>Test YouTube embed</button>
         <button onClick={() => setActiveStream({ source: "Browser conversion test", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/multi.mkv", remux: true })}>Test MKV browser player</button>
         <button onClick={() => setActiveStream({ source: "Adaptive playback test", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/hls/index.m3u8", transport: "hls" })}>Test HLS browser player</button>
+        <button onClick={() => { setActiveChannel(null); setActiveStream({ source: "Retry recovery test", addonName: "Local fixture", quality: "540p", size: "", url: `http://127.0.0.1:3099/failure-once/${Date.now()}.mp4`, transport: "file", transcoded: true }); }}>Test playback retry</button>
+        <button onClick={() => { setActiveChannel(null); setActiveStream(playbackSources[2]); }}>Test playback source recovery</button>
         <button onClick={() => { sessionStorage.removeItem("arvio.web.noAddonsPrompt.v1:fixture"); setSettings((old) => ({ ...old, homeServers: [], iptvPlaylists: [] })); setPage("onboarding"); setShowOnboarding(true); }}>Test source setup</button>
       </div>
       {showOnboarding && <NoAddonsPrompt />}

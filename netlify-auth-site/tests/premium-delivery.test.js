@@ -64,7 +64,7 @@ test('repeated browser events do not create repeated Blob writes', async () => {
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(require.resolve('../netlify/functions/_premium-funnel'), 'utf8'), {
     module, exports: module.exports, Date, Map, Set,
-    require: name => name === '@netlify/blobs' ? { connectLambda() {}, getStore: () => store } : { privacyHash: (_p, x) => x }
+    require: name => name === '@netlify/blobs' ? { connectLambda() {}, getStore: () => store } : name === './_premium-measurement' ? require('../netlify/functions/_premium-measurement') : { privacyHash: (_p, x) => x }
   });
   const record = module.exports.recordPremiumEvent;
   for (let i = 0; i < 20; i++) await record({}, { email: 'fixture@example.test', eventName: 'playback_started', metadata: { source: String(i) }, occurredAt: '2026-09-08' });

@@ -7,5 +7,6 @@
   "Watching": "ನೋಡುತ್ತಿರುವುದು",
   "Completed": "ಪೂರ್ಣಗೊಂಡಿದೆ",
   "Dropped": "ಕೈಬಿಟ್ಟಿದೆ",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-ಹೊಂದಾಣಿಕೆಯ ವಿಳಾಸ ಬಳಸಿ. ಐಚ್ಛಿಕ ಪ್ರೊಫೈಲ್: username#ProfileName. ಸಂರಕ್ಷಿತ ಪ್ರೊಫೈಲ್: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-ಹೊಂದಾಣಿಕೆಯ ವಿಳಾಸ ಬಳಸಿ. ಐಚ್ಛಿಕ ಪ್ರೊಫೈಲ್: username#ProfileName. ಸಂರಕ್ಷಿತ ಪ್ರೊಫೈಲ್: password#PIN.",
+  "None of your enabled addons provide playback sources.": "ನೀವು ಸಕ್ರಿಯಗೊಳಿಸಿದ ಯಾವುದೇ ಆಡ್‌ಆನ್‌ಗಳು ಪ್ಲೇಬ್ಯಾಕ್ ಮೂಲಗಳನ್ನು ಒದಗಿಸುವುದಿಲ್ಲ."
 }

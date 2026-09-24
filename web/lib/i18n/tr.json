@@ -4,5 +4,6 @@
   "Watching": "İzleniyor",
   "Completed": "Tamamlanan",
   "Dropped": "Bırakılan",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin uyumlu adresi kullanın. İsteğe bağlı profil: username#ProfileName. Korumalı profil: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin uyumlu adresi kullanın. İsteğe bağlı profil: username#ProfileName. Korumalı profil: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Etkin eklentilerinizin hiçbiri oynatma kaynağı sağlamıyor."
 }

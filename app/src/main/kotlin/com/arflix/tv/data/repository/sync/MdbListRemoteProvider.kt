@@ -38,7 +38,14 @@ class MdbListRemoteProvider @Inject constructor(
 
     override suspend fun scrobbleProgress(
         mediaType: MediaType, tmdbId: Int, progress: Float, season: Int?, episode: Int?, isAnime: Boolean
-    ) = repository.scrobble("start", mediaType, tmdbId, progress, season, episode)
+    ) =
+        // A pause, not a start. Verified against the live API: a start removes
+        // the title from /sync/playback and only a pause writes a position back,
+        // so a start heartbeat destroys the resume point every time it fires and
+        // losing power mid-episode discarded the session. MDBList has no
+        // "watching now" endpoint to read the title back from either, so the
+        // paused record is the only thing keeping it in Continue Watching.
+        repository.scrobble("pause", mediaType, tmdbId, progress, season, episode)
 
     override suspend fun scrobbleStop(
         mediaType: MediaType, tmdbId: Int, progress: Float, season: Int?, episode: Int?, isAnime: Boolean
@@ -49,7 +56,7 @@ class MdbListRemoteProvider @Inject constructor(
     override suspend fun getWatchedEpisodes(): Set<String> = repository.getWatchedEpisodes()
 
     override suspend fun getContinueWatching(forceRefresh: Boolean): List<ContinueWatchingItem> =
-        repository.getContinueWatching()
+        repository.getContinueWatching(forceRefresh)
 
     override suspend fun dismissContinueWatching(
         mediaType: MediaType,

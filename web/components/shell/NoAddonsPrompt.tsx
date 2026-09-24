@@ -1,130 +1,47 @@
 "use client";
+
+import { Puzzle, Server, Tv, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
-
-
-import { Puzzle, Settings, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
+import { requestSourceSettings, sourceSetupState } from "@/lib/sourceSetup";
 
 const DISMISS_KEY_PREFIX = "arvio.web.noAddonsPrompt.v1:";
 
 export function NoAddonsPrompt() {
   const translateUi = useTranslation();
-  const {
-    view,
-    section,
-    setSection,
-    activeProfile,
-    addons,
-    addonsReady,
-    settings,
-    closeDetails
-  } = useApp();
+  const { view, section, setSection, activeProfile, addons, addonsReady, settings } = useApp();
   const [dismissal, setDismissal] = useState<{ profileId: string; dismissed: boolean } | null>(null);
-  const browseRef = useRef<HTMLButtonElement>(null);
   const profileId = activeProfile?.id ?? "";
 
   useEffect(() => {
-    if (!profileId) {
-      setDismissal(null);
-      return;
-    }
     let dismissed = false;
-    try {
-      dismissed = window.sessionStorage.getItem(`${DISMISS_KEY_PREFIX}${profileId}`) === "1";
-    } catch {
-      // A blocked session store should not prevent onboarding from rendering.
-    }
+    try { dismissed = window.sessionStorage.getItem(`${DISMISS_KEY_PREFIX}${profileId}`) === "1"; } catch { /* storage is optional */ }
     setDismissal({ profileId, dismissed });
   }, [profileId]);
 
-  const visible =
-    view === "app" &&
-    Boolean(profileId) &&
-    addonsReady &&
-    addons.length === 0 &&
-    !settings.homeServers.some((server) => server.enabled) &&
-    !settings.iptvPlaylists.some((playlist) => playlist.enabled) &&
-    section !== "addons" &&
-    dismissal?.profileId === profileId &&
-    !dismissal.dismissed;
+  const sources = sourceSetupState(addons, settings);
+  if (view !== "app" || section !== "home" || !profileId || !addonsReady || sources.hasAny ||
+    dismissal?.profileId !== profileId || dismissal.dismissed) return null;
 
   const dismiss = () => {
-    if (!profileId) return;
-    try {
-      window.sessionStorage.setItem(`${DISMISS_KEY_PREFIX}${profileId}`, "1");
-    } catch {
-      // Keep the in-memory dismissal when browser storage is unavailable.
-    }
+    try { window.sessionStorage.setItem(`${DISMISS_KEY_PREFIX}${profileId}`, "1"); } catch { /* storage is optional */ }
     setDismissal({ profileId, dismissed: true });
   };
+  const openSettings = (target: "homeserver" | "tv") => {
+    requestSourceSettings(target);
+    setSection("settings");
+  };
 
-  useEffect(() => {
-    if (!visible) return undefined;
-    const focusTimer = window.setTimeout(() => browseRef.current?.focus(), 0);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.clearTimeout(focusTimer);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [visible, profileId]);
-
-  if (!visible) return null;
-
-  return (
-    <div className="modal-scrim no-addons-scrim" onClick={dismiss}>
-      <section
-        className="no-addons-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="no-addons-title"
-        aria-describedby="no-addons-description"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button type="button" className="no-addons-close" onClick={dismiss} aria-label={translateUi("Close")} title={translateUi("Close")}>
-          <X size={20} />
-        </button>
-
-        <div className="no-addons-heading">
-          <span className="no-addons-icon" aria-hidden="true"><Puzzle size={26} /></span>
-          <div>
-            <p className="eyebrow">{translateUi("Sources required")}</p>
-            <h2 id="no-addons-title">{translateUi("Connect your media sources")}</h2>
-          </div>
-        </div>
-
-        <p id="no-addons-description" className="no-addons-copy">
-          {translateUi("ARVIO does not include a film or TV subscription. Connect your Plex, Emby or Jellyfin server in Settings, or add a compatible addon supplied by a service you are authorized to use.")}</p>
-        <p className="no-addons-disclaimer">
-          {translateUi("Catalog information and artwork do not grant viewing rights. Access depends on your own media and the permissions provided by your chosen services.")}</p>
-
-        <div className="no-addons-actions">
-          <button
-            type="button"
-            className="secondary no-addons-settings"
-            onClick={() => {
-              dismiss();
-              closeDetails();
-              setSection("addons");
-            }}
-          >
-            <Settings size={17} /> {translateUi(" Addon settings")}</button>
-          <button
-            type="button"
-            ref={browseRef}
-            className="primary no-addons-browse"
-            onClick={() => {
-              dismiss();
-              closeDetails();
-              setSection("settings");
-            }}
-          >
-            <Settings size={17} /> {translateUi(" Open settings")}</button>
-        </div>
-      </section>
+  return <aside className="source-setup-card" aria-labelledby="source-setup-title">
+    <button type="button" className="no-addons-close" onClick={dismiss} aria-label={translateUi("Close")}><X size={20} /></button>
+    <h2 id="source-setup-title"><Puzzle size={22} />{translateUi("Connect your media sources")}</h2>
+    <p>{translateUi("ARVIO does not include a film or TV subscription. Connect your Plex, Emby or Jellyfin server in Settings, or add a compatible addon supplied by a service you are authorized to use.")}</p>
+    {sources.catalogOnly && <p className="source-setup-warning">{translateUi("None of your enabled addons provide playback sources.")}</p>}
+    <div className="source-setup-actions">
+      <button type="button" className="primary" onClick={() => setSection("addons")}><Puzzle size={17} />{translateUi("Addons")}</button>
+      <button type="button" className="secondary" onClick={() => openSettings("homeserver")}><Server size={17} />{translateUi("Home Server")}</button>
+      <button type="button" className="secondary" onClick={() => openSettings("tv")}><Tv size={17} />{translateUi("Live TV")}</button>
     </div>
-  );
+  </aside>;
 }

@@ -77,6 +77,23 @@ export function resolverMediaUrl(url: string, headers?: Record<string, string>) 
   return endpoint.toString();
 }
 
+/** Relay only a selected source that explicitly requires browser-controlled headers. */
+export function declaredHeaderRelayUrl(url: string, headers?: Record<string, string>) {
+  const entries = Object.entries(headers ?? {});
+  if (!config.resolverUrl || !entries.some(([name]) => /^(referer|origin|user-agent|cookie)$/i.test(name))) return null;
+  // Match the existing resolver's upstream header allowlist. Never silently
+  // drop a provider's custom authentication header just to use the relay.
+  if (entries.some(([name, value]) => !/^(user-agent|referer|origin|icy-metadata|x-forwarded-for|authorization|cookie)$/i.test(name)
+    && !(name.toLowerCase() === "accept" && value === "*/*"))) return null;
+  try {
+    const target = new URL(url);
+    if (target.protocol !== "http:" && target.protocol !== "https:") return null;
+    const relay = new URL(resolverMediaUrl(url, headers)!);
+    if (target.origin === relay.origin && target.pathname === relay.pathname && target.searchParams.has("url")) return null;
+    return relay.toString();
+  } catch { return null; }
+}
+
 // External-player launch interstitial: iOS home-screen webapps silently drop
 // custom-scheme navigations, but the Safari sheet they open for https links can
 // launch app schemes (native "Open in …?" prompt). See worker /launch.

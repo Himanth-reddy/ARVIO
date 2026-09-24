@@ -5,10 +5,13 @@ exports.handler = async (event) => {
   const cors = options(event);
   if (cors) return cors;
   if (event.httpMethod !== "POST") return json(405, { error: "method_not_allowed" });
+  if (String(event.body || "").length > 4096) return json(413, { error: "payload_too_large" });
 
   try {
     const identity = await resolveIdentity(event);
-    const body = parseBody(event);
+    let body;
+    try { body = parseBody(event); } catch { return json(400, { error: "bad_payload" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(400, { error: "bad_payload" });
     const eventName = String(body.event_name || "").trim();
     if (!CLIENT_PREMIUM_EVENTS.has(eventName)) {
       return json(400, { error: "unsupported_event" });
@@ -17,7 +20,8 @@ exports.handler = async (event) => {
       email: identity.email,
       accountId: identity.supabaseUserId,
       eventName,
-      metadata: body.metadata
+      metadata: body.metadata,
+      journeyId: body.journey_id
     });
     return json(200, { ok: true });
   } catch (error) {

@@ -20,4 +20,21 @@ class HomeCatalogRowsTest {
     @Test fun `late placeholder does not erase a loaded deferred catalogue`() {
         assertEquals(20, preserveExtendedCatalogRows(listOf(row(1..0)), listOf(row(1..20))).single().items.size)
     }
+
+    @Test fun `catalogue refresh keeps a continue watching row it does not carry`() {
+        val result = preserveExtendedCatalogRows(
+            incoming = listOf(row(1..8)),
+            current = listOf(row(1..3, "continue_watching"), row(1..8))
+        )
+        assertEquals(listOf("continue_watching", "custom"), result.map { it.id })
+        assertEquals(3, result.first().items.size)
+    }
+
+    @Test fun `an empty continue watching row is not resurrected`() {
+        val result = preserveExtendedCatalogRows(
+            incoming = listOf(row(1..8)),
+            current = listOf(row(1..0, "continue_watching"), row(1..8))
+        )
+        assertEquals(listOf("custom"), result.map { it.id })
+    }
 }

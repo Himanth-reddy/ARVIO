@@ -97,12 +97,12 @@
 
 [[redirects]]
   from = "/go/support/opensource"
-  to = "https://ko-fi.com/arvio?utm_source=arvio.tv&utm_medium=website&utm_campaign=support&utm_content=opensource"
+  to = "https://ko-fi.com/arvio/tiers?utm_source=arvio.tv&utm_medium=website&utm_campaign=support&utm_content=opensource"
   status = 302
   force = true
 
 [[redirects]]
   from = "/go/support/footer"
-  to = "https://ko-fi.com/arvio?utm_source=arvio.tv&utm_medium=website&utm_campaign=support&utm_content=footer"
+  to = "https://ko-fi.com/arvio/tiers?utm_source=arvio.tv&utm_medium=website&utm_campaign=support&utm_content=footer"
   status = 302
   force = true

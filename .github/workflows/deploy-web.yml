@@ -74,7 +74,15 @@ jobs:
         run: npx --yes netlify-cli@25.6.0 build --context production
 
       - name: Record expected build stamp
-        run: echo "EXPECTED_BUILD_STAMP=$(jq -r .v .netlify/static/version.json)" >> "$GITHUB_ENV"
+        shell: bash
+        run: |
+          expected_stamp=$(jq -er '.config.env.NEXT_PUBLIC_BUILD_STAMP' .next/required-server-files.json)
+          route_stamp=$(jq -er '.v' .next/server/app/version.json.body)
+          if [[ ! "$expected_stamp" =~ ^[0-9]{10,16}$ || "$route_stamp" != "$expected_stamp" ]]; then
+            echo "Client and version manifest disagree; refusing to publish an update loop." >&2
+            exit 1
+          fi
+          echo "EXPECTED_BUILD_STAMP=$expected_stamp" >> "$GITHUB_ENV"
 
       # Deploy the generated function source so Netlify preserves its /* route.
       - name: Deploy to production

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import './generate-translations.mjs';
+import { rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const env = { ...process.env };
@@ -14,6 +15,12 @@ if (env.ARVIO_VERIFY_BUILD_CONFIG === "true") {
     throw new Error("Missing or masked public Cloud client key; refusing production build.");
   }
 }
+// Validate configuration before generating files or starting the build.
+// One stamp is inherited by every Next worker. Remove only the obsolete public
+// generated file, whose route is now built atomically with the client bundle.
+env.ARVIO_BUILD_STAMP = String(Date.now());
+rmSync(fileURLToPath(new URL('../public/version.json', import.meta.url)), { force: true });
+await import('./generate-translations.mjs');
 const result = spawnSync(process.execPath, [require.resolve("next/dist/bin/next"), "build"], { env, stdio: "inherit" });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);
