@@ -1109,6 +1109,86 @@ class IptvRepository @Inject constructor(
         }
 
     /**
+     * Subscription end date and stream limit per source id, as last asked.
+     * Local to this device and profile on purpose: it is not part of the
+     * cloud snapshot, so a stale date never travels to another device.
+     */
+    fun observeAccountInfo(): Flow<Map<String, IptvAccountInfo>> =
+        profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
+            decodeAccountInfo(prefs[accountInfoKey()])
+        }
+
+    /**
+     * Asks the provider behind [playlist] for its account details. Plain M3U
+     * files have none and cost no request.
+     */
+    suspend fun fetchAccountInfo(playlist: IptvPlaylistEntry): IptvAccountInfo {
+        val fingerprint = IptvAccountInfoParser.fingerprint(playlist)
+        val now = System.currentTimeMillis()
+        val creds = resolveXtreamCredentials(playlist)
+            ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
+        val url = "${creds.baseUrl}/player_api.php".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("username", creds.username)
+            ?.addQueryParameter("password", creds.password)
+            ?.build()
+            ?.toString()
+            ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
+        val body: JsonObject? = requestJson(url, JsonObject::class.java, client = xtreamLookupHttpClient)
+        return IptvAccountInfoParser.parseXtream(body?.toString(), fingerprint, System.currentTimeMillis())
+            ?: IptvAccountInfoParser.unavailable(fingerprint, System.currentTimeMillis())
+    }
+
+    /**
+     * Asks a Stalker portal for its account details in a session of its own,
+     * the same handshake → profile → request order the channel download uses:
+     * a cached session may sit on a socket the portal closed long ago.
+     */
+    suspend fun fetchAccountInfo(portal: StalkerPortalEntry): IptvAccountInfo = withContext(Dispatchers.IO) {
+        val fingerprint = IptvAccountInfoParser.fingerprint(portal)
+        val body = runCatching {
+            val api = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
+            if (!api.handshake()) return@runCatching null
+            api.getProfile()
+            api.getAccountInfoBody()
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        val now = System.currentTimeMillis()
+        IptvAccountInfoParser.parseStalker(body, fingerprint, now)
+            ?: IptvAccountInfoParser.unavailable(fingerprint, now)
+    }
+
+    suspend fun saveAccountInfo(sourceId: String, info: IptvAccountInfo) {
+        context.settingsDataStore.edit { prefs ->
+            val current = decodeAccountInfo(prefs[accountInfoKey()])
+            prefs[accountInfoKey()] = gson.toJson(current + (sourceId to info))
+        }
+    }
+
+    /** Drops entries whose source no longer exists. */
+    suspend fun retainAccountInfo(sourceIds: Set<String>) {
+        context.settingsDataStore.edit { prefs ->
+            val current = decodeAccountInfo(prefs[accountInfoKey()])
+            val retained = current.filterKeys { it in sourceIds }
+            if (retained.size == current.size) return@edit
+            if (retained.isEmpty()) prefs.remove(accountInfoKey())
+            else prefs[accountInfoKey()] = gson.toJson(retained)
+        }
+    }
+
+    private fun accountInfoKey(): Preferences.Key<String> =
+        profileManager.profileStringKey("iptv_account_info")
+
+    private fun decodeAccountInfo(raw: String?): Map<String, IptvAccountInfo> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val type = TypeToken.getParameterized(
+                Map::class.java, String::class.java, IptvAccountInfo::class.java
+            ).type
+            gson.fromJson<Map<String, IptvAccountInfo>>(raw, type)
+        }.getOrNull().orEmpty()
+    }
+
+    /**
      * The `portalId|categoryId` keys the user switched off for [kind].
      *
      * Empty means "search every category" - see [filterStalkerCategorySelection]

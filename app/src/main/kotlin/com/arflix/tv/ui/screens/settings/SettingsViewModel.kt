@@ -41,6 +41,8 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.PlexPinAuthSession
+import com.arflix.tv.data.repository.IptvAccountInfo
+import com.arflix.tv.data.repository.IptvAccountInfoParser
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.MAX_STALKER_PORTALS
@@ -265,6 +267,10 @@ data class SettingsUiState(
     val iptvEpgUrl: String = "",
     val iptvPlaylists: List<IptvPlaylistEntry> = emptyList(),
     val iptvStalkerPortals: List<StalkerPortalEntry> = emptyList(),
+    /** Subscription end and stream limit per playlist / portal id, as last asked. */
+    val iptvAccountInfo: Map<String, IptvAccountInfo> = emptyMap(),
+    /** Source ids whose account details are being asked right now. */
+    val iptvAccountInfoRefreshing: Set<String> = emptySet(),
     val iptvSortOrder: String = "provider",
     val iptvChannelCount: Int = 0,
     val isIptvLoading: Boolean = false,
@@ -2498,6 +2504,13 @@ class SettingsViewModel @Inject constructor(
 
     private fun observeIptvConfig() {
         viewModelScope.launch {
+            iptvRepository.observeAccountInfo().collect { info ->
+                if (_uiState.value.iptvAccountInfo != info) {
+                    _uiState.value = _uiState.value.copy(iptvAccountInfo = info)
+                }
+            }
+        }
+        viewModelScope.launch {
             iptvRepository.observeConfig().collect { config ->
                 val current = _uiState.value
                 val stalkerConfigured = config.stalkerPortals.any { it.portalUrl.isNotBlank() }
@@ -3077,11 +3090,94 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun persistStalkerPortals(portals: List<StalkerPortalEntry>) {
+        val previous = _uiState.value.iptvStalkerPortals
         viewModelScope.launch {
             iptvRepository.saveStalkerPortals(portals)
+            onIptvSourcesSaved(
+                changedIds = changedAccountSources(previous, portals, { p: StalkerPortalEntry -> p.id }, { p: StalkerPortalEntry -> IptvAccountInfoParser.fingerprint(p) }),
+                playlists = _uiState.value.iptvPlaylists,
+                portals = portals,
+            )
             _uiState.value = _uiState.value.copy(iptvStalkerPortals = portals)
             syncLocalStateToCloud(silent = true)
             refreshIptv(showToast = true, configured = true, force = true)
+        }
+    }
+
+    /**
+     * Ids of sources that are new or whose address / login changed. Toggling,
+     * renaming or reordering keeps the fingerprint, so it asks nothing.
+     */
+    private fun <T> changedAccountSources(
+        previous: List<T>,
+        next: List<T>,
+        id: (T) -> String,
+        fingerprint: (T) -> String,
+    ): Set<String> {
+        val before = previous.associate { id(it) to fingerprint(it) }
+        return next.filter { before[id(it)] != fingerprint(it) }.map(id).toSet()
+    }
+
+    /**
+     * Account details are asked only when a source is added or edited, and via
+     * [refreshIptvAccountInfo] - never on start-up or in the background, to keep
+     * the requests a provider sees to the minimum.
+     */
+    private fun onIptvSourcesSaved(
+        changedIds: Set<String>,
+        playlists: List<IptvPlaylistEntry>,
+        portals: List<StalkerPortalEntry>,
+    ) {
+        viewModelScope.launch {
+            iptvRepository.retainAccountInfo((playlists.map { it.id } + portals.map { it.id }).toSet())
+        }
+        changedIds.forEach { refreshIptvAccountInfo(it, playlists, portals) }
+    }
+
+    /** "Refresh now" in the edit dialog of a playlist or portal. */
+    fun refreshIptvAccountInfo(sourceId: String) {
+        refreshIptvAccountInfo(sourceId, _uiState.value.iptvPlaylists, _uiState.value.iptvStalkerPortals)
+    }
+
+    private fun refreshIptvAccountInfo(
+        sourceId: String,
+        playlists: List<IptvPlaylistEntry>,
+        portals: List<StalkerPortalEntry>,
+    ) {
+        val playlist = playlists.firstOrNull { it.id == sourceId }
+        val portal = portals.firstOrNull { it.id == sourceId }
+        if (playlist == null && portal == null) return
+        if (sourceId in _uiState.value.iptvAccountInfoRefreshing) return
+        _uiState.value = _uiState.value.copy(
+            iptvAccountInfoRefreshing = _uiState.value.iptvAccountInfoRefreshing + sourceId
+        )
+        viewModelScope.launch {
+            try {
+                val info = if (playlist != null) {
+                    iptvRepository.fetchAccountInfo(playlist)
+                } else {
+                    iptvRepository.fetchAccountInfo(portal!!)
+                }
+                val previous = _uiState.value.iptvAccountInfo[sourceId]
+                // A provider that did not answer this time keeps what it said
+                // last time, as long as it is the same account.
+                val keepPrevious = info.status == IptvAccountInfo.STATUS_UNAVAILABLE &&
+                    previous != null &&
+                    previous.status != IptvAccountInfo.STATUS_UNAVAILABLE &&
+                    previous.sourceFingerprint == info.sourceFingerprint
+                if (keepPrevious) {
+                    _uiState.value = _uiState.value.copy(
+                        toastMessage = SettingsMessage.Res(R.string.iptv_account_refresh_failed),
+                        toastType = ToastType.ERROR
+                    )
+                } else {
+                    iptvRepository.saveAccountInfo(sourceId, info)
+                }
+            } finally {
+                _uiState.value = _uiState.value.copy(
+                    iptvAccountInfoRefreshing = _uiState.value.iptvAccountInfoRefreshing - sourceId
+                )
+            }
         }
     }
 
@@ -3121,8 +3217,15 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun saveIptvPlaylists(playlists: List<IptvPlaylistEntry>) {
+        val previous = _uiState.value.iptvPlaylists
         viewModelScope.launch {
             iptvRepository.savePlaylists(playlists)
+            val saved = playlists.filter { it.m3uUrl.isNotBlank() }
+            onIptvSourcesSaved(
+                changedIds = changedAccountSources(previous, saved, { p: IptvPlaylistEntry -> p.id }, { p: IptvPlaylistEntry -> IptvAccountInfoParser.fingerprint(p) }),
+                playlists = saved,
+                portals = _uiState.value.iptvStalkerPortals,
+            )
             _uiState.value = _uiState.value.copy(
                 iptvPlaylists = playlists.filter { it.m3uUrl.isNotBlank() }
             )
