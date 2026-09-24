@@ -1483,7 +1483,10 @@ class StreamRepository @Inject constructor(
         }
 
         // Apply id-prefix filtering per-call (varies by id, cheap string ops).
+        // Skip addons in 429 backoff (see AddonRateLimitTracker) so a rate-limited
+        // addon is not re-scraped by every Details entry / Play press for ~30s.
         return baseCandidates.filter { addon ->
+            if (AddonRateLimitTracker.isCoolingDown(addon.id)) return@filter false
             if (SportsAddonCapabilities.isSportsOnlyLiveTvAddon(addon)) return@filter false
             if (addon.type == AddonType.CUSTOM) return@filter true
             val manifest = addon.manifest
@@ -1846,6 +1849,9 @@ class StreamRepository @Inject constructor(
                 success = false,
                 latencyMs = System.currentTimeMillis() - startedAt
             )
+            if (AddonRateLimitTracker.isRateLimitError(error)) {
+                AddonRateLimitTracker.recordRateLimit(addon.id)
+            }
             emptyList()
         }
     }
@@ -1995,6 +2001,12 @@ class StreamRepository @Inject constructor(
                             throw timeout
                         } catch (error: Exception) {
                             lastError = error
+                            if (AddonRateLimitTracker.isRateLimitError(error)) {
+                                AddonRateLimitTracker.recordRateLimit(addon.id)
+                                // Stop hammering a rate-limited addon with the
+                                // remaining request types for this candidate.
+                                break
+                            }
                             Log.w(
                                 TAG,
                                 "[StreamFetch][Episode] $label failure addon=${addon.name} addonId=${addon.id} type=$requestType error=${error.toShortLogMessage()}"
@@ -2034,9 +2046,12 @@ class StreamRepository @Inject constructor(
                         preferAnimePath = candidate.preferAnimePath
                     )
                     if (addonStreams.isNotEmpty()) break
+                    // A 429 on an earlier candidate cools the addon down: skip
+                    // the remaining ID candidates instead of re-hitting it.
+                    if (AddonRateLimitTracker.isCoolingDown(addon.id)) break
                 }
 
-                if (addonStreams.isEmpty() && nativeAnimeAddon) {
+                if (addonStreams.isEmpty() && nativeAnimeAddon && !AddonRateLimitTracker.isCoolingDown(addon.id)) {
                     // Only resolve an anime id when this item actually looked like anime. The
                     // retry fires purely because a native-anime addon returned nothing, so without
                     // this guard a non-anime title (an Israeli drama, say) gets run through the
@@ -2080,7 +2095,10 @@ class StreamRepository @Inject constructor(
                 // Daily show fallback: try air-date-based numbering (S{year}E{dayOfYear})
                 // for shows like Jeopardy, talk shows, news where debrid files use
                 // date-based episode IDs instead of TMDB sequential numbering.
-                if (addonStreams.isEmpty() && airDate != null && airDate.length >= 10) {
+                // Skipped while the addon is in 429 cooldown (see above).
+                if (addonStreams.isEmpty() && airDate != null && airDate.length >= 10 &&
+                    !AddonRateLimitTracker.isCoolingDown(addon.id)
+                ) {
                     try {
                         val dateParts = airDate.split("-")
                         if (dateParts.size == 3) {
@@ -2112,6 +2130,9 @@ class StreamRepository @Inject constructor(
                             }
                         }
                     } catch (airDateError: Exception) {
+                        if (AddonRateLimitTracker.isRateLimitError(airDateError)) {
+                            AddonRateLimitTracker.recordRateLimit(addon.id)
+                        }
                         Log.w(
                             TAG,
                             "[StreamFetch][Episode] airDate failure addon=${addon.name} addonId=${addon.id} error=${airDateError.toShortLogMessage()}"
@@ -2162,6 +2183,9 @@ class StreamRepository @Inject constructor(
                 success = false,
                 latencyMs = System.currentTimeMillis() - startedAt
             )
+            if (AddonRateLimitTracker.isRateLimitError(error)) {
+                AddonRateLimitTracker.recordRateLimit(addon.id)
+            }
             emptyList()
         }
     }
@@ -2251,7 +2275,9 @@ class StreamRepository @Inject constructor(
         forceRefresh: Boolean = false,
         sequential: Boolean = false
     ): Flow<ProgressiveStreamResult> = callbackFlow {
-        repositoryScope.launch {
+        // Retained so cancelling the collector (back-nav, superseded prefetch)
+        // also stops the scrape instead of leaking it in repositoryScope.
+        val workerJob = repositoryScope.launch {
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
@@ -2487,7 +2513,7 @@ class StreamRepository @Inject constructor(
                 }
             }
         }
-        awaitClose { }
+        awaitClose { workerJob.cancel() }
     }
 
     suspend fun resolveMovieVodOnly(
@@ -2851,7 +2877,9 @@ class StreamRepository @Inject constructor(
         airDate: String? = null,
         sequential: Boolean = false
     ): Flow<ProgressiveStreamResult> = callbackFlow {
-        repositoryScope.launch {
+        // Retained so cancelling the collector (back-nav, superseded prefetch)
+        // also stops the scrape instead of leaking it in repositoryScope.
+        val workerJob = repositoryScope.launch {
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
@@ -3113,7 +3141,7 @@ class StreamRepository @Inject constructor(
                 }
             }
         }
-        awaitClose { }
+        awaitClose { workerJob.cancel() }
     }
 
     suspend fun resolveEpisodeVodOnly(

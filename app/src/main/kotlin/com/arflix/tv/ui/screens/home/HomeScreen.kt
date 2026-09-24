@@ -3027,6 +3027,7 @@ private fun MobileHomeRowsLayer(
             val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
             val isPortrait = category.isPortrait(rowUsePosterCards)
             val rowMobileItemWidth = if (isPortrait) 120.dp else 200.dp
+            // The keyed lazy item saves this state across disposal and navigation.
             val rowState = rememberLazyListState()
 
             LaunchedEffect(rowState, category.id) {

@@ -565,7 +565,8 @@ fun SettingsScreen(
         }
     }
 
-    var isSidebarFocused by remember { mutableStateOf(false) }
+    val arrivesAtTopLevel = initialSection == null
+    var isSidebarFocused by remember { mutableStateOf(arrivesAtTopLevel) }
     val hasProfile = currentProfile != null
     val maxSidebarIndex = topBarMaxIndex(hasProfile)
     var sidebarFocusIndex by remember { mutableIntStateOf(if (hasProfile) 5 else 4) } // SETTINGS
@@ -588,7 +589,7 @@ fun SettingsScreen(
     var pluginsMaxIndex by remember { mutableIntStateOf(0) }
     var pluginsEnterTrigger by remember { mutableIntStateOf(-1) }
     var pluginsModalOpen by remember { mutableStateOf(false) }
-    var activeZone by remember { mutableStateOf(Zone.CONTENT) }
+    var activeZone by remember { mutableStateOf(if (arrivesAtTopLevel) Zone.SIDEBAR else Zone.CONTENT) }
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
 
     // Sub-focus for stream integration rows: 0 = toggle, 1 = up, 2 = down, 3 = configure
@@ -4930,6 +4931,9 @@ private fun MobileSettingsSubPage(
 ) {
 
     val scrollState = rememberScrollState()
+    LaunchedEffect(page) {
+        scrollState.scrollTo(0)
+    }
     var showStalkerRename by remember { mutableStateOf(false) }
     var stalkerRenameId by remember { mutableStateOf("") }
     var stalkerRenameName by remember { mutableStateOf("") }
