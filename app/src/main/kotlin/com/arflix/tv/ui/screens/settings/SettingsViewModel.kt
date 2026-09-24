@@ -4459,11 +4459,7 @@ class SettingsViewModel @Inject constructor(
                     // job, and waiting here would put it at the mercy of a dismiss.
                     viewModelScope.launch {
                         delay(2_000L)
-                        _uiState.value = _uiState.value.copy(
-                            traktCode = null,
-                            traktCodeExpiresAtMillis = null,
-                            traktAuthOutcome = null
-                        )
+                        _uiState.value = _uiState.value.dismissTraktSuccess(deviceCode.deviceCode)
                     }
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
@@ -4515,29 +4511,9 @@ class SettingsViewModel @Inject constructor(
                 }
             }
 
-            // Ran out of time, or failed for a real reason. On a plain timeout the dialog now
-            // reports the expiry itself and offers a retry, so the toast would say the same thing
-            // twice and the window would be gone before it could be read. Every real failure
-            // (404, 409, 418, any other HTTP code) keeps the old behaviour: toast, dialog closed.
-            if (lastFailure == null) {
-                _uiState.value = _uiState.value.copy(
-                    traktAuthOutcome = TraktAuthOutcome.EXPIRED,
-                    isTraktAuthStarting = false,
-                    isTraktPolling = false,
-                    traktUsername = null
-                )
-            } else {
-                _uiState.value = _uiState.value.copy(
-                    traktCode = null,
-                    traktCodeExpiresAtMillis = null,
-                    traktAuthOutcome = null,
-                    isTraktAuthStarting = false,
-                    isTraktPolling = false,
-                    traktUsername = null,
-                    toastMessage = lastFailure,
-                    toastType = ToastType.ERROR
-                )
-            }
+            // Local timeout and server-reported expiry both offer Retry; other failures keep
+            // their error toast and dismiss the dialog.
+            _uiState.value = _uiState.value.finishTraktActivationPolling(lastFailure)
         }
     }
 
