@@ -542,6 +542,9 @@
     <string name="mdblist_connect_title">Connect MDBList</string>
     <string name="mdblist_disconnect_confirm_title">Disconnect MDBList?</string>
     <string name="mdblist_disconnect_confirm_desc">Your watch history and lists will no longer sync.</string>
+    <string name="mdblist_invalid_key">Invalid MDBList API key</string>
+    <string name="mdblist_key_hint">Paste your MDBList API key</string>
+    <string name="mdblist_key_help">Get your API key from mdblist.com/preferences</string>
     <string name="mdblist_auth_error">MDBList connection failed: %1$s</string>
     <string name="mdblist_code_expired">MDBList code expired. Please try again.</string>
     <string name="mdblist_code_denied">MDBList authorization denied.</string>
