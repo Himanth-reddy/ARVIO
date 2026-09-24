@@ -239,7 +239,7 @@ class SearchViewModel @Inject constructor(
                     }
                 }
                 categories.forEach { cat -> cat.items.forEach { mediaRepository.cacheItem(it) } }
-                _uiState.value = _uiState.value.copy(discoverCategories = categories, isDiscoverLoading = false)
+                _uiState.value = _uiState.value.copy(discoverCategories = markWatched(categories), isDiscoverLoading = false)
                 // Fetch logos for top items in each row (background, non-blocking)
                 launch(Dispatchers.IO) {
                     val slots = Semaphore(3)
@@ -450,7 +450,7 @@ class SearchViewModel @Inject constructor(
             val fresh = collected.items.filter { known.add(it.mediaType to it.id) }
             gridPage = collected.lastPage
             _uiState.value = current.copy(
-                discoverGridItems = existing + fresh,
+                discoverGridItems = existing + markWatched(fresh),
                 isGridLoading = false,
                 isGridLoadingMore = false,
                 gridEndReached = collected.endReached,
@@ -477,7 +477,7 @@ class SearchViewModel @Inject constructor(
      * pages instead, which is the price of that filter and the reason for the cap.
      */
     private suspend fun collectGridPages(state: SearchUiState, today: String, startPage: Int): GridPageResult {
-        val watchedFilter = if (state.hideWatched) watchedIdsFor(state.selectedType) else null
+        val watchedFilter = if (state.hideWatched) watchedMatcher() else null
         val collected = mutableListOf<MediaItem>()
         var page = startPage
         var endReached = false
@@ -525,9 +525,10 @@ class SearchViewModel @Inject constructor(
      *
      * A film is watched when it is in the watched list. A series has no such single mark, so
      * "watched" means "already started" — the reading that actually helps while discovering,
-     * since a series you are halfway through is not something you need offered again.
+     * since a series you are halfway through is not something you need offered again. Home
+     * marks its cards by the same two lookups, so a title carries the same tick on both screens.
      */
-    private fun watchedIdsFor(type: DiscoverType): (MediaItem) -> Boolean {
+    private fun watchedMatcher(): (MediaItem) -> Boolean {
         val watchedMovies = traktRepository.getWatchedMoviesFromCache()
         return { item ->
             when (item.mediaType) {
@@ -536,6 +537,24 @@ class SearchViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * Sets [MediaItem.isWatched] so the cards show the same watched tick as on Home.
+     *
+     * TMDB answers never carry the flag, so without this every title on this screen looked
+     * unwatched. Applied only to what goes into the UI state: the items handed to
+     * [MediaRepository.cacheItem] and the cached search answers stay unmarked, so a later
+     * publish reads the watched list as it is then, not as it was when the answer arrived.
+     */
+    private fun markWatched(items: List<MediaItem>): List<MediaItem> {
+        if (items.isEmpty()) return items
+        val isWatched = watchedMatcher()
+        return items.map { item -> if (!item.isWatched && isWatched(item)) item.copy(isWatched = true) else item }
+    }
+
+    @JvmName("markWatchedRows")
+    private fun markWatched(rows: List<Category>): List<Category> =
+        rows.map { row -> row.copy(items = markWatched(row.items)) }
 
     /**
      * Identifies the filter set a request was started for. A page that comes back after the
@@ -749,9 +768,11 @@ class SearchViewModel @Inject constructor(
                 }
                 val sorted = cachedSuggestionResults
                 val peopleRows = cachedPeopleResults
-                _uiState.update { it.copy(isLoading = sorted.isEmpty() && peopleRows.isEmpty() && peopleNeedingCredits.isNotEmpty(), results = sorted,
-                    movieResults = sorted.filter { item -> item.mediaType == MediaType.MOVIE },
-                    tvResults = sorted.filter { item -> item.mediaType == MediaType.TV }, personResults = peopleRows) }
+                val marked = markWatched(sorted)
+                val markedPeople = markWatched(peopleRows)
+                _uiState.update { it.copy(isLoading = sorted.isEmpty() && peopleRows.isEmpty() && peopleNeedingCredits.isNotEmpty(), results = marked,
+                    movieResults = marked.filter { item -> item.mediaType == MediaType.MOVIE },
+                    tvResults = marked.filter { item -> item.mediaType == MediaType.TV }, personResults = markedPeople) }
 
                 // Cards are usable now. Bounded, cancellable logo enrichment never replaces the rows.
                 val slots = Semaphore(3)
@@ -768,7 +789,7 @@ class SearchViewModel @Inject constructor(
                             if (credits.isNotEmpty()) {
                                 val row = Category("person_${person.personId}", person.name, credits.distinctBy { it.mediaType to it.id })
                                 cachedPeopleResults = cachedPeopleResults + row
-                                _uiState.update { it.copy(personResults = it.personResults + row, isLoading = false) }
+                                _uiState.update { it.copy(personResults = it.personResults + row.copy(items = markWatched(row.items)), isLoading = false) }
                             }
                         }
                         peopleNeedingCredits = emptyList()
@@ -837,7 +858,7 @@ class SearchViewModel @Inject constructor(
                     }
                 }
                 items.forEach { mediaRepository.cacheItem(it) }
-                _uiState.value = _uiState.value.copy(isLoading = false, aiResults = if (sq.limit != null) items.take(sq.limit) else items)
+                _uiState.value = _uiState.value.copy(isLoading = false, aiResults = markWatched(if (sq.limit != null) items.take(sq.limit) else items))
             } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e
  _uiState.value = _uiState.value.copy(isLoading = false, error = e.message) }
         }

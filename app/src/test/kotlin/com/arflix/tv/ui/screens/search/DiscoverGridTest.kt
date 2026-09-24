@@ -408,4 +408,33 @@ class DiscoverGridTest {
         assertFalse(state.hideWatched)
         assertTrue(state.discoverGridItems.isEmpty())
     }
+
+    @Test fun gridCardsCarryTheWatchedTickLikeHome() = runBlocking {
+        every { trakt.getWatchedMoviesFromCache() } returns setOf(1)
+        coEvery {
+            repository.discoverMovies(genres = "28", page = 1, sortBy = any(), minVoteCount = any(), language = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any(), primaryReleaseDateLte = any(), primaryReleaseDateGte = any())
+        } returns listOf(movie(1), movie(2))
+
+        model.toggleGenre(action)
+        val state = withTimeout(5_000) { model.uiState.first { it.discoverGridItems.size == 2 } }
+
+        // TMDB never sends the flag; without it every card here looked unwatched.
+        assertEquals(listOf(true, false), state.discoverGridItems.map { it.isWatched })
+    }
+
+    @Test fun browseRowsCarryTheWatchedTickToo() = runBlocking {
+        every { trakt.getWatchedMoviesFromCache() } returns setOf(9)
+        coEvery {
+            repository.discoverMovies(genres = null, page = any(), sortBy = any(), minVoteCount = any(), language = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any(), primaryReleaseDateLte = any(), primaryReleaseDateGte = any())
+        } returns listOf(movie(9), movie(10))
+
+        // On and off again: the rows reload with the stubs above in place.
+        model.toggleGenre(action)
+        model.toggleGenre(action)
+        val state = withTimeout(5_000) { model.uiState.first { it.discoverCategories.isNotEmpty() } }
+
+        state.discoverCategories.forEach { row ->
+            assertEquals(listOf(true, false), row.items.map { it.isWatched })
+        }
+    }
 }
