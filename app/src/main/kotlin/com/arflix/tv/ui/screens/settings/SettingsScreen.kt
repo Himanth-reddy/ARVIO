@@ -9450,16 +9450,19 @@ private fun StremioAddonsSettings(
                                 }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
-                            // Toggle switch (dimmed while the addon still has to be set up)
-                            Box(modifier = Modifier.alpha(if (needsSetup) 0.35f else 1f).width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
-                                Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
-                            }
-                            if (settingsUrl != null && needsSetup) {
-                                Spacer(modifier = Modifier.width(12.dp))
+                            if (needsSetup && settingsUrl != null) {
+                                // Replaces the toggle: it cannot be switched on before setup anyway,
+                                // and the row is too narrow on phones for both.
                                 Box(modifier = Modifier.clickable { openExternalUrl(context, settingsUrl) }.background(AddonSetupRequiredColor, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 7.dp), contentAlignment = Alignment.Center) {
                                     Text(stringResource(R.string.settings_addon_setup), style = ArflixTypography.button.copy(fontSize = 13.sp), color = Color.Black, maxLines = 1)
                                 }
-                            } else if (settingsUrl != null) {
+                            } else {
+                                // Toggle switch
+                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                }
+                            }
+                            if (settingsUrl != null && !needsSetup) {
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Box(modifier = Modifier.size(32.dp).clickable { openExternalUrl(context, settingsUrl) }.background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
                                     Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_addon_configure), tint = TextSecondary, modifier = Modifier.size(18.dp))
