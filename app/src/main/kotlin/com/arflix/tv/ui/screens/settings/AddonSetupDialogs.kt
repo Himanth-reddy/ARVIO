@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
@@ -213,8 +215,10 @@ internal fun AddonInstallDialog(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun AddonConfigureQrDialog(addon: Addon, url: String, onDismiss: () -> Unit) {
+    // Wide and with a modest QR code, so title, code, hint and button fit a 540 dp tall TV.
     AddonDialogFrame(
         onDismiss = onDismiss,
+        tvWidth = 560.dp,
         options = listOf(DialogOption(stringResource(R.string.close), true, onDismiss))
     ) {
         Text(
@@ -226,7 +230,7 @@ internal fun AddonConfigureQrDialog(addon: Addon, url: String, onDismiss: () -> 
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .size(220.dp)
+                .size(160.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(Color.White)
                 .padding(10.dp),
@@ -259,6 +263,7 @@ internal fun AddonConfigureQrDialog(addon: Addon, url: String, onDismiss: () -> 
 private fun AddonDialogFrame(
     onDismiss: () -> Unit,
     options: List<DialogOption>,
+    tvWidth: Dp = 440.dp,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -283,10 +288,11 @@ private fun AddonDialogFrame(
                 modifier = Modifier
                     .then(
                         if (isTouchDevice) Modifier.fillMaxWidth(0.92f).widthIn(max = 440.dp)
-                        else Modifier.width(440.dp)
+                        else Modifier.width(tvWidth)
                     )
                     .background(BackgroundElevated, RoundedCornerShape(16.dp))
-                    .padding(if (isTouchDevice) 20.dp else 28.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(if (isTouchDevice) 20.dp else 24.dp)
                     .focusRequester(focusRequester)
                     .focusable()
                     .onPreviewKeyEvent { event ->
