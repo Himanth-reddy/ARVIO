@@ -342,7 +342,11 @@ class MediaRepository @Inject constructor(
         }
 
         val resolved = refs.toList()
-        if (resolved.isNotEmpty()) {
+        // Source failures are swallowed into empty lists above, so an empty source may just be a
+        // transient error. Caching the partial result would hide that source's titles for the
+        // whole TTL, even when the collection is reopened; only cache when every source delivered.
+        val everySourceDelivered = perSourceRefs.none { it.isEmpty() }
+        if (resolved.isNotEmpty() && everySourceDelivered) {
             collectionRefsCache[cacheKey] = CacheEntry(resolved, System.currentTimeMillis())
         }
         return resolved
@@ -2108,10 +2112,15 @@ class MediaRepository @Inject constructor(
         }.getOrNull()
     }
 
+    /**
+     * One page of a collection. With [mediaType] set, only refs of that type are paged, and
+     * [offset] / the returned `nextOffset` count positions within that filtered list.
+     */
     suspend fun loadCollectionCatalogPage(
         catalog: CatalogConfig,
         offset: Int,
-        limit: Int
+        limit: Int,
+        mediaType: MediaType? = null
     ): CategoryPageResult = coroutineScope {
         if (catalog.collectionSources.isEmpty() || limit <= 0 || offset < 0) {
             return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
@@ -2120,7 +2129,7 @@ class MediaRepository @Inject constructor(
         val refs = resolveCollectionCatalogRefs(
             catalog = catalog,
             requiredCount = (offset + limit).coerceAtLeast(limit)
-        )
+        ).let { all -> if (mediaType == null) all else all.filter { it.first == mediaType } }
         if (refs.isEmpty()) return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
 
         val pageRefs = refs.drop(offset).take(limit)
@@ -2153,7 +2162,37 @@ class MediaRepository @Inject constructor(
         jobs.forEach { it.await() }
         val items = pageRefs.mapNotNull { itemsByRef[it] }
         if (items.isNotEmpty()) cacheItems(items)
-        CategoryPageResult(items = items, hasMore = offset + pageRefs.size < refs.size)
+        // nextOffset counts consumed refs, not returned items: a failed lookup drops an item, and
+        // counting items would make the next page start inside this one.
+        CategoryPageResult(
+            items = items,
+            hasMore = offset + pageRefs.size < refs.size,
+            nextOffset = offset + pageRefs.size
+        )
+    }
+
+    /**
+     * Add-on catalog sources of [catalog] whose add-on is not installed or is disabled. Those
+     * sources silently load nothing, so the UI can name them instead of showing an empty page.
+     */
+    suspend fun missingCollectionAddons(catalog: CatalogConfig): List<String> {
+        return catalog.collectionSources
+            .filter { it.kind == CollectionSourceKind.ADDON_CATALOG }
+            .filter { source ->
+                val catalogType = source.addonCatalogType?.trim().orEmpty()
+                val catalogId = source.addonCatalogId?.trim().orEmpty()
+                catalogType.isNotBlank() && catalogId.isNotBlank() &&
+                    streamRepository.findInstalledAddonIdForCatalog(
+                        catalogType = catalogType,
+                        catalogId = catalogId,
+                        preferredAddonId = source.addonId
+                    ) == null
+            }
+            .map { source ->
+                source.addonId?.trim()?.takeIf { it.isNotBlank() }
+                    ?: "${source.addonCatalogType?.trim()}/${source.addonCatalogId?.trim()}"
+            }
+            .distinct()
     }
 
     private suspend fun resolveCollectionSourceRefs(
