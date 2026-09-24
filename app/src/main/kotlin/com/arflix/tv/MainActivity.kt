@@ -198,6 +198,7 @@ class MainActivity : ComponentActivity() {
     private var jankStats: JankStats? = null
     private var pendingLauncherRequest by mutableStateOf<LauncherContinueWatchingRequest?>(null)
     private var pendingInstallPackUrl by mutableStateOf<String?>(null)
+    private var pendingInstallAddonUrl by mutableStateOf<String?>(null)
 
     // StartupViewModel for parallel loading during splash
     private val startupViewModel: StartupViewModel by viewModels()
@@ -237,6 +238,7 @@ class MainActivity : ComponentActivity() {
         overridePendingTransition(0, 0)
         pendingLauncherRequest = parseLauncherRequest(intent)
         pendingInstallPackUrl = parseInstallPackUrl(intent)
+        pendingInstallAddonUrl = parseInstallAddonUrl(intent)
 
         val crashPrefs = getSharedPreferences("arvio_crash_store", Context.MODE_PRIVATE)
         if (crashPrefs.getBoolean("has_pending_crash_report", false)) {
@@ -395,6 +397,8 @@ class MainActivity : ComponentActivity() {
                         onConsumeLauncherRequest = { pendingLauncherRequest = null },
                         pendingInstallPackUrl = pendingInstallPackUrl,
                         onConsumeInstallPackUrl = { pendingInstallPackUrl = null },
+                        pendingInstallAddonUrl = pendingInstallAddonUrl,
+                        onConsumeInstallAddonUrl = { pendingInstallAddonUrl = null },
                         preloadedCategories = startupState.categories,
                         preloadedHeroItem = startupState.heroItem,
                         preloadedHeroLogoUrl = startupState.heroLogoUrl,
@@ -458,6 +462,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         pendingLauncherRequest = parseLauncherRequest(intent)
         pendingInstallPackUrl = parseInstallPackUrl(intent)
+        pendingInstallAddonUrl = parseInstallAddonUrl(intent)
         intent.data?.let { uri ->
             android.util.Log.d("MainActivity", "Received intent data URI in onNewIntent: $uri")
             if (uri.scheme == "arvio" && uri.host == "discord" && uri.path == "/auth") {
@@ -503,6 +508,12 @@ private fun MainActivity.parseInstallPackUrl(intent: android.content.Intent?): S
     } else {
         null
     }
+}
+
+/** The install link behind an addon website's "Install" button (stremio://host/.../manifest.json). */
+private fun MainActivity.parseInstallAddonUrl(intent: android.content.Intent?): String? {
+    val data = intent?.data ?: return null
+    return if (data.scheme.equals("stremio", ignoreCase = true)) data.toString() else null
 }
 
 private fun ComponentActivity.runAfterFirstDraw(block: () -> Unit) {
@@ -627,6 +638,8 @@ fun ArflixApp(
     onConsumeLauncherRequest: () -> Unit = {},
     pendingInstallPackUrl: String? = null,
     onConsumeInstallPackUrl: () -> Unit = {},
+    pendingInstallAddonUrl: String? = null,
+    onConsumeInstallAddonUrl: () -> Unit = {},
     preloadedCategories: List<com.arflix.tv.data.model.Category> = emptyList(),
     preloadedHeroItem: com.arflix.tv.data.model.MediaItem? = null,
     preloadedHeroLogoUrl: String? = null,
@@ -998,6 +1011,19 @@ fun ArflixApp(
             launchSingleTop = true
         }
         onConsumeInstallPackUrl()
+    }
+
+    LaunchedEffect(activeProfile?.id, pendingInstallAddonUrl) {
+        val addonUrl = pendingInstallAddonUrl ?: return@LaunchedEffect
+        if (activeProfile == null) return@LaunchedEffect
+
+        val encodedUrl = java.net.URLEncoder.encode(addonUrl, "UTF-8")
+        val route = "settings?initialSection=stremio&installAddonUrl=$encodedUrl"
+        navController.navigate(route) {
+            popUpTo(Screen.ProfileSelection.route) { inclusive = true }
+            launchSingleTop = true
+        }
+        onConsumeInstallAddonUrl()
     }
 }
 
