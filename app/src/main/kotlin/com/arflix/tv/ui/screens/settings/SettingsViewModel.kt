@@ -3136,6 +3136,21 @@ class SettingsViewModel @Inject constructor(
         changedIds.forEach { refreshIptvAccountInfo(it, playlists, portals, automatic = true) }
     }
 
+    /**
+     * "Refresh IPTV" on the TV settings page: reloads channels and EPG as
+     * before and, once that is done, asks every playlist and portal for its
+     * account details too - a user who refreshes everything expects the
+     * remaining time to be current afterwards.
+     */
+    fun refreshIptvAndAccountInfo() {
+        refreshIptv()
+        val playlists = _uiState.value.iptvPlaylists
+        val portals = _uiState.value.iptvStalkerPortals
+        (playlists.map { it.id } + portals.map { it.id }).forEach {
+            refreshIptvAccountInfo(it, playlists, portals, automatic = true)
+        }
+    }
+
     /** "Refresh now" in the edit dialog of a playlist or portal. */
     fun refreshIptvAccountInfo(sourceId: String) {
         refreshIptvAccountInfo(sourceId, _uiState.value.iptvPlaylists, _uiState.value.iptvStalkerPortals, automatic = false)

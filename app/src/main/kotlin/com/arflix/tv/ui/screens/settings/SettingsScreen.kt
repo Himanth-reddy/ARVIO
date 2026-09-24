@@ -2232,7 +2232,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -2296,7 +2296,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -5490,7 +5490,7 @@ private fun MobileSettingsSubPage(
                             viewModel.saveIptvPlaylists(updated)
                         }
                     },
-                    onRefresh = { viewModel.refreshIptv() },
+                    onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                     onDelete = { viewModel.clearIptvConfig() },
                     onManageCategories = { playlistId ->
                         viewModel.setIptvSelectedPlaylistId(playlistId)
