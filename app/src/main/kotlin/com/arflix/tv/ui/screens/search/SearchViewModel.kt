@@ -165,6 +165,7 @@ class SearchViewModel @Inject constructor(
     private var gridPage = 0
     private var gridGeneration = 0L
     private var gridJob: Job? = null
+    private var watchedMarksJob: Job? = null
 
     private fun cancelGridLoad() {
         gridGeneration++
@@ -525,15 +526,18 @@ class SearchViewModel @Inject constructor(
      *
      * A film is watched when it is in the watched list. A series has no such single mark, so
      * "watched" means "already started" — the reading that actually helps while discovering,
-     * since a series you are halfway through is not something you need offered again. Home
-     * marks its cards by the same two lookups, so a title carries the same tick on both screens.
+     * since a series you are halfway through is not something you need offered again. These are
+     * the two lookups Home marks its cards by.
      */
     private fun watchedMatcher(): (MediaItem) -> Boolean {
         val watchedMovies = traktRepository.getWatchedMoviesFromCache()
+        // hasWatchedEpisodes walks every watched episode key, and the same show sits in several
+        // rows at once - ask once per show, not once per card.
+        val startedShows = HashMap<Int, Boolean>()
         return { item ->
             when (item.mediaType) {
                 MediaType.MOVIE -> item.id in watchedMovies
-                MediaType.TV -> traktRepository.hasWatchedEpisodes(item.id)
+                MediaType.TV -> startedShows.getOrPut(item.id) { traktRepository.hasWatchedEpisodes(item.id) }
             }
         }
     }
@@ -545,16 +549,58 @@ class SearchViewModel @Inject constructor(
      * unwatched. Applied only to what goes into the UI state: the items handed to
      * [MediaRepository.cacheItem] and the cached search answers stay unmarked, so a later
      * publish reads the watched list as it is then, not as it was when the answer arrived.
+     * An unchanged list comes back as the same instance, so a refresh that finds nothing new
+     * recomposes nothing.
      */
-    private fun markWatched(items: List<MediaItem>): List<MediaItem> {
-        if (items.isEmpty()) return items
-        val isWatched = watchedMatcher()
-        return items.map { item -> if (!item.isWatched && isWatched(item)) item.copy(isWatched = true) else item }
+    private fun markWatched(
+        items: List<MediaItem>,
+        isWatched: (MediaItem) -> Boolean = watchedMatcher()
+    ): List<MediaItem> {
+        if (items.none { it.isWatched != isWatched(it) }) return items
+        return items.map { item ->
+            val watched = isWatched(item)
+            if (item.isWatched == watched) item else item.copy(isWatched = watched)
+        }
     }
 
     @JvmName("markWatchedRows")
-    private fun markWatched(rows: List<Category>): List<Category> =
-        rows.map { row -> row.copy(items = markWatched(row.items)) }
+    private fun markWatched(
+        rows: List<Category>,
+        isWatched: (MediaItem) -> Boolean = watchedMatcher()
+    ): List<Category> {
+        if (rows.none { row -> row.items.any { it.isWatched != isWatched(it) } }) return rows
+        return rows.map { row -> row.copy(items = markWatched(row.items, isWatched)) }
+    }
+
+    /**
+     * Brings the ticks up to date on everything already on screen.
+     *
+     * The screen keeps its rows, grid and results for the session (E5), so a title watched after
+     * opening it from here came back without its tick. Called whenever the screen resumes; it
+     * also covers the watched list not being loaded yet when the results first arrived, the
+     * same list Home loads before marking its own cards.
+     */
+    fun refreshWatchedMarks() {
+        watchedMarksJob?.cancel()
+        watchedMarksJob = viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { traktRepository.initializeWatchedCache() }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { /* keep whatever the cache already holds */ }
+            _uiState.update { state ->
+                val isWatched = watchedMatcher()
+                state.copy(
+                    discoverCategories = markWatched(state.discoverCategories, isWatched),
+                    discoverGridItems = markWatched(state.discoverGridItems, isWatched),
+                    results = markWatched(state.results, isWatched),
+                    movieResults = markWatched(state.movieResults, isWatched),
+                    tvResults = markWatched(state.tvResults, isWatched),
+                    personResults = markWatched(state.personResults, isWatched),
+                    aiResults = markWatched(state.aiResults, isWatched)
+                )
+            }
+        }
+    }
 
     /**
      * Identifies the filter set a request was started for. A page that comes back after the

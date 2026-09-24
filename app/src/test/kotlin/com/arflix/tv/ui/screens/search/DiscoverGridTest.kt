@@ -437,4 +437,25 @@ class DiscoverGridTest {
             assertEquals(listOf(true, false), row.items.map { it.isWatched })
         }
     }
+
+    @Test fun returningToTheScreenBringsTheTicksUpToDate() = runBlocking {
+        coEvery {
+            repository.discoverMovies(genres = "28", page = 1, sortBy = any(), minVoteCount = any(), language = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any(), primaryReleaseDateLte = any(), primaryReleaseDateGte = any())
+        } returns listOf(movie(1), movie(2))
+        model.toggleGenre(action)
+        val before = withTimeout(5_000) { model.uiState.first { it.discoverGridItems.size == 2 } }
+        assertEquals(listOf(false, false), before.discoverGridItems.map { it.isWatched })
+
+        // Film 2 opened from the grid and watched: the grid is kept for the session (E5), so
+        // only the refresh on the way back can give it its tick.
+        every { trakt.getWatchedMoviesFromCache() } returns setOf(2)
+        model.refreshWatchedMarks()
+        withTimeout(5_000) { model.uiState.first { it.discoverGridItems.map { item -> item.isWatched } == listOf(false, true) } }
+
+        // Marked unwatched again: the tick goes as well.
+        every { trakt.getWatchedMoviesFromCache() } returns emptySet()
+        model.refreshWatchedMarks()
+        withTimeout(5_000) { model.uiState.first { it.discoverGridItems.none { item -> item.isWatched } } }
+        coVerify(atLeast = 1) { trakt.initializeWatchedCache() }
+    }
 }
