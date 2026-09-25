@@ -73,26 +73,29 @@ fun SourceInfoOverlay(
                 Column(
                     horizontalAlignment = Alignment.End
                 ) {
-                    // Quality badge
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.HighQuality,
-                            contentDescription = null,
-                            tint = getQualityColor(source.quality),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = source.quality.uppercase(),
-                            style = ArflixTypography.label,
-                            color = getQualityColor(source.quality)
-                        )
-                    }
+                    // Quality badge - only when the source actually names one,
+                    // otherwise the icon would sit next to an empty line.
+                    if (source.quality.isNotBlank()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.HighQuality,
+                                contentDescription = null,
+                                tint = getQualityColor(source.quality),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = source.quality.uppercase(),
+                                style = ArflixTypography.label,
+                                color = getQualityColor(source.quality)
+                            )
+                        }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
 
                     // Source indicator
                     Row(

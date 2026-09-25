@@ -1,4 +1,8 @@
 "use client";
+import { resolveStalkerChannel } from "./stalker";
+import { browserAutoplayCandidates } from "./browserAutoplay";
+import { recordBrowserPlaybackFailure } from "./streamCompatibility";
+import { queueAddons, hasPendingAddons, flushAddonOutbox, pendingAddonSnapshot } from "./addonOutbox";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { LanguageProvider } from "./i18n";
@@ -26,7 +30,7 @@ import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./stor
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
 import { verifyProfilePin } from "./profilePin";
 import { hydratedProfileId } from "./profiles";
-import { flushSettingsOutbox, hasPendingSettings, queueSettings } from "./settingsOutbox";
+import { flushSettingsOutbox, hasPendingSettings, queueSettings, settingsWithPendingEdits } from "./settingsOutbox";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { continueWatchingActivitySignature, createTraktActivityCheck, type TraktActivitySnapshot } from "./traktActivity";
@@ -632,6 +636,8 @@ export function AppProvider({
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [streams, setStreams] = useState<StreamSource[]>([]);
+  const streamsRef = useRef(streams);
+  streamsRef.current = streams;
   const [selectedEpisode, setSelectedEpisode] = useState<{ season: number; episode: number } | null>(null);
   const [activeStream, setActiveStream] = useState<StreamSource | null>(null);
   const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
@@ -660,6 +666,8 @@ export function AppProvider({
   const [deviceCode, setDeviceCode] = useState<TraktDeviceCode | null>(null);
   const [simklDeviceCode, setSimklDeviceCode] = useState<SimklPinCode | null>(null);
   const [busy, setBusy] = useState("Loading ARVIO");
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const [toast, setToast] = useState<string | null>(null);
   const [cloudProfilesHydrated, setCloudProfilesHydrated] = useState(() => !authClient.session);
   const refreshInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
@@ -780,13 +788,18 @@ export function AppProvider({
     })();
   }, []);
 
-  const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[] } = {}) => {
+  const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[]; onLocalSave?: () => void } = {}) => {
     const normalized = normalizeAddons(next);
-    setAddons(normalized);
+    queueAddons(authClient, normalized, activeProfileId, options.removedIds);
     saveLocalAddons(normalized);
+    if (!authClient.session && JSON.stringify(loadLocalAddons()) !== JSON.stringify(normalized)) throw new Error("Device storage is full. Keep this page open and retry saving.");
+    addonsRef.current = normalized;
+    setAddons(normalized);
+    options.onLocalSave?.();
     // Cloud writes are union-based; a removal must be an explicit id list so the
     // shared library can never be shrunk by a stale/partial in-memory view.
-    await saveCloudAddons(authClient, normalized, activeProfileId, { removedIds: options.removedIds }).catch(() => undefined);
+    try { await flushAddonOutbox(authClient); }
+    catch { throw new Error("Addons saved on this device. Cloud sync is pending and will retry automatically."); }
   }, [activeProfileId]);
 
   const refreshData = useCallback((profileIdOverride?: string | null, background = false) => {
@@ -841,6 +854,7 @@ export function AppProvider({
         // Cache read must never block the refresh.
       }
       try {
+      await flushAddonOutbox(authClient).catch(() => undefined);
       const localAddons = loadLocalAddons();
       await flushSettingsOutbox(authClient).catch(() => setSettingsSyncState("error"));
       const cloud = authClient.session && !hasPendingSettings(authClient, profileId) ? await pullCloudPayload(authClient, profileId).catch(() => null) : null;
@@ -881,7 +895,7 @@ export function AppProvider({
       // A user can edit favorites while the cloud/tracker requests above are
       // in flight. Do not replace those edits with the earlier cloud response.
       const settingsChangedDuringPull = settingsRef.current !== currentSettings || hasPendingSettings(authClient, profileId);
-      if (cloud?.settings && !settingsChangedDuringPull) {
+      if (cloud?.settings) {
         effectiveSettings = {
           ...defaultSettings,
           ...currentSettings,
@@ -895,10 +909,13 @@ export function AppProvider({
           lockedIptvGroupIds: cloud.settings?.lockedIptvGroupIds ?? currentSettings.lockedIptvGroupIds,
           groupOrder: cloud.settings?.groupOrder ?? currentSettings.groupOrder
         };
-        if (!sameSettings(settingsRef.current, effectiveSettings)) setSettings(effectiveSettings);
-        // Record what we just synced FROM the cloud (same shape the autosave
-        // effect compares against) so it doesn't push it straight back.
+        // Acknowledge only the server snapshot. If the user edited during this
+        // request, retain the live settings and let the queued edit finish saving.
         lastSyncedSettingsRef.current = JSON.stringify({ settings: effectiveSettings, activeProfileId: profileId });
+        if (settingsChangedDuringPull) {
+          effectiveSettings = settingsWithPendingEdits(authClient, profileId, effectiveSettings, currentSettings, settingsRef.current);
+        }
+        if (!sameSettings(settingsRef.current, effectiveSettings)) setSettings(effectiveSettings);
         savePlaylists(effectiveSettings.iptvPlaylists);
       } else if (settingsChangedDuringPull) {
         effectiveSettings = settingsRef.current;
@@ -910,11 +927,11 @@ export function AppProvider({
       const cloudAddons = normalizeAddons(cloud?.addons ?? []);
       const localNormalized = normalizeAddons(localAddons);
       const currentAddons = normalizeAddons(addonsRef.current);
-      const source = cloudAddons.length
+      const source = pendingAddonSnapshot(authClient) ?? (cloudAddons.length
         ? cloudAddons
         : localNormalized.length
           ? localNormalized
-          : currentAddons;
+          : currentAddons);
       // If the pull explicitly returned an EMPTY cloud list but we still hold
       // addons locally, the cloud is stale/partial — self-heal by pushing our
       // list back up instead of wiping.
@@ -928,7 +945,7 @@ export function AppProvider({
       // Only persist locally when we actually have addons — an empty list can't
       // overwrite a good one.
       if (addonState.length) saveLocalAddons(addonState);
-      if (cloudReturnedEmpty && source.length && authClient.session) {
+      if (cloudReturnedEmpty && source.length && authClient.session && !hasPendingAddons(authClient)) {
         void saveCloudAddons(authClient, source, profileId).catch(() => undefined);
       }
 
@@ -1173,10 +1190,10 @@ export function AppProvider({
     const currentSettings = settingsRef.current;
     const profileId = activeProfileIdRef.current;
     const account = authClient.session?.userId;
-    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists);
+    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists) + (currentSettings.iptvStalkerUrl ? JSON.stringify([currentSettings.iptvStalkerUrl, currentSettings.iptvStalkerMac]) : "");
     const key = `${account}:${profileId}:${signature}`;
     if (iptvRefresh.current?.key === key) return iptvRefresh.current.promise;
-    const isCurrent = () => activeProfileIdRef.current === profileId && authClient.session?.userId === account && iptvPlaylistSignature(settingsRef.current.iptvPlaylists) === signature;
+    const isCurrent = () => activeProfileIdRef.current === profileId && authClient.session?.userId === account && iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + (settingsRef.current.iptvStalkerUrl ? JSON.stringify([settingsRef.current.iptvStalkerUrl, settingsRef.current.iptvStalkerMac]) : "") === signature;
     const run = (async () => {
     setBusy("Loading TV");
     try {
@@ -1186,7 +1203,7 @@ export function AppProvider({
         currentSettings.favoriteGroupIds,
         currentSettings.hiddenGroupIds,
         currentSettings.groupOrder,
-        { userAgent: currentSettings.customUserAgent }
+        { userAgent: currentSettings.customUserAgent, stalkerUrl: currentSettings.iptvStalkerUrl, stalkerMac: currentSettings.iptvStalkerMac }
       );
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
@@ -1203,7 +1220,7 @@ export function AppProvider({
 
   useEffect(() => {
     const channels = iptvSnapshot.allChannels ?? iptvSnapshot.channels;
-    if (!channels.length || iptvSnapshot.identitiesLoaded || iptvSnapshot.signature !== iptvPlaylistSignature(settings.iptvPlaylists)) return;
+    if (!channels.length || iptvSnapshot.identitiesLoaded || iptvSnapshot.signature !== (iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : ""))) return;
     let cancelled = false;
     const profileId = activeProfileId;
     void loadIptvChannelIdentities(settings.iptvPlaylists, channels, { userAgent: settings.customUserAgent }).then(enriched => {
@@ -1214,14 +1231,14 @@ export function AppProvider({
         channels: current.channels.map(channel => byId.get(channel.id) ?? channel) }));
     });
     return () => { cancelled = true; };
-  }, [iptvSnapshot.allChannels, iptvSnapshot.channels, iptvSnapshot.signature, iptvSnapshot.identitiesLoaded, settings.iptvPlaylists, settings.customUserAgent, activeProfileId]);
+  }, [iptvSnapshot.allChannels, iptvSnapshot.channels, iptvSnapshot.signature, iptvSnapshot.identitiesLoaded, settings.iptvPlaylists, settings.iptvStalkerUrl, settings.iptvStalkerMac, settings.customUserAgent, activeProfileId]);
 
   const loadIptvGuide = useCallback(async (channels: IptvChannel[]) => {
     if (!channels.length) return;
     const currentSettings = settingsRef.current;
     const profileId = activeProfileIdRef.current;
     const account = authClient.session?.userId;
-    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists);
+    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists) + (currentSettings.iptvStalkerUrl ? JSON.stringify([currentSettings.iptvStalkerUrl, currentSettings.iptvStalkerMac]) : "");
     const scopedKey = (id: string) => `${account}:${profileId}:${signature}:${id}`;
     // A guide entry whose "now" programme already ended is stale — refetch it so
     // the rows keep showing what is actually on air.
@@ -1237,7 +1254,7 @@ export function AppProvider({
     if (guideRetryAfter.current.size > 2000) for (const [key, expiry] of guideRetryAfter.current) if (expiry < Date.now()) guideRetryAfter.current.delete(key);
     try {
       const guide = await loadIptvGuideForChannels(currentSettings.iptvPlaylists, missing);
-      if (activeProfileIdRef.current !== profileId || authClient.session?.userId !== account || iptvPlaylistSignature(settingsRef.current.iptvPlaylists) !== signature) return;
+      if (activeProfileIdRef.current !== profileId || authClient.session?.userId !== account || iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + (settingsRef.current.iptvStalkerUrl ? JSON.stringify([settingsRef.current.iptvStalkerUrl, settingsRef.current.iptvStalkerMac]) : "") !== signature) return;
       if (!Object.keys(guide).length) return;
       setIptvSnapshot((current) => ({
         ...current,
@@ -1363,7 +1380,7 @@ export function AppProvider({
     // genuine change (user toggled a setting, switched profile) differs from the
     // snapshot and still saves.
     const snapshot = JSON.stringify({ settings, activeProfileId });
-    if (lastSyncedSettingsRef.current !== null && snapshot === lastSyncedSettingsRef.current) {
+    if (lastSyncedSettingsRef.current !== null && snapshot === lastSyncedSettingsRef.current && !hasPendingSettings(authClient, activeProfileId)) {
       setSettingsSyncState(hasPendingSettings(authClient) ? "pending" : "saved");
       return;
     }
@@ -1380,11 +1397,11 @@ export function AppProvider({
     }
     // Profile hydration is asynchronous. Until this profile has an acknowledged
     // baseline, settings still belong to the previous profile or browser defaults.
-    if (!baseline) return;
+    if (!baseline && !hasPendingSettings(authClient, activeProfileId)) return;
     const accountId = authClient.session?.userId;
     const submitted = { settings, activeProfileId };
     setSettingsSyncState("pending");
-    try { queueSettings(authClient, activeProfileId, settings, baseline); }
+    try { if (baseline) queueSettings(authClient, activeProfileId, settings, baseline); }
     catch (error) { setSettingsSyncState("error"); setToast(error instanceof Error ? error.message : "Could not save settings"); return; }
     const handle = setTimeout(() => {
       void flushSettingsOutbox(authClient).then(() => {
@@ -1399,9 +1416,10 @@ export function AppProvider({
 
   useEffect(() => {
     const retry = () => {
+      if (hasPendingAddons(authClient)) void flushAddonOutbox(authClient).catch(() => undefined);
       if (!hasPendingSettings(authClient)) return;
       setSettingsSyncState("pending");
-      void flushSettingsOutbox(authClient).then(() => setSettingsSyncState("saved")).catch(() => setSettingsSyncState("error"));
+      void flushSettingsOutbox(authClient).then(() => setSettingsSyncState(hasPendingSettings(authClient) ? "pending" : "saved")).catch(() => setSettingsSyncState("error"));
     };
     window.addEventListener("online", retry);
     const timer = window.setInterval(retry, 30_000);
@@ -1460,24 +1478,26 @@ export function AppProvider({
     };
   }, [auth, refreshData]);
 
-  useEffect(() => {
-    let current = true;
-    setSearchState(query.trim() ? "loading" : "idle");
-    const handle = setTimeout(async () => {
-      if (!query.trim()) {
-        setResults([]);
-        return;
-      }
-      try {
-        const found = await searchMedia(query, settings.language);
-        if (current) { setResults(found); setSearchState("idle"); }
-      } catch { if (current) setSearchState("error"); }
-    }, 260);
-    return () => { current = false; clearTimeout(handle); };
-  }, [query, settings.language]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    setSettings((prev) => ({ ...prev, ...patch }));
+    const previous = settingsRef.current;
+    const next = { ...previous, ...patch };
+    const profileId = activeProfileIdRef.current;
+    // Record the explicit user edit immediately, even before the first cloud
+    // pull finishes. The autosave effect cannot queue without a hydrated baseline.
+    // Using the pre-edit values here describes only this action, not browser defaults.
+    if (authClient.session && profileId) {
+      try {
+        queueSettings(authClient, profileId, next, previous);
+        setSettingsSyncState("pending");
+      } catch (error) {
+        setSettingsSyncState("error");
+        setToast(error instanceof Error ? error.message : "Could not save settings");
+      }
+    }
+    settingsRef.current = next;
+    saveStored(settingsKey, next);
+    setSettings(next);
   }, []);
 
   const isWatched = useCallback((item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => (
@@ -1651,17 +1671,14 @@ export function AppProvider({
     // know their episode, so load that episode's sources without an extra tap.
     if (item.mediaType === "movie") {
       setBusy("Finding sources");
-      appendVodSources(withResumeEpisode);
-      appendHomeServerSources(withResumeEpisode);
-      appendTelegramSources(withResumeEpisode);
+      const supplemental = Promise.allSettled([appendVodSources(withResumeEpisode), appendHomeServerSources(withResumeEpisode), appendTelegramSources(withResumeEpisode)]);
       const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, publish).catch(() => []);
       publish(found);
+      await supplemental;
     } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
-      appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
-      appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
-      appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      const supplemental = Promise.allSettled([appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber), appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber), appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber)]);
       const found = await getStreamsProgressive(
         addonsRef.current,
         withResumeEpisode,
@@ -1670,6 +1687,7 @@ export function AppProvider({
         publish
       ).catch(() => []);
       publish(found);
+      await supplemental;
     }
     if (sourceGeneration.current === generation) setBusy("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1682,13 +1700,13 @@ export function AppProvider({
     setStreams([]);
     setBusy("Finding sources");
 
-    appendVodSources(item, season, episode);
-    appendHomeServerSources(item, season, episode);
-    appendTelegramSources(item, season, episode);
+    const supplemental = Promise.all([appendVodSources(item, season, episode), appendHomeServerSources(item, season, episode), appendTelegramSources(item, season, episode)]);
     const found = await getStreamsProgressive(addonsRef.current, item, season, episode, publish).catch(() => []);
     publish(found);
-    if (sourceGeneration.current === generation) setBusy("");
-    return found;
+    const extras = await supplemental;
+    if (sourceGeneration.current !== generation) return [];
+    setBusy("");
+    return [...found, ...extras.flat()];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1703,7 +1721,7 @@ export function AppProvider({
   const playStream = useCallback((stream: StreamSource, options: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean } = {}) => {
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
-    setActiveStream(null);
+    if (!stream.autoSelect) setActiveStream(null);
     const sameEpisode = selected?.mediaType === "movie" || (selected?.seasonNumber === selectedEpisode?.season && selected?.episodeNumber === selectedEpisode?.episode);
     if (stream.resumePositionSeconds === undefined && selected && sameEpisode && !selected.isWatched) {
       stream = { ...stream, resumePositionSeconds: selected.resumePositionSeconds };
@@ -1724,7 +1742,7 @@ export function AppProvider({
     // + save progress when the user returns. forceBrowser overrides (e.g. the
     // in-player source panel, which is already in the browser player).
     const preferredPlayer = settingsRef.current.defaultPlayer;
-    if (!options.forceBrowser && !options.forceRemux && !options.forceTranscode && (preferredPlayer === "vlc" || preferredPlayer === "infuse")) {
+    if (!stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode && (preferredPlayer === "vlc" || preferredPlayer === "infuse")) {
       const externalItem = selected;
       const externalTitle = selected?.title ?? stream.source ?? "ARVIO stream";
       const preferredSub = settingsRef.current.defaultSubtitle;
@@ -1753,19 +1771,70 @@ export function AppProvider({
       void trackPremiumEvent(authClient, "external_playback_requested", { player: preferredPlayer, playback_type: "vod" }, true);
       return;
     }
-    setToast(stream.homeServer || options.forceTranscode ? "Preparing browser playback..." : null);
-    const timeout = window.setTimeout(() => { controller.abort(); if (isCurrent()) setToast("The source did not respond. Please try again or choose another source."); }, 20000);
-    void prepareBrowserStream(stream, settingsRef.current, { ...options, signal: controller.signal }).then((prepared) => {
-      if (!isCurrent() || controller.signal.aborted) {
-        void reportHomeServerPlayback(prepared, settingsRef.current, "stop").catch(() => undefined);
-        return;
+    setToast("Preparing browser playback...");
+    const initial = stream;
+    void (async () => {
+      const attempted = new Set<string>();
+      let candidate: StreamSource | undefined = initial;
+      while (candidate && isCurrent() && !controller.signal.aborted) {
+        attempted.add(candidate.originalUrl ?? candidate.url ?? "");
+        const attempt = new AbortController();
+        const cancel = () => attempt.abort();
+        controller.signal.addEventListener("abort", cancel, { once: true });
+        let timer: number | undefined;
+        try {
+          const prepared = await Promise.race([
+            prepareBrowserStream(candidate, settingsRef.current, { ...options, signal: attempt.signal }).then(result => {
+              if (attempt.signal.aborted) {
+                void reportHomeServerPlayback(result, settingsRef.current, "stop").catch(() => undefined);
+                throw new Error("Playback cancelled");
+              }
+              return result;
+            }),
+            new Promise<never>((_, reject) => {
+              timer = window.setTimeout(() => { reject(new Error("The source did not respond in time. Try another source.")); attempt.abort(); }, 20000);
+              attempt.signal.addEventListener("abort", () => reject(new Error("Playback cancelled")), { once: true });
+            })
+          ]);
+          if (!isCurrent() || controller.signal.aborted) {
+            void reportHomeServerPlayback(prepared, settingsRef.current, "stop").catch(() => undefined);
+            return;
+          }
+          setActiveChannel(null);
+          ownedPlayback.current = { stream: prepared, settings: settingsRef.current };
+          setActiveStream(prepared);
+          setToast(null);
+          return;
+        } catch (error) {
+          if (!isCurrent() || controller.signal.aborted) return;
+          if (!initial.autoSelect) { setToast(error instanceof Error ? error.message : "Could not prepare this source."); return; }
+          recordBrowserPlaybackFailure(candidate, "This source could not start in this browser", true);
+          candidate = browserAutoplayCandidates(streamsRef.current, attempted)[0];
+          // Progressive providers may still be returning sources when the first
+          // URL fails. Give that in-flight discovery a bounded chance to finish.
+          const waitUntil = Date.now() + 20000;
+          while (!candidate && busyRef.current === "Finding sources" && isCurrent() && !controller.signal.aborted && Date.now() < waitUntil) {
+            await new Promise<void>(resolve => {
+              const done = () => { window.clearTimeout(waitTimer); controller.signal.removeEventListener("abort", done); resolve(); };
+              const waitTimer = window.setTimeout(done, 250);
+              controller.signal.addEventListener("abort", done, { once: true });
+            });
+            candidate = browserAutoplayCandidates(streamsRef.current, attempted)[0];
+          }
+          if (candidate) {
+            candidate = { ...candidate, autoSelect: true, resumePositionSeconds: initial.resumePositionSeconds };
+            setToast("Trying another browser source...");
+          }
+        } finally {
+          window.clearTimeout(timer);
+          controller.signal.removeEventListener("abort", cancel);
+        }
       }
-      setActiveChannel(null);
-      ownedPlayback.current = { stream: prepared, settings: settingsRef.current };
-      setActiveStream(prepared);
-    }).catch((error: unknown) => {
-      if (isCurrent() && !controller.signal.aborted) setToast(error instanceof Error ? error.message : "Could not prepare this source.");
-    }).finally(() => window.clearTimeout(timeout));
+      if (isCurrent() && !controller.signal.aborted) {
+        setActiveStream(null);
+        setToast("No browser-playable source could start. Open Sources to choose another provider or an external player.");
+      }
+    })();
   }, [selected, activeProfile, selectedEpisode]);
 
   const advanceEpisode = useCallback(async (): Promise<boolean> => {
@@ -1783,7 +1852,7 @@ export function AppProvider({
       let started = false;
       const choose = (rows: StreamSource[]) => {
         if (!isCurrent() || started) return;
-        const candidate = rows.find((row) => row.url && playbackPlan(row).route === "here");
+        const candidate = browserAutoplayCandidates(rows)[0];
         if (!candidate) return;
         started = true;
         setSelectedEpisode({ season: next.seasonNumber!, episode: next.episodeNumber! });
@@ -1855,10 +1924,17 @@ export function AppProvider({
     setSettings(current => ({ ...current, iptvTvSession: recordTvPlayback(current.iptvTvSession, channel) }));
   }, []);
 
-  const playChannel = useCallback((channel: IptvChannel) => {
+  const playChannel = useCallback(async (channel: IptvChannel) => {
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
-    playbackGeneration.current++;
+    const generation = ++playbackGeneration.current;
+    if (channel.stalker) {
+      setToast("Preparing browser playback...");
+      try { channel = await resolveStalkerChannel(channel); }
+      catch (error) { if (generation === playbackGeneration.current) setToast(error instanceof Error ? error.message : "Could not open channel"); return; }
+      if (generation !== playbackGeneration.current) return;
+      setToast(null);
+    }
     const stream: StreamSource = {
       source: channel.name,
       addonName: "Live TV",
@@ -1869,7 +1945,7 @@ export function AppProvider({
       behaviorHints: { proxyHeaders: { request: channel.requestHeaders } }
     };
     if (!channel.id?.startsWith("sports-addon:")) recordChannelPlayback(channel);
-    if (openLiveExternally(stream, channel.name)) return;
+
     setActiveChannel(channel);
     setActiveStream(stream);
   }, [openLiveExternally, recordChannelPlayback]);
@@ -1896,7 +1972,7 @@ export function AppProvider({
       description: channel.group,
       behaviorHints: { proxyHeaders: { request: channel.requestHeaders } }
     };
-    if (openLiveExternally(stream, title)) return;
+
     setActiveChannel(null);
     setActiveStream(stream);
   }, [setToast, openLiveExternally]);
@@ -1923,12 +1999,10 @@ export function AppProvider({
   }, [persistAddons]);
 
   const setAddonsState = useCallback(async (next: InstalledAddon[]) => {
-    await persistAddons(next);
-    setSettings((prev) => ({
-      ...prev,
+    await persistAddons(next, { onLocalSave: () => updateSettings({
       disabledAddonIds: next.filter((addon) => addon.enabled === false).map((addon) => addon.id)
-    }));
-  }, [persistAddons]);
+    }) });
+  }, [persistAddons, updateSettings]);
 
   const signIn = useCallback(async (email: string, password: string, mode: "sign-in" | "sign-up") => {
     const trimmedEmail = email.trim();
@@ -2522,7 +2596,7 @@ export function AppProvider({
     addons,
     addonsReady,
     iptvSnapshot: isCurrentIptvSnapshot(iptvSnapshot, `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`,
-      iptvPlaylistSignature(settings.iptvPlaylists)) ? iptvSnapshot : emptyIptv,
+      iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "")) ? iptvSnapshot : emptyIptv,
     query,
     setQuery,
     results,

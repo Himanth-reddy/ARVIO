@@ -22,6 +22,7 @@ import com.arflix.tv.util.QrCodeGenerator
 import com.arflix.tv.data.api.StalkerApi
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.needsConfiguration
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
@@ -41,6 +42,8 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.PlexPinAuthSession
+import com.arflix.tv.data.repository.IptvAccountInfo
+import com.arflix.tv.data.repository.IptvAccountInfoParser
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.MAX_STALKER_PORTALS
@@ -183,6 +186,16 @@ fun StalkerCategoryTab.catalogKind(): StalkerCatalogKind? = when (this) {
     StalkerCategoryTab.SERIES -> StalkerCatalogKind.SERIES
 }
 
+/**
+ * An addon fetched but not installed yet, waiting for the user to confirm.
+ * [existing] holds installed setups of the same addon (same manifest id, other settings).
+ */
+data class PendingAddonInstall(
+    val addon: Addon,
+    val existing: List<Addon> = emptyList(),
+    val fromLink: Boolean = false
+)
+
 data class SettingsUiState(
     val defaultSubtitle: String = "Off",
     val subtitleOptions: List<String> = emptyList(),
@@ -277,6 +290,10 @@ data class SettingsUiState(
     val iptvEpgUrl: String = "",
     val iptvPlaylists: List<IptvPlaylistEntry> = emptyList(),
     val iptvStalkerPortals: List<StalkerPortalEntry> = emptyList(),
+    /** Subscription end and stream limit per playlist / portal id, as last asked. */
+    val iptvAccountInfo: Map<String, IptvAccountInfo> = emptyMap(),
+    /** Source ids whose account details are being asked right now. */
+    val iptvAccountInfoRefreshing: Set<String> = emptySet(),
     val iptvSortOrder: String = "provider",
     val iptvChannelCount: Int = 0,
     val isIptvLoading: Boolean = false,
@@ -326,6 +343,8 @@ data class SettingsUiState(
     // Addons
     val addons: List<Addon> = emptyList(),
     val isRefreshingAddons: Boolean = false,
+    val isAddonInstallLoading: Boolean = false,
+    val pendingAddonInstall: PendingAddonInstall? = null,
     val torrServerBaseUrl: String = "",
     val homeServerConnection: HomeServerConnection? = null,
     val homeServerConnections: List<HomeServerConnection> = emptyList(),
@@ -2381,6 +2400,14 @@ class SettingsViewModel @Inject constructor(
 
     fun toggleAddon(addonId: String) {
         viewModelScope.launch {
+            val addon = streamRepository.installedAddons.first().firstOrNull { it.id == addonId }
+            if (addon != null && addon.needsConfiguration && !addon.isEnabled) {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = SettingsMessage.Res(R.string.settings_addon_setup_first, listOf(addon.name)),
+                    toastType = ToastType.INFO
+                )
+                return@launch
+            }
             streamRepository.toggleAddon(addonId)
             val addonsAfterToggle = streamRepository.installedAddons.first()
             runCatching {
@@ -2391,9 +2418,68 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun addCustomAddon(url: String) {
-        viewModelScope.launch {
-            val result = streamRepository.addCustomAddon(url)
+        requestAddonInstall(url, fromLink = false)
+    }
+
+    private var addonInstallJob: Job? = null
+
+    /**
+     * Fetch the addon behind [url] and install it. A link opened from a website always asks
+     * first; so does any install that would add a second setup of an addon already installed.
+     */
+    fun requestAddonInstall(url: String, fromLink: Boolean) {
+        addonInstallJob?.cancel()
+        addonInstallJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isAddonInstallLoading = fromLink,
+                pendingAddonInstall = null
+            )
+            val result = streamRepository.prepareCustomAddon(url)
+            _uiState.value = _uiState.value.copy(isAddonInstallLoading = false)
             result.onSuccess { addon ->
+                val manifestId = addon.manifest?.id
+                val existing = if (manifestId == null) {
+                    emptyList()
+                } else {
+                    streamRepository.installedAddons.first()
+                        .filter { it.manifest?.id == manifestId && it.id != addon.id }
+                }
+                if (fromLink || existing.isNotEmpty()) {
+                    _uiState.value = _uiState.value.copy(
+                        pendingAddonInstall = PendingAddonInstall(addon, existing, fromLink)
+                    )
+                } else {
+                    installAddon(addon, replaceAddonIds = emptySet())
+                }
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.message.orMessage(
+                        SettingsMessage.Res(R.string.addon_failed_add)
+                    ),
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    /** Install the pending addon; [replaceExisting] removes the older setups of it. */
+    fun confirmAddonInstall(replaceExisting: Boolean) {
+        val pending = _uiState.value.pendingAddonInstall ?: return
+        _uiState.value = _uiState.value.copy(pendingAddonInstall = null)
+        viewModelScope.launch {
+            val replaceIds = if (replaceExisting) pending.existing.map { it.id }.toSet() else emptySet()
+            installAddon(pending.addon, replaceIds)
+        }
+    }
+
+    fun cancelAddonInstall() {
+        addonInstallJob?.cancel()
+        _uiState.value = _uiState.value.copy(pendingAddonInstall = null, isAddonInstallLoading = false)
+    }
+
+    private suspend fun installAddon(addon: Addon, replaceAddonIds: Set<String>) {
+        runCatching { streamRepository.installPreparedAddon(addon, replaceAddonIds) }
+            .onSuccess {
                 // Small delay to let DataStore flush the write before reading back
                 delay(150)
                 val currentAddons = streamRepository.installedAddons.first()
@@ -2418,6 +2504,7 @@ class SettingsViewModel @Inject constructor(
                 )
                 syncLocalStateToCloud(silent = true)
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.value = _uiState.value.copy(
                     toastMessage = error.message.orMessage(
                         SettingsMessage.Res(R.string.addon_failed_add)
@@ -2425,7 +2512,6 @@ class SettingsViewModel @Inject constructor(
                     toastType = ToastType.ERROR
                 )
             }
-        }
     }
 
     fun refreshAddons() {
@@ -2509,6 +2595,13 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun observeIptvConfig() {
+        viewModelScope.launch {
+            iptvRepository.observeAccountInfo().collect { info ->
+                if (_uiState.value.iptvAccountInfo != info) {
+                    _uiState.value = _uiState.value.copy(iptvAccountInfo = info)
+                }
+            }
+        }
         viewModelScope.launch {
             iptvRepository.observeConfig().collect { config ->
                 val current = _uiState.value
@@ -3089,11 +3182,127 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun persistStalkerPortals(portals: List<StalkerPortalEntry>) {
+        val previous = _uiState.value.iptvStalkerPortals
         viewModelScope.launch {
             iptvRepository.saveStalkerPortals(portals)
+            // Compare what was actually stored: saving normalizes entries.
+            val stored = iptvRepository.observeConfig().first()
+            onIptvSourcesSaved(
+                changedIds = changedAccountSources(previous, stored.stalkerPortals, { p: StalkerPortalEntry -> p.id }, { p: StalkerPortalEntry -> IptvAccountInfoParser.fingerprint(p) }),
+                playlists = stored.playlists,
+                portals = stored.stalkerPortals,
+            )
             _uiState.value = _uiState.value.copy(iptvStalkerPortals = portals)
             syncLocalStateToCloud(silent = true)
             refreshIptv(showToast = true, configured = true, force = true)
+        }
+    }
+
+    /**
+     * Ids of sources that are new or whose address / login changed. Toggling,
+     * renaming or reordering keeps the fingerprint, so it asks nothing.
+     */
+    private fun <T> changedAccountSources(
+        previous: List<T>,
+        next: List<T>,
+        id: (T) -> String,
+        fingerprint: (T) -> String,
+    ): Set<String> {
+        val before = previous.associate { id(it) to fingerprint(it) }
+        return next.filter { before[id(it)] != fingerprint(it) }.map(id).toSet()
+    }
+
+    /**
+     * Account details are asked only when a source is added or edited, and via
+     * [refreshIptvAccountInfo] - never on start-up or in the background, to keep
+     * the requests a provider sees to the minimum.
+     */
+    private fun onIptvSourcesSaved(
+        changedIds: Set<String>,
+        playlists: List<IptvPlaylistEntry>,
+        portals: List<StalkerPortalEntry>,
+    ) {
+        viewModelScope.launch {
+            iptvRepository.retainAccountInfo((playlists.map { it.id } + portals.map { it.id }).toSet())
+        }
+        changedIds.forEach { refreshIptvAccountInfo(it, playlists, portals, automatic = true) }
+    }
+
+    /**
+     * "Refresh IPTV" on the TV settings page: reloads channels and EPG as
+     * before and, once that is done, asks every playlist and portal for its
+     * account details too - a user who refreshes everything expects the
+     * remaining time to be current afterwards.
+     */
+    fun refreshIptvAndAccountInfo() {
+        refreshIptv()
+        val playlists = _uiState.value.iptvPlaylists
+        val portals = _uiState.value.iptvStalkerPortals
+        (playlists.map { it.id } + portals.map { it.id }).forEach {
+            refreshIptvAccountInfo(it, playlists, portals, automatic = true)
+        }
+    }
+
+    /** "Refresh now" in the edit dialog of a playlist or portal. */
+    fun refreshIptvAccountInfo(sourceId: String) {
+        refreshIptvAccountInfo(sourceId, _uiState.value.iptvPlaylists, _uiState.value.iptvStalkerPortals, automatic = false)
+    }
+
+    /**
+     * Saving a source starts a full channel reload against the same provider,
+     * and the provider request guard allows only two requests at a time and
+     * thirty a minute per host - an account request sent alongside it is
+     * deferred and never reaches the provider. Wait for the reload first.
+     */
+    private suspend fun awaitIptvLoadIdle() {
+        delay(1_000L)
+        withTimeoutOrNull(5 * 60_000L) { _uiState.first { !it.isIptvLoading } }
+    }
+
+    private fun refreshIptvAccountInfo(
+        sourceId: String,
+        playlists: List<IptvPlaylistEntry>,
+        portals: List<StalkerPortalEntry>,
+        automatic: Boolean,
+    ) {
+        val playlist = playlists.firstOrNull { it.id == sourceId }
+        val portal = portals.firstOrNull { it.id == sourceId }
+        if (playlist == null && portal == null) return
+        if (sourceId in _uiState.value.iptvAccountInfoRefreshing) return
+        _uiState.value = _uiState.value.copy(
+            iptvAccountInfoRefreshing = _uiState.value.iptvAccountInfoRefreshing + sourceId
+        )
+        viewModelScope.launch {
+            try {
+                awaitIptvLoadIdle()
+                // The request quota refills over a minute, so an automatic
+                // attempt that was deferred gets two more chances.
+                val attempts = if (automatic) 3 else 1
+                var info: IptvAccountInfo? = null
+                for (attempt in 1..attempts) {
+                    info = if (playlist != null) {
+                        iptvRepository.fetchAccountInfo(playlist)
+                    } else {
+                        iptvRepository.fetchAccountInfo(portal!!)
+                    }
+                    if (info != null || attempt == attempts) break
+                    delay(20_000L)
+                }
+                // A provider that did not answer keeps what it said last time;
+                // a source it never answered for keeps showing its address.
+                if (info != null) {
+                    iptvRepository.saveAccountInfo(sourceId, info)
+                } else if (!automatic) {
+                    _uiState.value = _uiState.value.copy(
+                        toastMessage = SettingsMessage.Res(R.string.iptv_account_refresh_failed),
+                        toastType = ToastType.ERROR
+                    )
+                }
+            } finally {
+                _uiState.value = _uiState.value.copy(
+                    iptvAccountInfoRefreshing = _uiState.value.iptvAccountInfoRefreshing - sourceId
+                )
+            }
         }
     }
 
@@ -3133,8 +3342,17 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun saveIptvPlaylists(playlists: List<IptvPlaylistEntry>) {
+        val previous = _uiState.value.iptvPlaylists
         viewModelScope.launch {
             iptvRepository.savePlaylists(playlists)
+            // Compare what was actually stored: saving rewrites "host user pass"
+            // into a get.php address, so the entry as typed never matches a row.
+            val stored = iptvRepository.observeConfig().first()
+            onIptvSourcesSaved(
+                changedIds = changedAccountSources(previous, stored.playlists, { p: IptvPlaylistEntry -> p.id }, { p: IptvPlaylistEntry -> IptvAccountInfoParser.fingerprint(p) }),
+                playlists = stored.playlists,
+                portals = stored.stalkerPortals,
+            )
             _uiState.value = _uiState.value.copy(
                 iptvPlaylists = playlists.filter { it.m3uUrl.isNotBlank() }
             )

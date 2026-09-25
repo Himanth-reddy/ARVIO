@@ -1,100 +1,47 @@
 "use client";
-
-import { useEffect, useRef } from "react";
-import { useApp } from "@/lib/store";
-
-// The web app is a single-page app with no URL routing, so the browser history
-// stack holds one entry — any Back gesture/button pops straight out of the app
-// (on an installed iOS/Android PWA this quits it entirely). This handler keeps
-// a synthetic history entry in place and, on Back, unwinds the app's own
-// navigation in priority order instead of leaving:
-//   player → details → non-home tab → (root) double-press to exit.
-export function BackHandler() {
-  const {
-    view,
-    section,
-    setSection,
-    selected,
-    closeDetails,
-    activeStream,
-    closePlayer,
-    setToast
-  } = useApp();
-
-  // Keep the latest state in a ref so the single popstate listener always sees
-  // current values without re-subscribing on every render.
-  const stateRef = useRef({ view, section, selected: Boolean(selected), activeStream: Boolean(activeStream) });
-  stateRef.current = { view, section, selected: Boolean(selected), activeStream: Boolean(activeStream) };
-
-  const actionsRef = useRef({ setSection, closeDetails, closePlayer, setToast });
-  actionsRef.current = { setSection, closeDetails, closePlayer, setToast };
-
-  const exitArmedRef = useRef(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-
-    // Seed a guard entry so the first Back has something to pop instead of the
-    // page itself. We always re-push after handling so one guard entry remains.
-    const pushGuard = () => {
-      try {
-        window.history.pushState({ arvioGuard: true }, "");
-      } catch {
-        /* history API unavailable — nothing we can do */
+import { useEffect, useRef } from 'react';
+import { useApp } from '@/lib/store';
+import { readWebRoute, writeWebRoute, type WebRoute } from '@/lib/webNavigation';
+import type { MediaItem } from '@/lib/types';
+export function BackHandler(){
+  const app=useApp();const latest=useRef(app);latest.current=app;
+  const initialized=useRef(false);
+  const applying=useRef<WebRoute|null>(null);
+  const previous=useRef('');
+  const playerWasOpen=useRef(false);
+  useEffect(()=>{
+    if(app.view!=='app')return;
+    const apply=()=>{
+      const route=readWebRoute(new URL(location.href));applying.current=route;
+      const current=latest.current;current.closePlayer();
+      current.setSection(route.section);current.setQuery(route.query);
+      if(!route.title){current.closeDetails();}
+      else if(current.selected?.id!==route.title.id||current.selected?.mediaType!==route.title.mediaType){
+        void current.openDetails({...route.title,title:'',image:'',backdrop:'',year:''} as MediaItem).catch(()=>{
+          applying.current=null;current.closeDetails();
+        });
       }
     };
-    pushGuard();
-
-    const onPopState = () => {
-      const { view: v, section: s, selected: hasDetails, activeStream: hasPlayer } = stateRef.current;
-      const { setSection: setSec, closeDetails: closeDet, closePlayer: closePlay, setToast: toast } = actionsRef.current;
-
-      // Only manage Back inside the main app; login/profile screens keep native
-      // behavior (their own back navigation is intentional).
-      if (v !== "app") {
-        return;
-      }
-
-      // 1) Player overlay open → close it, stay in app.
-      if (hasPlayer) {
-        closePlay();
-        exitArmedRef.current = false;
-        pushGuard();
-        return;
-      }
-      // 2) Details drawer open → close it.
-      if (hasDetails) {
-        closeDet();
-        exitArmedRef.current = false;
-        pushGuard();
-        return;
-      }
-      // 3) On a non-home tab → go home.
-      if (s !== "home") {
-        setSec("home");
-        exitArmedRef.current = false;
-        pushGuard();
-        return;
-      }
-      // 4) At the root (home, nothing open). Require a second Back within 2s to
-      //    actually leave, so a single accidental swipe never quits the app.
-      if (!exitArmedRef.current) {
-        exitArmedRef.current = true;
-        toast("Press back again to exit");
-        pushGuard();
-        window.setTimeout(() => {
-          exitArmedRef.current = false;
-        }, 2000);
-        return;
-      }
-      // Second Back at root within the window → let it through (no re-push):
-      // the guard entry is already consumed, so the next native pop exits.
-    };
-
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+    if(!initialized.current){initialized.current=true;apply();}
+    window.addEventListener('popstate',apply);
+    return()=>window.removeEventListener('popstate',apply);
+  },[app.view]);
+  useEffect(()=>{
+    if(app.view!=='app'||!initialized.current)return;
+    const title=app.selected&&!app.selected.isHomeServer&&app.selected.id>0?{id:app.selected.id,mediaType:app.selected.mediaType}:null;
+    const route:WebRoute={section:app.section,query:app.section==='search'?app.query:'',title};
+    const signature=JSON.stringify(route);const player=!!app.activeStream;
+    if(applying.current){
+      const target=applying.current;
+      if(target.section!==route.section||target.query!==route.query||JSON.stringify(target.title)!==JSON.stringify(route.title))return;
+      applying.current=null;previous.current=signature;playerWasOpen.current=false;
+      history.replaceState({arvio:true},'',writeWebRoute(new URL(location.href),route));return;
+    }
+    if(signature===previous.current&&player===playerWasOpen.current)return;
+    const before=previous.current?JSON.parse(previous.current) as WebRoute:null;
+    const queryOnly=before&&before.section===route.section&&JSON.stringify(before.title)===JSON.stringify(route.title)&&player===playerWasOpen.current;
+    history[queryOnly?'replaceState':'pushState']({arvio:true},'',writeWebRoute(new URL(location.href),route));
+    previous.current=signature;playerWasOpen.current=player;
+  },[app.view,app.section,app.query,app.selected,app.activeStream]);
   return null;
 }
