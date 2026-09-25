@@ -2215,6 +2215,7 @@ fun SettingsScreen(
                             onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                             onManageStalkerCategories = { id -> openIptvCategories(id) },
                             onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                            accountInfo = uiState.iptvAccountInfo,
                             onEditPlaylist = { idx -> editingIptvIndex = idx; showIptvInput = true },
                             onTogglePlaylist = { idx ->
                                 val updated = uiState.iptvPlaylists.toMutableList()
@@ -2243,7 +2244,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -2278,6 +2279,7 @@ fun SettingsScreen(
                             onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                             onManageStalkerCategories = { id -> openIptvCategories(id) },
                             onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                            accountInfo = uiState.iptvAccountInfo,
                             onEditPlaylist = { idx -> editingIptvIndex = idx; showIptvInput = true },
                             onTogglePlaylist = { idx ->
                                 val updated = uiState.iptvPlaylists.toMutableList()
@@ -2306,7 +2308,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -2623,6 +2625,21 @@ fun SettingsScreen(
                 editingPlaylist?.importSeries ?: true
             }
             val playlistEnabled = editingPlaylist?.enabled ?: true
+            // Account details belong to the saved source, so only an existing one offers "Refresh now".
+            val accountSourceId = when {
+                isEditingStalker -> editingStalkerPortal?.id
+                isEditingIptv -> editingPlaylist?.id
+                else -> null
+            }
+            val accountFingerprint = when {
+                isEditingStalker -> editingStalkerPortal?.let { com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(it) }
+                isEditingIptv -> editingPlaylist?.let { com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(it) }
+                else -> null
+            }
+            val accountInfo = accountSourceId
+                ?.let { uiState.iptvAccountInfo[it] }
+                ?.takeIf { it.sourceFingerprint == accountFingerprint }
+            val accountCheckedAtLabel = iptvAccountCheckedAtLabel(accountInfo?.checkedAtMs)
 
             key(
                 if (showStalkerInput) "stalker_${stalkerEditId ?: "new"}"
@@ -2709,7 +2726,10 @@ fun SettingsScreen(
                         showStalkerInput = false
                         editingIptvIndex = -1
                         stalkerEditId = null
-                    }
+                    },
+                    accountCheckedAtLabel = accountCheckedAtLabel,
+                    isAccountRefreshing = accountSourceId != null && accountSourceId in uiState.iptvAccountInfoRefreshing,
+                    onRefreshAccount = accountSourceId?.let { id -> { viewModel.refreshIptvAccountInfo(id) } }
                 )
             }
         }
@@ -3083,6 +3103,16 @@ fun SettingsScreen(
             TraktActivationModal(
                 verificationUrl = traktCode.verificationUrl,
                 userCode = traktCode.userCode,
+                // Same split Plex already makes: the TV tells you to scan, the phone tells you to
+                // tap. Deliberately service-neutral names so SIMKL can reuse them.
+                instruction = if (LocalDeviceType.current.isTouchDevice()) {
+                    stringResource(R.string.settings_activation_instruction_touch)
+                } else {
+                    stringResource(
+                        R.string.settings_activation_instruction_tv,
+                        traktCode.verificationUrl
+                    )
+                },
                 onOpenUrl = {
                     openExternalUrl(
                         context,
@@ -3091,6 +3121,10 @@ fun SettingsScreen(
                 },
                 openUrlLabel = stringResource(R.string.settings_open_trakt_page),
                 showCopyCode = false,
+                qrData = traktActivationUrl(traktCode.verificationUrl, traktCode.userCode),
+                expiresAtMillis = uiState.traktCodeExpiresAtMillis,
+                outcome = uiState.traktAuthOutcome,
+                onRetry = { viewModel.startTraktAuth() },
                 onDismiss = { viewModel.cancelTraktAuth() }
             )
         }
@@ -4211,7 +4245,11 @@ private fun TraktActivationModal(
     instruction: String? = null,
     onOpenUrl: (() -> Unit)? = null,
     openUrlLabel: String? = null,
-    showCopyCode: Boolean = true
+    showCopyCode: Boolean = true,
+    qrData: String? = null,
+    expiresAtMillis: Long? = null,
+    outcome: TraktAuthOutcome? = null,
+    onRetry: (() -> Unit)? = null
 ) {
     val resolvedTitle = title ?: stringResource(R.string.settings_connect_trakt)
     val resolvedInstruction = instruction ?: stringResource(R.string.settings_trakt_instruction, verificationUrl)
@@ -4219,13 +4257,41 @@ private fun TraktActivationModal(
     val accentColor = resolveAccentColor(fallback = Pink)
     val accentContentColor = contrastingContentColor(accentColor)
     val focusRequester = remember { FocusRequester() }
+    val retryFocusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val qrContainerSize = if (isMobile) 0.dp else 172.dp
+    val qrContainerSize = if (isMobile) 0.dp else 224.dp
     val qrBitmapSizePx = if (isMobile) 0 else 512
+    // Services that can embed the user code in the QR payload pass it via [qrData]; everyone
+    // else keeps scanning the bare verification URL.
+    val qrPayload = qrData?.takeIf { it.isNotBlank() } ?: verificationUrl
     val clipboardManager = LocalClipboardManager.current
+    // Only callers that know when their code dies pass [expiresAtMillis]. Without it neither the
+    // countdown nor the progress bar is drawn, so the SIMKL and Plex dialogs look as before.
+    val totalMillis = remember(expiresAtMillis) {
+        expiresAtMillis?.let { (it - System.currentTimeMillis()).coerceAtLeast(1L) }
+    }
+    var remainingMillis by remember(expiresAtMillis) {
+        mutableLongStateOf(totalMillis ?: 0L)
+    }
 
-    LaunchedEffect(userCode) {
-        focusRequester.requestFocus()
+    if (expiresAtMillis != null) {
+        LaunchedEffect(expiresAtMillis) {
+            while (true) {
+                remainingMillis = (expiresAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+                if (remainingMillis <= 0L) break
+                kotlinx.coroutines.delay(1_000L)
+            }
+        }
+    }
+
+    // The dialog grabs focus for the code; once it turns into the expired panel the retry button
+    // has to take over, or the remote would have nothing to act on.
+    LaunchedEffect(userCode, outcome) {
+        if (outcome == TraktAuthOutcome.EXPIRED) {
+            runCatching { retryFocusRequester.requestFocus() }
+        } else {
+            runCatching { focusRequester.requestFocus() }
+        }
     }
 
     androidx.compose.ui.window.Dialog(
@@ -4256,8 +4322,14 @@ private fun TraktActivationModal(
                                 true
                             }
                             Key.Enter, Key.DirectionCenter -> {
-                                onDismiss()
-                                true
+                                // The expired panel has its own buttons; swallowing OK here
+                                // would dismiss the dialog instead of retrying.
+                                if (outcome == TraktAuthOutcome.EXPIRED) {
+                                    false
+                                } else {
+                                    onDismiss()
+                                    true
+                                }
                             }
                             else -> false
                         }
@@ -4268,55 +4340,211 @@ private fun TraktActivationModal(
                     style = ArflixTypography.sectionTitle,
                     color = TextPrimary
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = resolvedInstruction,
-                    style = ArflixTypography.body,
-                    color = TextSecondary
-                )
+                if (outcome == null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = resolvedInstruction,
+                        style = ArflixTypography.body,
+                        color = TextSecondary
+                    )
+                }
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(24.dp)
-                ) {
-                    if (!isMobile && verificationUrl.isNotBlank()) {
+                if (outcome != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        val isConnected = outcome == TraktAuthOutcome.CONNECTED
                         Box(
                             modifier = Modifier
-                                .size(qrContainerSize)
-                                .background(Color.White, RoundedCornerShape(14.dp))
-                                .padding(12.dp),
+                                .size(48.dp)
+                                .background(
+                                    if (isConnected) {
+                                        Color(0xFF4CAF50) // Green checkmark
+                                    } else {
+                                        Color.White.copy(alpha = 0.08f)
+                                    },
+                                    RoundedCornerShape(percent = 50)
+                                )
+                                .then(
+                                    if (isConnected) {
+                                        Modifier
+                                    } else {
+                                        Modifier.border(
+                                            1.dp,
+                                            TextPrimary.copy(alpha = 0.24f),
+                                            RoundedCornerShape(percent = 50)
+                                        )
+                                    }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
-                            QrCodeImage(
-                                data = verificationUrl,
-                                sizePx = qrBitmapSizePx,
-                                modifier = Modifier.fillMaxSize(),
-                                foreground = android.graphics.Color.BLACK,
-                                background = android.graphics.Color.WHITE
+                            Icon(
+                                imageVector = if (isConnected) {
+                                    Icons.Default.Check
+                                } else {
+                                    Icons.Default.Schedule
+                                },
+                                contentDescription = null,
+                                tint = if (isConnected) {
+                                    BackgroundElevated
+                                } else {
+                                    TextPrimary.copy(alpha = 0.70f)
+                                },
+                                modifier = Modifier.size(if (isConnected) 26.dp else 24.dp)
                             )
                         }
+                        Text(
+                            text = stringResource(
+                                if (isConnected) {
+                                    R.string.settings_trakt_connected
+                                } else {
+                                    R.string.settings_trakt_code_expired
+                                }
+                            ),
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
+                        )
                     }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        if (!isMobile && qrPayload.isNotBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .size(qrContainerSize)
+                                    .background(Color.White, RoundedCornerShape(14.dp))
+                                    .padding(12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                QrCodeImage(
+                                    data = qrPayload,
+                                    sizePx = qrBitmapSizePx,
+                                    modifier = Modifier.fillMaxSize(),
+                                    foreground = android.graphics.Color.BLACK,
+                                    background = android.graphics.Color.WHITE
+                                )
+                            }
+                        }
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = userCode,
-                            style = ArflixTypography.heroTitle.copy(fontSize = 42.sp),
-                            color = accentColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = stringResource(R.string.settings_waiting_for_authorization),
-                            style = ArflixTypography.caption,
-                            color = TextSecondary.copy(alpha = 0.78f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = userCode,
+                                style = ArflixTypography.heroTitle.copy(fontSize = 42.sp),
+                                color = accentColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.settings_waiting_for_authorization),
+                                    style = ArflixTypography.caption,
+                                    color = TextSecondary.copy(alpha = 0.78f),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (totalMillis != null) {
+                                    val remainingSeconds = remainingMillis / 1000L
+                                    Text(
+                                        text = "%d:%02d".format(
+                                            remainingSeconds / 60,
+                                            remainingSeconds % 60
+                                        ),
+                                        style = ArflixTypography.caption.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontFeatureSettings = "tnum"
+                                        ),
+                                        color = TextSecondary.copy(alpha = 0.78f)
+                                    )
+                                }
+                            }
+                            if (totalMillis != null) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .background(
+                                            Color.White.copy(alpha = 0.20f),
+                                            RoundedCornerShape(percent = 50)
+                                        )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(
+                                                (remainingMillis.toFloat() / totalMillis.toFloat())
+                                                    .coerceIn(0f, 1f)
+                                            )
+                                            .fillMaxHeight()
+                                            .background(accentColor, RoundedCornerShape(percent = 50))
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
+                if (outcome == TraktAuthOutcome.CONNECTED) {
+                    // Nothing to do here: the dialog closes itself in two seconds.
+                    return@Column
+                }
+
                 Spacer(modifier = Modifier.height(28.dp))
+
+                if (outcome == TraktAuthOutcome.EXPIRED) {
+                    if (isMobile) {
+                        ActivationDialogButton(
+                            label = stringResource(R.string.retry),
+                            isPrimary = true,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = true,
+                            focusRequester = retryFocusRequester,
+                            onClick = { onRetry?.invoke() }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        ActivationDialogButton(
+                            label = stringResource(R.string.cancel),
+                            isPrimary = false,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = true,
+                            focusRequester = null,
+                            onClick = onDismiss
+                        )
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ActivationDialogButton(
+                                label = stringResource(R.string.retry),
+                                isPrimary = true,
+                                accentColor = accentColor,
+                                accentContentColor = accentContentColor,
+                                fillWidth = false,
+                                focusRequester = retryFocusRequester,
+                                onClick = { onRetry?.invoke() }
+                            )
+                            ActivationDialogButton(
+                                label = stringResource(R.string.cancel),
+                                isPrimary = false,
+                                accentColor = accentColor,
+                                accentContentColor = accentContentColor,
+                                fillWidth = false,
+                                focusRequester = null,
+                                onClick = onDismiss
+                            )
+                        }
+                    }
+                    return@Column
+                }
 
                 if (isMobile && onOpenUrl != null) {
                     Box(
@@ -4375,6 +4603,74 @@ private fun TraktActivationModal(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * A button for the activation dialog's expired panel. It draws its own focus ring because the
+ * dialog stops handling the OK key once two buttons compete for it, so the remote user has to see
+ * which one is selected.
+ */
+@Composable
+private fun ActivationDialogButton(
+    label: String,
+    isPrimary: Boolean,
+    accentColor: Color,
+    accentContentColor: Color,
+    fillWidth: Boolean,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+            .then(
+                if (isFocused) {
+                    Modifier.border(3.dp, Color.White, RoundedCornerShape(13.dp))
+                } else {
+                    Modifier
+                }
+            )
+            .padding(3.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+                .background(
+                    if (isPrimary) accentColor else Color.White.copy(alpha = 0.08f),
+                    RoundedCornerShape(10.dp)
+                )
+                .then(
+                    if (isPrimary) {
+                        Modifier
+                    } else {
+                        Modifier.border(
+                            1.dp,
+                            Color.White.copy(alpha = 0.14f),
+                            RoundedCornerShape(10.dp)
+                        )
+                    }
+                )
+                .then(
+                    if (focusRequester != null) {
+                        Modifier.focusRequester(focusRequester)
+                    } else {
+                        Modifier
+                    }
+                )
+                .onFocusChanged { isFocused = it.isFocused }
+                .clickable { onClick() }
+                .padding(vertical = 12.dp, horizontal = 18.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = ArflixTypography.button,
+                color = if (isPrimary) accentContentColor else TextPrimary
+            )
         }
     }
 }
@@ -5475,6 +5771,7 @@ private fun MobileSettingsSubPage(
                     onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                     onManageStalkerCategories = { id -> viewModel.setIptvSelectedPlaylistId(id); onNavigate("IPTV_CATEGORIES") },
                     onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                    accountInfo = uiState.iptvAccountInfo,
                     onEditPlaylist = onEditIptvClick,
                     onTogglePlaylist = { idx ->
                         val updated = uiState.iptvPlaylists.toMutableList()
@@ -5503,7 +5800,7 @@ private fun MobileSettingsSubPage(
                             viewModel.saveIptvPlaylists(updated)
                         }
                     },
-                    onRefresh = { viewModel.refreshIptv() },
+                    onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                     onDelete = { viewModel.clearIptvConfig() },
                     onManageCategories = { playlistId ->
                         viewModel.setIptvSelectedPlaylistId(playlistId)
@@ -7777,6 +8074,7 @@ private fun IptvSettings(
     onRemoveStalkerPortal: (String) -> Unit = {},
     onManageStalkerCategories: (String) -> Unit = {},
     onRenameStalkerPortal: (StalkerPortalEntry) -> Unit = {},
+    accountInfo: Map<String, com.arflix.tv.data.repository.IptvAccountInfo> = emptyMap(),
     vodSearchEnabled: Boolean = true,
     onVodSearchToggle: (Boolean) -> Unit = {},
     epgVodActionsEnabled: Boolean = true,
@@ -7854,7 +8152,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(buildString { append(playlist.m3uUrl.take(56)); when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
@@ -7908,7 +8206,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
@@ -8020,7 +8318,7 @@ private fun IptvSettings(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(buildString { append(playlist.m3uUrl.take(56)); when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary.copy(alpha = 0.72f))
                     }
                     CatalogActionChip(
                         icon = Icons.Default.List,
@@ -8074,7 +8372,7 @@ private fun IptvSettings(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary.copy(alpha = 0.72f))
                         }
                         CatalogActionChip(
                             icon = Icons.Default.List,

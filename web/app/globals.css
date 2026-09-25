@@ -12977,3 +12977,19 @@ html { background: #000; }
 @media (max-width: 600px) { .custom-collection-dialog { padding: 12px; } .custom-collection-tile { flex-basis: 180px; width: 180px; } .custom-collection-tile.is-poster { flex-basis: 132px; width: 132px; } }
 .player-start-prompt{position:absolute;inset:0;z-index:15;display:grid;place-items:center;background:#0006;pointer-events:none}
 .player-start-prompt button{pointer-events:auto;min-width:140px;min-height:64px;font-size:20px;background:var(--accent,#fff);color:#000;border:0;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:12px}
+.search-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:20px 0}.search-filters select{color:var(--text,#eee);background:#171b20;border:1px solid #ffffff26;padding:12px 16px;border-radius:12px;min-height:44px;max-width:100%}.search-results-title{font-size:22px;margin:24px 0 18px}.search-pagination{display:flex;justify-content:center;padding:28px}.search-pagination span{display:flex;align-items:center;gap:10px}@media(max-width:600px){.search-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}.search-filters select{width:100%;min-width:0}}
+
+.download-entry { padding: 20px 0; border-bottom: 1px solid var(--border, #ffffff18); }
+.download-entry strong { overflow-wrap: anywhere; }
+.download-entry p { color: var(--muted); font-size: .88rem; margin: 10px 0; }
+.download-entry progress { display: block; width: 100%; height: 6px; accent-color: var(--accent); margin: 12px 0; }
+.download-entry .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.search-filters { margin: 0 clamp(22px, 4.2vw, 78px) 24px; }
+.search-results-title { margin: 0 clamp(22px, 4.2vw, 78px) 20px; }
+.screen.has-search-hero .grid-results { padding-bottom: 24px; }
+.search-pagination { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+
+.search-filters .secondary, .search-pagination .secondary, .search-hero ~ .library-error .secondary, .download-entry .secondary {
+  width: auto; min-height: 44px; padding: 0 18px; border-radius: 12px; font-size: 14px;
+}

@@ -456,6 +456,8 @@
     <string name="settings_use_email_password_short">Use Email/Password</string>
     <string name="settings_connect_trakt">Connect Trakt.tv</string>
     <string name="settings_trakt_instruction">Go to %1$s and enter this code</string>
+    <string name="settings_activation_instruction_tv">Scan the QR code with your phone. It already contains the code. Or open %1$s and enter it.</string>
+    <string name="settings_activation_instruction_touch">Tap the button and sign in. You don\'t have to enter the code. This window finishes on its own.</string>
     <string name="settings_waiting_for_authorization">Waiting for authorization</string>
     <string name="settings_open_auth_page">Open auth page</string>
     <string name="settings_open_trakt_page">Open Trakt page</string>
@@ -887,6 +889,21 @@
     <string name="settings_stalker_not_configured">Not configured</string>
     <string name="settings_stalker_remove">Remove portal</string>
     <string name="settings_cd_manage_stalker_categories">Manage Stalker categories</string>
+    <!-- IPTV account details: subscription end and stream limit -->
+    <string name="iptv_account_days_left">%1$d days left</string>
+    <string name="iptv_account_one_day_left">1 day left</string>
+    <string name="iptv_account_ends_today">Ends today</string>
+    <string name="iptv_account_unlimited">Unlimited</string>
+    <string name="iptv_account_expired">Expired</string>
+    <string name="iptv_account_until">until %1$s</string>
+    <string name="iptv_account_since">since %1$s</string>
+    <string name="iptv_account_no_info">No account info</string>
+    <string name="iptv_account_streams">%1$d streams</string>
+    <string name="iptv_account_one_stream">1 stream</string>
+    <string name="iptv_account_checked_at">Last checked: %1$s</string>
+    <string name="iptv_account_refresh">Refresh now</string>
+    <string name="iptv_account_refreshing">Checking…</string>
+    <string name="iptv_account_refresh_failed">The provider did not answer. Please try again in a minute.</string>
     <string name="settings_cd_edit_stalker_config">Edit Stalker portal</string>
     <string name="settings_section_stalker_portals">STALKER PORTALS</string>
     <string name="settings_add_stalker_portal_button">Add Stalker portal</string>
@@ -1609,6 +1626,7 @@
     <string name="watchlist_failed_remove_trakt">Failed to remove from Trakt watchlist</string>
     <string name="watchlist_failed_remove">Failed to remove from watchlist</string>
     <string name="collection_failed_load">Failed to load collection</string>
+    <string name="collection_missing_addon">This collection needs an add-on that is not installed or is turned off: %1$s</string>
     <string name="collection_not_found">Collection not found</string>
 
 

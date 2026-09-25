@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -125,8 +126,14 @@ fun IptvPlaylistModal(
         importVod: Boolean,
         importSeries: Boolean
     ) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** "Last checked: …" of the saved source; null hides nothing, it just omits the line. */
+    accountCheckedAtLabel: String? = null,
+    isAccountRefreshing: Boolean = false,
+    /** Asks the provider again for the saved source; null (adding a new source) hides the button. */
+    onRefreshAccount: (() -> Unit)? = null,
 ) {
+    val lastLeftIndex = if (onRefreshAccount != null) 6 else 5
     var sourceType by remember(initialSourceType, initialXtreamUser, initialXtreamPass) {
         mutableStateOf(
             when {
@@ -444,7 +451,7 @@ fun IptvPlaylistModal(
                                             IptvSourceType.XTREAM -> 1
                                             IptvSourceType.STALKER -> 2
                                         }
-                                    } else if (leftFocusedIndex in 4..5) {
+                                    } else if (leftFocusedIndex in 4..lastLeftIndex) {
                                         leftFocusedIndex--
                                     }
                                     // If leftFocusedIndex in 0..2, stay on that tab
@@ -465,7 +472,7 @@ fun IptvPlaylistModal(
                                 if (activePane == ActivePane.LEFT) {
                                     if (leftFocusedIndex in 0..2) {
                                         leftFocusedIndex = 3 // Move to Live toggle
-                                    } else if (leftFocusedIndex < 5) {
+                                    } else if (leftFocusedIndex < lastLeftIndex) {
                                         leftFocusedIndex++
                                     }
                                     true
@@ -487,6 +494,7 @@ fun IptvPlaylistModal(
                                         3 -> importLiveTv = !importLiveTv
                                         4 -> importVod = !importVod
                                         5 -> importSeries = !importSeries
+                                        6 -> if (!isAccountRefreshing) onRefreshAccount?.invoke()
                                     }
                                     true
                                 } else {
@@ -635,6 +643,20 @@ fun IptvPlaylistModal(
                                     importSeries = !importSeries
                                 }
                             )
+
+                            if (onRefreshAccount != null) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                AccountRefreshBlock(
+                                    checkedAtLabel = accountCheckedAtLabel,
+                                    isRefreshing = isAccountRefreshing,
+                                    isFocused = activePane == ActivePane.LEFT && leftFocusedIndex == 6,
+                                    onClick = {
+                                        activePane = ActivePane.LEFT
+                                        leftFocusedIndex = 6
+                                        if (!isAccountRefreshing) onRefreshAccount()
+                                    }
+                                )
+                            }
 
                             if (sourceType == IptvSourceType.STALKER) {
                                 Spacer(modifier = Modifier.height(16.dp))
@@ -1392,6 +1414,15 @@ fun IptvPlaylistModal(
                                 isFocused = false,
                                 onClick = { importSeries = !importSeries }
                             )
+                            if (onRefreshAccount != null) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                AccountRefreshBlock(
+                                    checkedAtLabel = accountCheckedAtLabel,
+                                    isRefreshing = isAccountRefreshing,
+                                    isFocused = false,
+                                    onClick = { if (!isAccountRefreshing) onRefreshAccount() }
+                                )
+                            }
                         }
 
                         // Dedicated Full-Width Paste Button (mirroring InputModal)
@@ -1568,6 +1599,60 @@ private fun StepBadge(stepNumber: Int, isFocused: Boolean) {
             style = ArflixTypography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
             color = if (isFocused) Pink else TextSecondary
         )
+    }
+}
+
+/** "Last checked" line plus the "Refresh now" button for the saved source's account details. */
+@Composable
+private fun AccountRefreshBlock(
+    checkedAtLabel: String?,
+    isRefreshing: Boolean,
+    isFocused: Boolean,
+    onClick: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (checkedAtLabel != null) {
+            Text(
+                text = checkedAtLabel,
+                style = ArflixTypography.caption.copy(fontSize = 11.sp),
+                color = TextSecondary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(
+                    Color.White.copy(alpha = if (isFocused) 0.14f else 0.05f),
+                    RoundedCornerShape(10.dp)
+                )
+                .border(
+                    width = if (isFocused) 2.dp else 1.dp,
+                    color = if (isFocused) resolveAccentColor(fallback = Pink) else Color.White.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(10.dp)
+                )
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = null,
+                tint = if (isFocused) resolveAccentColor(fallback = Pink) else TextPrimary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = stringResource(
+                    if (isRefreshing) R.string.iptv_account_refreshing else R.string.iptv_account_refresh
+                ),
+                style = ArflixTypography.caption,
+                color = if (isFocused) resolveAccentColor(fallback = Pink) else TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
 import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
+import { chooseDownloadFile, startManagedDownload, recordDownloadHandoff } from "@/lib/downloads";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveWatchedState } from "@/lib/cloud";
@@ -17,6 +18,7 @@ import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefe
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { mdblistClient, type MdbExternalRating } from "@/lib/mdblist";
+import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { playbackCompatibilityRevision, playbackPlan, subscribePlaybackCompatibility } from "@/lib/streamCompatibility";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
@@ -44,7 +46,7 @@ function needsDetailsHydration(item: MediaItem) {
 
 function DetailsView({ item }: { item: MediaItem }) {
   const translateUi = useTranslation();
-  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, toggleWatchlist, mdblistConnected } = useApp();
+  const { streams, playStream, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, toggleWatchlist, mdblistConnected } = useApp();
   const [detailsItem, setDetailsItem] = useState<MediaItem>(item);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [reviews, setReviews] = useState<ReviewInfo[]>([]);
@@ -52,6 +54,19 @@ function DetailsView({ item }: { item: MediaItem }) {
   const [personLoading, setPersonLoading] = useState(false);
   const [personVisible, setPersonVisible] = useState(false);
   const [sourcePickerVisible, setSourcePickerVisible] = useState(false);
+  const [autoplayRequested, setAutoplayRequested] = useState(false);
+  useEffect(() => {
+    if (!autoplayRequested) return;
+    const source = browserAutoplayCandidates(streams)[0];
+    if (source) {
+      setAutoplayRequested(false);
+      playStream({ ...source, autoSelect: true }, { forceBrowser: true });
+    } else if (!busy) {
+      setAutoplayRequested(false);
+      setSourcePickerVisible(true);
+      setToast("No browser-playable source is available. Choose a source manually.");
+    }
+  }, [autoplayRequested, streams, busy, playStream, setToast]);
   const [logo, setLogo] = useState<string | null>(null);
   const displayItem = detailsItem ?? item;
   const priorityConfig = useMemo(() => getPriorityConfig(settings), [settings]);
@@ -145,13 +160,12 @@ function DetailsView({ item }: { item: MediaItem }) {
       setToast(isTv ? "Pick an episode to find sources first." : "No sources found yet.");
       return;
     }
-    setSourcePickerVisible(true);
+    setAutoplayRequested(true);
   };
 
   const openEpisodeSources = async (season: number, episode: number) => {
-    setSourcePickerVisible(true);
-    const found = await loadEpisodeStreams(displayItem, season, episode);
-    if (!found.length) setToast("No sources found for this episode yet.");
+    await loadEpisodeStreams(displayItem, season, episode);
+    setAutoplayRequested(true);
   };
 
   const addToWatchlist = async () => {
@@ -294,6 +308,7 @@ function DetailsView({ item }: { item: MediaItem }) {
             <button type="button" className="primary" onClick={playBest}>
               <Play size={18} fill="currentColor" /> {translateUi(continueLabel)}
             </button>
+            <button type="button" className="secondary" onClick={() => setSourcePickerVisible(true)}>{translateUi("Sources")}</button>
             {inWatchlist ? (
               <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Trash2 size={18} /> {translateUi(" Remove")}</button>
             ) : (
@@ -583,6 +598,10 @@ function SourcePickerModal({
       onToast("This source has no direct URL to download.");
       return;
     }
+    let fileHandle: Awaited<ReturnType<typeof chooseDownloadFile>>;
+    try { fileHandle = await chooseDownloadFile(title, /\.mp4(?:[?#/]|$)/i.test(`${stream.url} ${stream.source ?? ""}`) ? "mp4" : "mkv"); }
+    catch (error) { if (!(error instanceof DOMException && error.name === "AbortError")) onToast("Could not select a download file."); return; }
+    const downloadScope = `${authClient.session?.userId ?? "local"}:${activeProfileId ?? "default"}`;
     // Resolve debrid streams to the final CDN file URL first (the download
     // proxy must get the real file, not the torrentio redirect chain, which
     // 403s server egress). Hard 20s timeout — jsonRequest has none, and a
@@ -602,6 +621,13 @@ function SourcePickerModal({
       }
       target = { ...stream, url: direct, originalUrl: stream.url };
     }
+    if (fileHandle) {
+      const href = downloadStreamUrl(target, title);
+      if (!href) { onToast("Could not start this download."); return; }
+      try { await startManagedDownload(title, href, downloadScope, fileHandle); onToast("Download started. Manage it in Settings > Downloads."); }
+      catch (error) { onToast(error instanceof Error ? error.message : "Could not start this download."); }
+      return;
+    }
     // iOS/iPadOS can't reliably download a multi-GB file in a browser tab —
     // WebKit buffers the whole response in memory and hits the per-tab limit at a
     // random point, with no resume (every browser on iOS is WebKit, incl.
@@ -610,6 +636,7 @@ function SourcePickerModal({
     // for offline playback on the device. Desktop keeps the normal file download.
     if (isAppleMobile()) {
       const ok = downloadToVlc(target, title, settings.defaultSubtitle);
+      if (ok) recordDownloadHandoff(title, downloadScope);
       void trackPremiumEvent(authClient, ok ? "download_handoff" : "download_failed", { destination: "vlc" }, true);
       onToast(ok
         ? "Downloading to VLC for offline playback. If VLC doesn't open, install it from the App Store."
@@ -628,6 +655,7 @@ function SourcePickerModal({
     // page with no feedback). The download proxy sets Content-Disposition:
     // attachment, so the browser's download manager owns the transfer.
     const started = triggerDownload(href, `${title}.${/\.mp4(?:[?#/]|$)/i.test(`${target.url} ${target.source ?? ""}`) ? "mp4" : "mkv"}`);
+    if (started) recordDownloadHandoff(title, downloadScope);
     void trackPremiumEvent(authClient, started ? "download_handoff" : "download_failed", { destination: "browser" }, true);
     onToast(started ? "Download started — check your browser downloads." : "Could not start this download.");
   };

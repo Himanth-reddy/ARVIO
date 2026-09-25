@@ -311,6 +311,8 @@
     <string name="settings_use_email_password_short">E-Mail/Passwort verwenden</string>
     <string name="settings_connect_trakt">Trakt.tv verbinden</string>
     <string name="settings_trakt_instruction">Gehe zu %1$s und gib diesen Code ein</string>
+    <string name="settings_activation_instruction_tv">Scanne den QR-Code mit dem Handy. Der Code ist schon darin. Oder öffne %1$s und gib ihn ein.</string>
+    <string name="settings_activation_instruction_touch">Tippe auf die Schaltfläche und melde dich an. Den Code musst du nicht eingeben. Das Fenster ist danach von allein fertig.</string>
     <string name="settings_waiting_for_authorization">Warten auf Autorisierung</string>
     <string name="settings_open_auth_page">Authentifizierungsseite öffnen</string>
     <string name="settings_open_trakt_page">Trakt-Seite öffnen</string>
@@ -758,6 +760,21 @@
     <string name="settings_stalker_not_configured">Nicht eingerichtet</string>
     <string name="settings_stalker_remove">Portal entfernen</string>
     <string name="settings_cd_manage_stalker_categories">Stalker-Kategorien verwalten</string>
+    <!-- IPTV account details: subscription end and stream limit -->
+    <string name="iptv_account_days_left">noch %1$d Tage</string>
+    <string name="iptv_account_one_day_left">noch 1 Tag</string>
+    <string name="iptv_account_ends_today">Endet heute</string>
+    <string name="iptv_account_unlimited">Unbegrenzt</string>
+    <string name="iptv_account_expired">Abgelaufen</string>
+    <string name="iptv_account_until">bis %1$s</string>
+    <string name="iptv_account_since">seit %1$s</string>
+    <string name="iptv_account_no_info">Keine Kontodaten</string>
+    <string name="iptv_account_streams">%1$d Streams</string>
+    <string name="iptv_account_one_stream">1 Stream</string>
+    <string name="iptv_account_checked_at">Stand: %1$s</string>
+    <string name="iptv_account_refresh">Jetzt aktualisieren</string>
+    <string name="iptv_account_refreshing">Wird abgefragt…</string>
+    <string name="iptv_account_refresh_failed">Der Anbieter hat nicht geantwortet. Bitte in einer Minute noch einmal versuchen.</string>
     <string name="settings_section_stalker_portals">STALKER-PORTALE</string>
     <string name="settings_stalker_add_hint">Bis zu 3 Stalker-/Ministra-Portale hinzufügen</string>
     <string name="settings_stalker_create_another">Weiteres Stalker-Portal hinzufügen</string>
@@ -1574,6 +1591,7 @@
     <string name="watchlist_failed_remove_trakt">Aus Trakt-Merkliste entfernen fehlgeschlagen</string>
     <string name="watchlist_failed_remove">Aus Merkliste entfernen fehlgeschlagen</string>
     <string name="collection_failed_load">Collection konnte nicht geladen werden</string>
+    <string name="collection_missing_addon">Diese Collection braucht ein Add-on, das nicht installiert oder ausgeschaltet ist: %1$s</string>
     <string name="collection_not_found">Collection nicht gefunden</string>
     <string name="auth_account_exists">Konto existiert bereits. Stattdessen anmelden.</string>
     <string name="auth_signin_retry">Anmelden fehlgeschlagen. Bitte erneut versuchen.</string>
