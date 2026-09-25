@@ -2181,23 +2181,25 @@ class MediaRepository @Inject constructor(
                 missingRefs += (type to tmdbId)
             }
         }
-        val semaphore = Semaphore(2)
-        val jobs = missingRefs.map { (type, tmdbId) ->
+        // Each item costs two sequential rounds (TMDB details + external ids, then the IMDb
+        // rating), so two at a time left a first page of 8 waiting through four rounds. Same
+        // limit as custom catalog rows. Results are collected after awaitAll, so the map is
+        // never written from several jobs at once.
+        val semaphore = Semaphore(6)
+        missingRefs.map { (type, tmdbId) ->
             async {
                 semaphore.withPermit {
-                    val item = runCatching {
+                    (type to tmdbId) to runCatching {
                         when (type) {
                             MediaType.MOVIE -> getMovieDetails(tmdbId)
                             MediaType.TV -> getTvDetails(tmdbId)
                         }
                     }.getOrNull()
-                    if (item != null) {
-                        itemsByRef[type to tmdbId] = item
-                    }
                 }
             }
+        }.awaitAll().forEach { (ref, item) ->
+            if (item != null) itemsByRef[ref] = item
         }
-        jobs.forEach { it.await() }
         val items = pageRefs.mapNotNull { itemsByRef[it] }
         if (items.isNotEmpty()) cacheItems(items)
         // nextOffset counts consumed refs, not returned items: a failed lookup drops an item, and
