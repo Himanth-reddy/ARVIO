@@ -62,10 +62,12 @@ jobs:
           fi
           echo "::add-mask::$trakt_id"
           echo "::add-mask::$app_key"
-          printf 'NEXT_PUBLIC_TRAKT_CLIENT_ID=%s\n' "$trakt_id" >> "$GITHUB_ENV"
-          printf 'NEXT_PUBLIC_ARVIO_APP_ANON_KEY=%s\n' "$app_key" >> "$GITHUB_ENV"
-          printf 'ARVIO_BUILD_APP_ANON_KEY=%s\n' "$app_key" >> "$GITHUB_ENV"
-          echo 'ARVIO_VERIFY_BUILD_CONFIG=true' >> "$GITHUB_ENV"
+          {
+            printf 'NEXT_PUBLIC_TRAKT_CLIENT_ID=%s\n' "$trakt_id"
+            printf 'NEXT_PUBLIC_ARVIO_APP_ANON_KEY=%s\n' "$app_key"
+            printf 'ARVIO_BUILD_APP_ANON_KEY=%s\n' "$app_key"
+            echo 'ARVIO_VERIFY_BUILD_CONFIG=true'
+          } >> "$GITHUB_ENV"
 
       - name: Build Netlify bundle
         env:
