@@ -64,6 +64,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import com.arflix.tv.core.plugin.PluginManager
 import com.arflix.tv.data.repository.toStreamSource
@@ -282,6 +284,20 @@ class DetailsViewModel @Inject constructor(
     private var seasonPrefetchJob: kotlinx.coroutines.Job? = null
     private var seasonLoadRequestedSeason: Int = -1
     @Volatile private var initialLoadComplete = false
+    // Watchlist taps flip the bookmark at once; the Trakt/SIMKL and local writes then run one at
+    // a time so a quick double tap cannot land out of order.
+    private val watchlistWriteMutex = Mutex()
+    // Writes outlive page loads. Keep their saved state and latest intent attached to the title,
+    // not to whichever page happens to be visible when a slow remote write completes.
+    private class WatchlistSaveState {
+        var saved: Boolean? = null
+        var wanted: Boolean? = null
+        var version = 0L
+        var pendingWrites = 0
+    }
+    private val watchlistSaveStates = mutableMapOf<Pair<MediaType, Int>, WatchlistSaveState>()
+
+    private enum class WatchlistWrite { SAVED, UNCHANGED, FAILED }
 
     init {
         viewModelScope.launch {
@@ -473,9 +489,15 @@ class DetailsViewModel @Inject constructor(
                     1
                 }
 
+                val watchlistSaveState = watchlistSaveStates.getOrPut(mediaType to mediaId) { WatchlistSaveState() }
+                val watchlistVersionAtLoad = watchlistSaveState.version
+                val watchlistPendingAtLoad = watchlistSaveState.pendingWrites > 0
+                if (!watchlistPendingAtLoad) watchlistSaveState.saved = null
+
                 _uiState.value = DetailsUiState(
                     isLoading = initialItem == null,
                     item = initialItem,
+                    isInWatchlist = watchlistSaveState.wanted ?: false,
                     logoUrl = cachedLogoUrl,
                     episodes = cachedEpisodes ?: emptyList(),
                     currentSeason = seasonToLoad,
@@ -1006,6 +1028,12 @@ class DetailsViewModel @Inject constructor(
 
                 launch {
                     val isInWatchlist = runCatching { watchlistDeferred.await() }.getOrDefault(false)
+                    // A tap while this was loading already set the bookmark; the older read must
+                    // not undo it.
+                    if (!isCurrentRequest() || watchlistSaveState.version != watchlistVersionAtLoad ||
+                        watchlistPendingAtLoad) return@launch
+                    watchlistSaveState.saved = isInWatchlist
+                    watchlistSaveState.wanted = isInWatchlist
                     updateState { state -> state.copy(isInWatchlist = isInWatchlist) }
                 }
 
@@ -1456,41 +1484,81 @@ class DetailsViewModel @Inject constructor(
 
     fun toggleWatchlist() {
         val currentItem = _uiState.value.item ?: return
-        val newInWatchlist = !_uiState.value.isInWatchlist
+        val mediaType = currentMediaType
+        val mediaId = currentMediaId
+        if (currentItem.mediaType != mediaType || currentItem.id != mediaId) return
+        val saveState = watchlistSaveStates.getOrPut(mediaType to mediaId) { WatchlistSaveState() }
+        val previousInWatchlist = _uiState.value.isInWatchlist
+        val newInWatchlist = !previousInWatchlist
+        saveState.wanted = newInWatchlist
+        val toggleVersion = ++saveState.version
+        saveState.pendingWrites++
+
+        // Show the new state right away: the Trakt/SIMKL write and the cloud push behind it can
+        // take several seconds, and the bookmark used to wait for both.
+        _uiState.value = _uiState.value.copy(
+            isInWatchlist = newInWatchlist,
+            toastMessage = if (newInWatchlist) context.getString(R.string.added_to_watchlist) else context.getString(R.string.watchlist_toast_removed),
+            toastType = ToastType.SUCCESS
+        )
 
         viewModelScope.launch {
-            try {
-                val isAnime = currentItem.mediaType == MediaType.TV &&
-                    currentItem.originalLanguage.equals("ja", ignoreCase = true) &&
-                    currentItem.genreIds.contains(16)
-                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
-                if (newInWatchlist) {
-                    if (remoteConnected && !remoteSyncManager.addToWatchlist(currentMediaType, currentMediaId, isAnime)) {
-                        throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_add))
+            val result = try {
+                watchlistWriteMutex.withLock {
+                    val wanted = saveState.wanted ?: newInWatchlist
+                    // Unknown initial membership is not proof that a cancelling tap needs no write.
+                    if (wanted == saveState.saved) return@withLock WatchlistWrite.UNCHANGED
+                    try {
+                        writeWatchlist(currentItem, mediaType, mediaId, wanted)
+                        saveState.saved = wanted
+                        WatchlistWrite.SAVED
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Log.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
+                        AppLogger.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
+                        WatchlistWrite.FAILED
                     }
-                    // Pass the full MediaItem so it appears instantly in watchlist
-                    watchlistRepository.addToWatchlist(currentMediaType, currentMediaId, currentItem)
-                } else {
-                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(currentMediaType, currentMediaId, isAnime)) {
-                        throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_remove))
-                    }
-                    watchlistRepository.removeFromWatchlist(currentMediaType, currentMediaId)
                 }
-                runCatching { cloudSyncRepository.pushToCloud() }
-
-                _uiState.value = _uiState.value.copy(
-                    isInWatchlist = newInWatchlist,
-                    toastMessage = if (newInWatchlist) context.getString(R.string.added_to_watchlist) else context.getString(R.string.watchlist_toast_removed),
-                    toastType = ToastType.SUCCESS
-                )
-            } catch (e: Exception) {
-                Log.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
-                AppLogger.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
-                _uiState.value = _uiState.value.copy(
-                    toastMessage = context.getString(R.string.details_failed_update_watchlist),
-                    toastType = ToastType.ERROR
-                )
+            } finally {
+                saveState.pendingWrites--
             }
+            when (result) {
+                WatchlistWrite.SAVED -> runCatching { cloudSyncRepository.pushToCloud() }
+                WatchlistWrite.FAILED -> {
+                    // Only the latest tap may roll back; an older one is settled by the newer write.
+                    val isCurrentTitle = currentMediaType == mediaType && currentMediaId == mediaId
+                    if (toggleVersion == saveState.version) {
+                        saveState.wanted = saveState.saved ?: previousInWatchlist
+                        if (isCurrentTitle) {
+                            _uiState.value = _uiState.value.copy(
+                                isInWatchlist = saveState.wanted == true,
+                                toastMessage = context.getString(R.string.details_failed_update_watchlist),
+                                toastType = ToastType.ERROR
+                            )
+                        }
+                    }
+                }
+                WatchlistWrite.UNCHANGED -> Unit
+            }
+        }
+    }
+
+    private suspend fun writeWatchlist(item: MediaItem, mediaType: MediaType, mediaId: Int, inWatchlist: Boolean) {
+        val isAnime = item.mediaType == MediaType.TV &&
+            item.originalLanguage.equals("ja", ignoreCase = true) &&
+            item.genreIds.contains(16)
+        val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+        if (inWatchlist) {
+            if (remoteConnected && !remoteSyncManager.addToWatchlist(mediaType, mediaId, isAnime)) {
+                throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_add))
+            }
+            // Pass the full MediaItem so it appears instantly in watchlist
+            watchlistRepository.addToWatchlist(mediaType, mediaId, item)
+        } else {
+            if (remoteConnected && !remoteSyncManager.removeFromWatchlist(mediaType, mediaId, isAnime)) {
+                throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_remove))
+            }
+            watchlistRepository.removeFromWatchlist(mediaType, mediaId)
         }
     }
 

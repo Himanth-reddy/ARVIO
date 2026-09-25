@@ -5045,6 +5045,11 @@ class HomeViewModel @Inject constructor(
                     }
                     watchlistRepository.addToWatchlist(item.mediaType, item.id, item)
                 }
+                // Confirm before the cloud push, which can take several seconds.
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = if (isInWatchlist) context.getString(R.string.watchlist_toast_removed) else context.getString(R.string.added_to_watchlist),
+                    toastType = ToastType.SUCCESS
+                )
                 runCatching { cloudSyncRepository.pushToCloud() }
                     .onFailure { error ->
                         AppLogger.recordException(
@@ -5057,10 +5062,6 @@ class HomeViewModel @Inject constructor(
                             )
                         )
                     }
-                _uiState.value = _uiState.value.copy(
-                    toastMessage = if (isInWatchlist) context.getString(R.string.watchlist_toast_removed) else context.getString(R.string.added_to_watchlist),
-                    toastType = ToastType.SUCCESS
-                )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
