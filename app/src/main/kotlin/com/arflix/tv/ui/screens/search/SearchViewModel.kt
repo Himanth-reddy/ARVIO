@@ -240,7 +240,8 @@ class SearchViewModel @Inject constructor(
                     }
                 }
                 categories.forEach { cat -> cat.items.forEach { mediaRepository.cacheItem(it) } }
-                _uiState.value = _uiState.value.copy(discoverCategories = markWatched(categories), isDiscoverLoading = false)
+                val isWatched = watchedMatcher()
+                _uiState.value = _uiState.value.copy(discoverCategories = markWatched(categories, isWatched), isDiscoverLoading = false)
                 // Fetch logos for top items in each row (background, non-blocking)
                 launch(Dispatchers.IO) {
                     val slots = Semaphore(3)
@@ -442,6 +443,7 @@ class SearchViewModel @Inject constructor(
             val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
             val startPage = gridPage
             val collected = withContext(Dispatchers.IO) { collectGridPages(started, today, startPage) }
+            val isWatched = watchedMatcher()
             val current = _uiState.value
             // The filter moved on while this page was in flight — its answer is stale.
             if (generation != gridGeneration || filterSignature(current) != signature || current.query.isNotEmpty()) return
@@ -451,7 +453,7 @@ class SearchViewModel @Inject constructor(
             val fresh = collected.items.filter { known.add(it.mediaType to it.id) }
             gridPage = collected.lastPage
             _uiState.value = current.copy(
-                discoverGridItems = existing + markWatched(fresh),
+                discoverGridItems = existing + markWatched(fresh, isWatched),
                 isGridLoading = false,
                 isGridLoadingMore = false,
                 gridEndReached = collected.endReached,
@@ -529,17 +531,21 @@ class SearchViewModel @Inject constructor(
      * since a series you are halfway through is not something you need offered again. These are
      * the two lookups Home marks its cards by.
      */
-    private fun watchedMatcher(): (MediaItem) -> Boolean {
+    private suspend fun watchedMatcher(): (MediaItem) -> Boolean = withContext(Dispatchers.Default) {
         val watchedMovies = traktRepository.getWatchedMoviesFromCache()
-        // hasWatchedEpisodes walks every watched episode key, and the same show sits in several
-        // rows at once - ask once per show, not once per card.
-        val startedShows = HashMap<Int, Boolean>()
-        return { item ->
+        // Index the history once off Main, instead of scanning it for every distinct show.
+        val startedShows = traktRepository.getWatchedEpisodesFromCache().mapNotNullTo(HashSet<Int>()) { key ->
+            if (key.startsWith("show_tmdb:")) {
+                key.removePrefix("show_tmdb:").substringBefore(':', "").toIntOrNull()
+            } else null
+        }
+        val matches: (MediaItem) -> Boolean = { item ->
             when (item.mediaType) {
                 MediaType.MOVIE -> item.id in watchedMovies
-                MediaType.TV -> startedShows.getOrPut(item.id) { traktRepository.hasWatchedEpisodes(item.id) }
+                MediaType.TV -> item.id in startedShows
             }
         }
+        matches
     }
 
     /**
@@ -554,7 +560,7 @@ class SearchViewModel @Inject constructor(
      */
     private fun markWatched(
         items: List<MediaItem>,
-        isWatched: (MediaItem) -> Boolean = watchedMatcher()
+        isWatched: (MediaItem) -> Boolean
     ): List<MediaItem> {
         if (items.none { it.isWatched != isWatched(it) }) return items
         return items.map { item ->
@@ -566,7 +572,7 @@ class SearchViewModel @Inject constructor(
     @JvmName("markWatchedRows")
     private fun markWatched(
         rows: List<Category>,
-        isWatched: (MediaItem) -> Boolean = watchedMatcher()
+        isWatched: (MediaItem) -> Boolean
     ): List<Category> {
         if (rows.none { row -> row.items.any { it.isWatched != isWatched(it) } }) return rows
         return rows.map { row -> row.copy(items = markWatched(row.items, isWatched)) }
@@ -587,17 +593,21 @@ class SearchViewModel @Inject constructor(
                 withContext(Dispatchers.IO) { traktRepository.initializeWatchedCache() }
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { /* keep whatever the cache already holds */ }
-            _uiState.update { state ->
-                val isWatched = watchedMatcher()
-                state.copy(
-                    discoverCategories = markWatched(state.discoverCategories, isWatched),
-                    discoverGridItems = markWatched(state.discoverGridItems, isWatched),
-                    results = markWatched(state.results, isWatched),
-                    movieResults = markWatched(state.movieResults, isWatched),
-                    tvResults = markWatched(state.tvResults, isWatched),
-                    personResults = markWatched(state.personResults, isWatched),
-                    aiResults = markWatched(state.aiResults, isWatched)
-                )
+            val isWatched = watchedMatcher()
+            withContext(Dispatchers.Default) {
+                // Retained grids can be large. Re-mark the latest state off Main without
+                // restoring an old query or dropping a page published during the refresh.
+                _uiState.update { state ->
+                    state.copy(
+                        discoverCategories = markWatched(state.discoverCategories, isWatched),
+                        discoverGridItems = markWatched(state.discoverGridItems, isWatched),
+                        results = markWatched(state.results, isWatched),
+                        movieResults = markWatched(state.movieResults, isWatched),
+                        tvResults = markWatched(state.tvResults, isWatched),
+                        personResults = markWatched(state.personResults, isWatched),
+                        aiResults = markWatched(state.aiResults, isWatched)
+                    )
+                }
             }
         }
     }
@@ -814,8 +824,9 @@ class SearchViewModel @Inject constructor(
                 }
                 val sorted = cachedSuggestionResults
                 val peopleRows = cachedPeopleResults
-                val marked = markWatched(sorted)
-                val markedPeople = markWatched(peopleRows)
+                val isWatched = watchedMatcher()
+                val marked = markWatched(sorted, isWatched)
+                val markedPeople = markWatched(peopleRows, isWatched)
                 _uiState.update { it.copy(isLoading = sorted.isEmpty() && peopleRows.isEmpty() && peopleNeedingCredits.isNotEmpty(), results = marked,
                     movieResults = marked.filter { item -> item.mediaType == MediaType.MOVIE },
                     tvResults = marked.filter { item -> item.mediaType == MediaType.TV }, personResults = markedPeople) }
@@ -835,7 +846,8 @@ class SearchViewModel @Inject constructor(
                             if (credits.isNotEmpty()) {
                                 val row = Category("person_${person.personId}", person.name, credits.distinctBy { it.mediaType to it.id })
                                 cachedPeopleResults = cachedPeopleResults + row
-                                _uiState.update { it.copy(personResults = it.personResults + row.copy(items = markWatched(row.items)), isLoading = false) }
+                                val creditsWatched = watchedMatcher()
+                                _uiState.update { it.copy(personResults = it.personResults + row.copy(items = markWatched(row.items, creditsWatched)), isLoading = false) }
                             }
                         }
                         peopleNeedingCredits = emptyList()
@@ -904,7 +916,8 @@ class SearchViewModel @Inject constructor(
                     }
                 }
                 items.forEach { mediaRepository.cacheItem(it) }
-                _uiState.value = _uiState.value.copy(isLoading = false, aiResults = markWatched(if (sq.limit != null) items.take(sq.limit) else items))
+                val isWatched = watchedMatcher()
+                _uiState.value = _uiState.value.copy(isLoading = false, aiResults = markWatched(if (sq.limit != null) items.take(sq.limit) else items, isWatched))
             } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e
  _uiState.value = _uiState.value.copy(isLoading = false, error = e.message) }
         }

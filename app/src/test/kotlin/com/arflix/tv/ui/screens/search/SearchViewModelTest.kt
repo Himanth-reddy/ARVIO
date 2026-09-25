@@ -162,8 +162,7 @@ class SearchViewModelTest {
         val watchedFilm = MediaItem(id = 1, title = "Watched", mediaType = MediaType.MOVIE)
         val newFilm = MediaItem(id = 3, title = "New", mediaType = MediaType.MOVIE)
         every { trakt.getWatchedMoviesFromCache() } returns setOf(1)
-        every { trakt.hasWatchedEpisodes(any()) } returns false
-        every { trakt.hasWatchedEpisodes(2) } returns true
+        every { trakt.getWatchedEpisodesFromCache() } returns setOf("show_tmdb:2:1:1")
         coEvery { repository.searchWithPeople("Loki", any()) } returns MediaSearchResults(
             listOf(watchedFilm, loki, newFilm), listOf(PersonMediaSearchResult(99, "Actor", listOf(loki, newFilm))))
         model.updateQuery("Loki"); model.search()
@@ -182,7 +181,7 @@ class SearchViewModelTest {
         // Watched in the meantime: the cached answer is reused, the tick is not. Typing the
         // query again goes through updateQuery, which cancels the first search's leftover logo
         // work; a bare second search() would be ignored while that work is still running.
-        every { trakt.hasWatchedEpisodes(2) } returns true
+        every { trakt.getWatchedEpisodesFromCache() } returns setOf("show_tmdb:2:1:1")
         model.updateQuery("Lok")
         model.updateQuery("Loki")
         withTimeout(5_000) { model.uiState.first { it.results.singleOrNull()?.isWatched == true } }
