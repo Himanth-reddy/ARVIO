@@ -1,3 +1,4 @@
+import { loadStalkerChannels, loadStalkerGuide } from "./stalker";
 import { proxiedUrl, textRequest } from "./http";
 import { loadStored, saveStored } from "./storage";
 import type { IptvChannel, IptvNowNext, IptvPlaylistEntry, IptvProgram, IptvSnapshot } from "./types";
@@ -54,6 +55,8 @@ async function providerTextRequest(providerUrl: string, requestUrl: string): Pro
 }
 
 type IptvLoadOptions = {
+  stalkerUrl?: string;
+  stalkerMac?: string;
   userAgent?: string;
 };
 
@@ -141,6 +144,10 @@ export async function loadIptvSnapshot(
       }
     })
   );
+  if (options.stalkerUrl?.trim() && options.stalkerMac?.trim()) {
+    try { channelSets.push(await loadStalkerChannels(options.stalkerUrl.trim(), options.stalkerMac.trim())); }
+    catch (error) { playlistWarnings.push(error instanceof Error ? error.message : "Could not load IPTV portal"); }
+  }
   const allChannels = channelSets.flat();
   const channels = accessibleChannels(allChannels, hiddenGroups);
   // Xtream channels get now/next on demand from the panel's JSON EPG (fast,
@@ -181,7 +188,7 @@ export async function loadIptvGuideForChannels(playlists: IptvPlaylistEntry[], c
   if (!channels.length) return {} as Record<string, IptvNowNext>;
   const normalizedPlaylists = normalizeIptvPlaylists(playlists);
   const enabled = normalizedPlaylists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim());
-  if (!enabled.length) return {} as Record<string, IptvNowNext>;
+  if (!enabled.length) return loadStalkerGuide(channels);
 
   // Xtream channels get their guide from the panel's own per-channel EPG API —
   // instant JSON now/next without downloading a multi-megabyte XMLTV file.
@@ -197,11 +204,12 @@ export async function loadIptvGuideForChannels(playlists: IptvPlaylistEntry[], c
     else xmltvChannels.push(channel);
   }
 
-  const [xtreamGuide, xmltvGuide] = await Promise.all([
+  const [xtreamGuide, xmltvGuide, stalkerGuide] = await Promise.all([
     loadXtreamGuide(xtreamChannels),
-    xmltvChannels.length ? loadNowNext(enabled, xmltvChannels).catch(() => ({} as Record<string, IptvNowNext>)) : Promise.resolve({} as Record<string, IptvNowNext>)
+    xmltvChannels.length ? loadNowNext(enabled, xmltvChannels).catch(() => ({} as Record<string, IptvNowNext>)) : Promise.resolve({} as Record<string, IptvNowNext>),
+    loadStalkerGuide(channels)
   ]);
-  return { ...xmltvGuide, ...xtreamGuide };
+  return { ...xmltvGuide, ...xtreamGuide, ...stalkerGuide };
 }
 
 function xtreamStreamIdFromUrl(url: string) {

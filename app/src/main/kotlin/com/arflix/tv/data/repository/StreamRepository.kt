@@ -10,7 +10,9 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.arflix.tv.R
 import com.arflix.tv.data.api.*
 import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.AddonBehaviorHints
 import com.arflix.tv.data.model.AddonInstallSource
+import com.arflix.tv.data.model.AddonSetup
 import com.arflix.tv.data.model.AddonCatalog
 import com.arflix.tv.data.model.AddonManifest
 import com.arflix.tv.data.model.AddonResource
@@ -712,7 +714,11 @@ class StreamRepository @Inject constructor(
         }
     }
 
-    private suspend fun hydrateCustomAddon(url: String, customName: String? = null): Addon {
+    private suspend fun hydrateCustomAddon(
+        url: String,
+        customName: String? = null,
+        probeParentConfigurePage: Boolean = true
+    ): Addon {
         val normalizedUrl = resolveAddonInstallUrl(url)
         if (normalizedUrl.isBlank()) {
             throw IllegalArgumentException(context.getString(R.string.addon_error_url_empty))
@@ -767,6 +773,8 @@ class StreamRepository @Inject constructor(
         val addonManifest = convertToAddonManifest(manifest)
         val resolvedName = customName?.trim()?.takeIf { it.isNotBlank() } ?: manifest.name
         val addonId = buildAddonInstanceId(manifest.id, normalizedUrl)
+        val configureUrl = AddonSetup.advertisedConfigureUrl(transportUrl, addonManifest.behaviorHints)
+            ?: if (probeParentConfigurePage) findParentConfigureUrl(transportUrl, manifest.id) else null
 
         val resourceNames = addonManifest.resources.map { it.name }.toSet()
         val hasSubtitles = "subtitles" in resourceNames
@@ -782,13 +790,38 @@ class StreamRepository @Inject constructor(
             version = manifest.version,
             description = manifest.description ?: "",
             isInstalled = true,
-            isEnabled = true,
+            // An addon that cannot work before it is set up starts switched off.
+            isEnabled = addonManifest.behaviorHints?.configurationRequired != true,
             type = addonType,
             url = normalizedUrl,
             logo = manifest.logo,
             manifest = addonManifest,
-            transportUrl = transportUrl
+            transportUrl = transportUrl,
+            configureUrl = configureUrl
         )
+    }
+
+    /**
+     * A configured addon built with the Stremio SDK no longer advertises its settings page.
+     * Its unconfigured manifest one path segment up still does, so look there once.
+     */
+    private suspend fun findParentConfigureUrl(transportUrl: String, manifestId: String): String? {
+        val parent = AddonSetup.parentTransportUrl(transportUrl) ?: return null
+        return try {
+            val parentManifest = streamApi.getAddonManifest("$parent/manifest.json")
+            if (parentManifest.id != manifestId) return null
+            val hints = parentManifest.behaviorHints
+            AddonSetup.advertisedConfigureUrl(
+                parent,
+                AddonBehaviorHints(
+                    configurable = hints?.configurable ?: false,
+                    configurationRequired = hints?.configurationRequired ?: false
+                )
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     /**
@@ -813,6 +846,32 @@ class StreamRepository @Inject constructor(
     }
 
     /**
+     * Fetch an addon's manifest without installing it, so the caller can ask the user first.
+     */
+    suspend fun prepareCustomAddon(url: String): Result<Addon> = withContext(Dispatchers.IO) {
+        try {
+            Result.success(hydrateCustomAddon(url))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Install an addon returned by [prepareCustomAddon]. [replaceAddonIds] are removed in the
+     * same write, used when the user replaces an older setup of the same addon.
+     */
+    suspend fun installPreparedAddon(addon: Addon, replaceAddonIds: Set<String> = emptySet()) =
+        withContext(Dispatchers.IO) {
+            val addons = installedAddons.first().toMutableList()
+            val replacedIndex = addons.indexOfFirst { it.id in replaceAddonIds }
+            addons.removeAll { it.id == addon.id || it.id in replaceAddonIds }
+            // A replacement keeps the old addon's place in the list.
+            if (replacedIndex in 0..addons.size) addons.add(replacedIndex, addon) else addons.add(addon)
+            saveAddons(addons)
+        }
+
+    /**
      * Refresh all installed custom addons by re-fetching manifests, invalidating stream caches,
      * and returning a refresh report.
      */
@@ -830,10 +889,15 @@ class StreamRepository @Inject constructor(
                 oldAddon
             } else {
                 try {
-                    val hydrated = hydrateCustomAddon(url = addonUrl, customName = oldAddon.name)
+                    val hydrated = hydrateCustomAddon(
+                        url = addonUrl,
+                        customName = oldAddon.name,
+                        probeParentConfigurePage = oldAddon.configureUrl == null
+                    )
                     refreshedCount++
                     hydrated.copy(
                         id = oldAddon.id,
+                        configureUrl = hydrated.configureUrl ?: oldAddon.configureUrl,
                         isEnabled = oldAddon.isEnabled,
                         isInstalled = oldAddon.isInstalled,
                         runtimeKind = oldAddon.runtimeKind,

@@ -12,12 +12,43 @@ export function hasPendingSettings(auth: AuthClient, profileId?: string | null) 
   return loadStored<Pending[]>(keyFor(auth.session.userId), []).some((entry) => !profileId || entry.profileId === profileId);
 }
 
+/** Overlay only unsaved edits onto a pull; stale browser defaults are not edits. */
+export function settingsWithPendingEdits(auth: AuthClient, profileId: string | null, remote: AppSettings, beforePull: AppSettings, current: AppSettings): AppSettings {
+  const pending = auth.session
+    ? loadStored<Pending[]>(keyFor(auth.session.userId), []).find(entry => entry.profileId === profileId)
+    : undefined;
+  const baseline = pending?.baseline ?? beforePull;
+  const result = { ...remote };
+  for (const field of Object.keys(current) as Array<keyof AppSettings>) {
+    if (JSON.stringify(current[field]) !== JSON.stringify(baseline[field])) {
+      Object.assign(result, { [field]: current[field] });
+    }
+  }
+  return result;
+}
+
 export function queueSettings(auth: AuthClient, profileId: string, settings: AppSettings, baseline: AppSettings | null) {
   if (!auth.session || !baseline) return;
   const key = keyFor(auth.session.userId);
   const entries = loadStored<Pending[]>(key, []);
   const previous = entries.find((entry) => entry.profileId === profileId);
-  const next = { id: crypto.randomUUID(), profileId, settings, baseline: previous?.baseline ?? baseline, changedAt: Date.now() };
+  // Keep a reversion explicit even if the earlier edit is already being sent.
+  // Comparing only with the original baseline would silently turn it into a no-op.
+  const pendingBaseline = { ...(previous?.baseline ?? baseline) };
+  if (previous) {
+    for (const field of Object.keys(settings) as Array<keyof AppSettings>) {
+      const previouslyEdited = JSON.stringify(previous.settings[field]) !== JSON.stringify(pendingBaseline[field]);
+      if (!previouslyEdited) {
+        // A fresh pull may adopt another device's value for an untouched field.
+        // Rebase that field so autosave does not mistake hydration for an edit.
+        Object.assign(pendingBaseline, { [field]: baseline[field] });
+      } else if (JSON.stringify(settings[field]) === JSON.stringify(pendingBaseline[field]) &&
+          JSON.stringify(settings[field]) !== JSON.stringify(previous.settings[field])) {
+        Object.assign(pendingBaseline, { [field]: previous.settings[field] });
+      }
+    }
+  }
+  const next = { id: crypto.randomUUID(), profileId, settings, baseline: pendingBaseline, changedAt: Date.now() };
   saveStored(key, [...entries.filter((entry) => entry.profileId !== profileId), next]);
   if (!loadStored<Pending[]>(key, []).some((entry) => entry.id === next.id)) throw new Error("Device storage is full. Keep this page open and retry saving.");
 }
