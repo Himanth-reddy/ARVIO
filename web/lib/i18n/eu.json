@@ -4,5 +4,6 @@
   "Watching": "Ikusten",
   "Completed": "Amaituta",
   "Dropped": "Utzita",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: erabili Jellyfin-ekin bateragarria den helbidea. Aukerako profila: username#ProfileName. Babestutako profila: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: erabili Jellyfin-ekin bateragarria den helbidea. Aukerako profila: username#ProfileName. Babestutako profila: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Gaituta dituzun gehigarrietako batek ere ez du erreprodukzio-iturririk eskaintzen."
 }

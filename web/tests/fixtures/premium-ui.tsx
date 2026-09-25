@@ -4,6 +4,7 @@ import { EntitlementGate } from '../../components/shell/Paywall';
 import { PremiumAccount } from '../../components/shell/PremiumAccount';
 import '../../app/globals.css';
 import '../../app/premium.css';
+import '../../app/source-setup.css';
 
 // These are the production components and entitlement client. Only identity
 // and HTTP transport are fixtures; no customer trial, payment or email is used.

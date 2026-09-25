@@ -4,5 +4,6 @@
   "Watching": "Đang xem",
   "Completed": "Đã xem xong",
   "Dropped": "Đã bỏ",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: sử dụng địa chỉ tương thích với Jellyfin. Hồ sơ tùy chọn: username#ProfileName. Hồ sơ được bảo vệ: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: sử dụng địa chỉ tương thích với Jellyfin. Hồ sơ tùy chọn: username#ProfileName. Hồ sơ được bảo vệ: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Không có tiện ích đang bật nào của bạn cung cấp nguồn phát."
 }

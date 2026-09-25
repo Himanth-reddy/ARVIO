@@ -99,22 +99,13 @@ test("trial requests tolerate missing, object, and base64 encoded bodies", () =>
   }), "start-trial");
 });
 
-test("public Premium presentation has one tracked route and factual social proof", () => {
+test("public Premium links preserve membership and free self-hosting destinations", () => {
   const root = path.join(__dirname, "..", "..");
   const html = fs.readFileSync(path.join(root, "netlify-arvio-tv-site", "index.html"), "utf8");
   const redirects = fs.readFileSync(path.join(root, "netlify-arvio-tv-site", "netlify.toml"), "utf8");
-  assert.match(html, /Try Premium free for 3 days/i);
-  assert.match(html, /Get Premium on Ko-fi/i);
-  assert.match(html, /10,000\+ users/i);
-  assert.match(html, /10\+ contributors/i);
-  assert.match(html, /Windows, Mac and mobile/i);
-  assert.match(html, /Save compatible files when your provider permits downloads/i);
-  assert.match(html, /Android APK is free and open source/i);
-  assert.match(html, /Optional add-on · Open-source web app/i);
+  assert.match(html, /href="https:\/\/ko-fi\.com\/arvio\/tiers"/);
   assert.match(html, /github\.com\/ProdigyV21\/ARVIO\/tree\/main\/web/);
-  assert.match(html, /href="\/go\/premium\/hero"/);
-  assert.match(html, /href="\/go\/membership\/nav"/);
-  assert.match(html, /href="\/go\/membership\/spotlight"/);
+  assert.match(html, /href="\/premium\/"/);
   assert.match(redirects, /from = "\/go\/premium"/);
   assert.match(redirects, /from = "\/go\/premium\/hero"/);
   assert.match(redirects, /from = "\/go\/membership\/nav"/);

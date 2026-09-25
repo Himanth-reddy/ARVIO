@@ -57,6 +57,53 @@ class StalkerDpadIndexTest {
     }
 }
 
+class StalkerCategoryTabIndexTest {
+
+    @Test
+    fun aSourceWithoutTheTabBarKeepsEveryIndexItHad() {
+        // The whole point of the flag: an M3U or Xtream playlist has no movie
+        // or series catalog, gets no tab bar, and its live TV page must not
+        // move by a single row.
+        assertThat(firstIptvGroupIndex(listOf("Movies", "Kids"), hasTabBar = false)).isEqualTo(2)
+        assertThat(firstIptvGroupIndex(emptyList(), hasTabBar = false)).isEqualTo(1)
+    }
+
+    @Test
+    fun theTabBarPushesTheLiveTvListDownByExactlyOneRow() {
+        assertThat(firstIptvGroupIndex(listOf("Movies", "Kids"), hasTabBar = true)).isEqualTo(3)
+        assertThat(firstIptvGroupIndex(emptyList(), hasTabBar = true)).isEqualTo(2)
+    }
+
+    @Test
+    fun theCatalogTabsHaveNoResetRow() {
+        // Tab bar at 0, bulk toggle at 1, categories from 2 - one row shorter
+        // than live TV, because there is no order to reset.
+        assertThat(firstStalkerCategoryIndex(4)).isEqualTo(2)
+        assertThat(lastStalkerCategoryIndex(4)).isEqualTo(5)
+    }
+
+    @Test
+    fun aCatalogTabWithoutCategoriesHasNothingBelowTheBar() {
+        // No categories means no bulk toggle either, so the bar is the only
+        // row and the focus must not be allowed to walk off it.
+        assertThat(firstStalkerCategoryIndex(0)).isEqualTo(1)
+        assertThat(lastStalkerCategoryIndex(0)).isEqualTo(0)
+    }
+
+    @Test
+    fun theTabOrderIsTheOneTheBarDraws() {
+        // Left to right, and the D-pad column maps onto it by ordinal - the
+        // live TV tab has to stay first, it is the list that was always there.
+        assertThat(StalkerCategoryTab.entries.map { it.name })
+            .containsExactly("LIVE", "MOVIES", "SERIES").inOrder()
+        assertThat(StalkerCategoryTab.LIVE.catalogKind()).isNull()
+        assertThat(StalkerCategoryTab.MOVIES.catalogKind())
+            .isEqualTo(com.arflix.tv.data.model.StalkerCatalogKind.MOVIES)
+        assertThat(StalkerCategoryTab.SERIES.catalogKind())
+            .isEqualTo(com.arflix.tv.data.model.StalkerCatalogKind.SERIES)
+    }
+}
+
 class KeptIptvActionIndexTest {
 
     // Reset at 0, bulk toggle at 1, five categories at 2..6.

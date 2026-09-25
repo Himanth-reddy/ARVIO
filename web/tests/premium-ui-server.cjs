@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '..');
   const result = await build({ entryPoints: [path.join(__dirname, 'fixtures/premium-ui.tsx')], bundle: true, write: false, outdir: '/fixture', jsx: 'automatic',
     define: { 'process.env': '{}', 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_PAYWALL_ENABLED': '"true"', 'process.env.NEXT_PUBLIC_KOFI_URL': '"https://ko-fi.com/arvio/tiers"' },
     plugins: [{ name: 'test-only-transport', setup(builder) {
-      builder.onResolve({ filter: /^@\// }, args => ({ path: args.path === '@/lib/store' ? path.join(__dirname, 'fixtures/premium-store.ts') : path.join(root, args.path.slice(2) + (args.path.endsWith('Paywall') ? '.tsx' : '.ts')) }));
+      builder.onResolve({ filter: /^@\// }, args => ({ path: args.path === '@/lib/store' ? path.join(__dirname, 'fixtures/premium-store.ts') : ['.tsx', '.ts', '/index.tsx', '/index.ts', ''].map(ext => path.join(root, args.path.slice(2) + ext)).find(file => fs.existsSync(file)) }));
       builder.onResolve({ filter: /(^|\/)http$/ }, args => ({ path: path.join(__dirname, 'fixtures/premium-http.ts') }));
     } }]
   });

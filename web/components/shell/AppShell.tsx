@@ -95,7 +95,7 @@ export function AppShell() {
           <DetailsDrawer />
         ) : (
           <>
-            {section === "home" && <HomeScreen />}
+            {section === "home" && <><NoAddonsPrompt /><HomeScreen /></>}
             {section === "search" && <SearchScreen />}
             {section === "watchlist" && <WatchlistScreen />}
             {section === "tv" && <LiveTvScreen />}
@@ -108,7 +108,6 @@ export function AppShell() {
       <PlayerOverlay />
       <ExternalPlaybackPrompt />
       <MediaContextMenu />
-      <NoAddonsPrompt />
       <PremiumUsage />
       <BackHandler />
       <Toast />

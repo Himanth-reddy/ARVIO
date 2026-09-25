@@ -75,8 +75,24 @@ interface TraktApi {
         @Header("trakt-api-version") version: String = "2",
         @Query("type") type: String? = null,
         @Query("page") page: Int? = null,
-        @Query("limit") limit: Int? = null
+        @Query("limit") limit: Int? = null,
+        @Query("extended") extended: String? = null
     ): List<TraktPlaybackItem>
+
+    /**
+     * What this account is scrobbling right now. Trakt moves an item out of
+     * sync/playback for the whole duration of a scrobble session, so this is the
+     * only place an actively-playing title can be read from. Returns 204 with an
+     * empty body when nothing is playing, hence the raw [retrofit2.Response].
+     */
+    @GET("users/me/watching")
+    @retrofit2.http.Headers("Content-Type: application/json")
+    suspend fun getWatchingNow(
+        @Header("Authorization") auth: String,
+        @Header("trakt-api-key") clientId: String,
+        @Header("trakt-api-version") version: String = "2",
+        @Query("extended") extended: String? = null
+    ): retrofit2.Response<TraktWatchingItem>
 
     @DELETE("sync/playback/{id}")
     suspend fun removePlaybackItem(
@@ -644,7 +660,24 @@ data class TraktPlaybackItem(
 data class TraktMovieInfo(
     val title: String,
     val year: Int?,
-    val ids: TraktIds
+    val ids: TraktIds,
+    /** Minutes; only populated with extended=full. */
+    val runtime: Int? = null
+)
+
+/**
+ * A live scrobble session. Trakt reports no progress here, only the window the
+ * session covers: [startedAt] plus the title's runtime equals [expiresAt], so
+ * the elapsed share of that window is the progress.
+ */
+data class TraktWatchingItem(
+    @SerializedName("expires_at") val expiresAt: String?,
+    @SerializedName("started_at") val startedAt: String?,
+    val action: String?,
+    val type: String?,
+    val movie: TraktMovieInfo?,
+    val episode: TraktEpisodeInfo?,
+    val show: TraktShowInfo?
 )
 
 data class TraktShowInfo(
@@ -663,7 +696,9 @@ data class TraktEpisodeInfo(
     val season: Int,
     val number: Int,
     val title: String?,
-    val ids: TraktIds
+    val ids: TraktIds,
+    /** Minutes; only populated with extended=full. */
+    val runtime: Int? = null
 )
 
 data class TraktWatchlistItem(

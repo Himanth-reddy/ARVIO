@@ -2,6 +2,7 @@ import { jsonRequest, proxiedUrl } from "./http";
 import { guideSports, isOnAir, safeSportsImage, sportsEventIdentity, sportsQualifierKey, type SportsGuideEvent } from "./sportsGuide";
 import type { AddonCatalog, InstalledAddon } from "./types";
 import { attachSportsArtwork, type SportsEventArtwork } from "./sportsArtwork";
+import { isInformationalAddonStream } from "./addonStreamInfo";
 
 export interface SportsAddonEvent {
   key: string; installation: string; addonId: string; addonName: string; type: string; eventId: string;
@@ -139,6 +140,7 @@ export async function resolveSportsAddon(event: SportsAddonEvent, addons: Instal
     behaviorHints?: { headers?: Record<string, string>; proxyHeaders?: { request?: Record<string, string> } } }[] }>(
     proxiedUrl(sportsAddonUrl(addon.manifestUrl, "stream", event.type, event.eventId)), { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
   const results = (payload.streams ?? []).flatMap(s => {
+    if (isInformationalAddonStream(s)) return [];
     const url = s.url || s.externalUrl || (s.ytId ? `https://www.youtube.com/watch?v=${encodeURIComponent(s.ytId)}` : "");
     if (!/^https?:\/\//i.test(url)) return [];
     return [{ name: s.name || s.title || addon.name, description: s.title && s.title !== s.name ? s.title : undefined,

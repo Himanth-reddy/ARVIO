@@ -1,4 +1,5 @@
 package com.arflix.tv.ui.screens.settings
+import com.arflix.tv.data.model.AnimeStructuringStyle
 import com.arflix.tv.data.model.AutoplayLimits
 
 import android.content.Context
@@ -18,6 +19,7 @@ import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.DeviceIpAddress
 import com.arflix.tv.util.DiagnosticsManager
 import com.arflix.tv.util.QrCodeGenerator
+import com.arflix.tv.data.api.StalkerApi
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.CatalogConfig
@@ -26,6 +28,7 @@ import com.arflix.tv.data.model.CatalogKind
 import com.arflix.tv.data.model.CatalogPackManifest
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.QualityFilterConfig
+import com.arflix.tv.data.model.StalkerCatalogKind
 import com.arflix.tv.data.model.StreamIntegrationConfig
 import com.arflix.tv.data.model.StreamIntegrationType
 import com.arflix.tv.data.model.StreamProviderItem
@@ -104,6 +107,14 @@ enum class ToastType {
     SUCCESS, ERROR, INFO
 }
 
+/**
+ * Terminal state of a device-code activation, shown inside the dialog instead of letting it
+ * disappear behind a toast.
+ */
+enum class TraktAuthOutcome {
+    CONNECTED, EXPIRED
+}
+
 internal data class SettingsIptvRefreshPolicy(
     val forcePlaylistReload: Boolean,
     val forceEpgReload: Boolean,
@@ -156,6 +167,22 @@ data class AiKeyServerState(
     val keyReceived: Boolean = false
 )
 
+/**
+ * The three lists the IPTV categories page can show.
+ *
+ * [LIVE] is the page as it always was - channel groups, hideable and
+ * reorderable. The other two exist only for a Stalker portal and pick the
+ * catalog categories its movie resp. series lookups are allowed to search.
+ */
+enum class StalkerCategoryTab { LIVE, MOVIES, SERIES }
+
+/** The catalog half a tab configures, or null for the live TV tab. */
+fun StalkerCategoryTab.catalogKind(): StalkerCatalogKind? = when (this) {
+    StalkerCategoryTab.LIVE -> null
+    StalkerCategoryTab.MOVIES -> StalkerCatalogKind.MOVIES
+    StalkerCategoryTab.SERIES -> StalkerCatalogKind.SERIES
+}
+
 data class SettingsUiState(
     val defaultSubtitle: String = "Off",
     val subtitleOptions: List<String> = emptyList(),
@@ -183,9 +210,12 @@ data class SettingsUiState(
     val trailerAutoPlay: Boolean = true,
     val trailerSoundEnabled: Boolean = false,
     val trailerDelaySeconds: Int = 2,
+    /** 0 keeps the fixed row height; 6..10 divides the TV guide into that many rows. */
+    val guideRowCount: Int = 0,
     val trailerInCards: Boolean = true,
     val showBudget: Boolean = true,
     val showEpisodeRatings: Boolean = false,
+    val animeStructuringStyle: AnimeStructuringStyle = AnimeStructuringStyle.BROADCAST,
     /** Pin the IPTV "Favorite TV" row to the top of the home screen. */
     val iptvFavoritesOnHome: Boolean = true,
     // Volume boost in decibels (0 = off, up to 15 dB). Applied via system LoudnessEnhancer
@@ -209,6 +239,10 @@ data class SettingsUiState(
     // Trakt
     val isTraktAuthenticated: Boolean = false,
     val traktCode: TraktDeviceCode? = null,
+    /** Wall clock time the current activation code dies, so the dialog can count down. */
+    val traktCodeExpiresAtMillis: Long? = null,
+    /** Set once the activation finished, so the dialog can report it before closing. */
+    val traktAuthOutcome: TraktAuthOutcome? = null,
     val isTraktAuthStarting: Boolean = false,
     val isTraktPolling: Boolean = false,
     val traktExpiration: String? = null,
@@ -255,6 +289,21 @@ data class SettingsUiState(
     val iptvAvailableGroups: List<String> = emptyList(),
     val iptvHiddenGroups: List<String> = emptyList(),
     val iptvGroupOrder: List<String> = emptyList(),
+    /** True while the open categories page belongs to a Stalker portal. */
+    val iptvSelectedIsStalkerPortal: Boolean = false,
+    val iptvCategoryTab: StalkerCategoryTab = StalkerCategoryTab.LIVE,
+    val iptvStalkerVodCategories: List<StalkerApi.StalkerCategory> = emptyList(),
+    val iptvStalkerSeriesCategories: List<StalkerApi.StalkerCategory> = emptyList(),
+    val iptvHiddenVodCategories: List<String> = emptyList(),
+    val iptvHiddenSeriesCategories: List<String> = emptyList(),
+    val isIptvStalkerCategoriesLoading: Boolean = false,
+    /**
+     * False while the open portal has no stored category names yet, which is
+     * not the same as a portal that answered with none. An empty list under
+     * false means "not fetched yet", under true it means "this portal has no
+     * categories" - two different sentences on screen.
+     */
+    val iptvStalkerCategoriesLoaded: Boolean = false,
     val vodSearchEnabled: Boolean = true,
     val epgVodActionsEnabled: Boolean = true,
     val fallbackChannelLogosEnabled: Boolean = false,
@@ -385,9 +434,11 @@ class SettingsViewModel @Inject constructor(
     private fun trailerAutoPlayKey() = profileManager.profileBooleanKey("trailer_auto_play")
     private fun trailerSoundEnabledKey() = profileManager.profileBooleanKey("trailer_sound_enabled")
     private fun trailerDelayKey() = profileManager.profileStringKey("trailer_delay_seconds")
+    private fun guideRowCountKey() = profileManager.profileStringKey("guide_row_count")
     private fun trailerInCardsKey() = profileManager.profileBooleanKey("trailer_in_cards")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
     private fun showEpisodeRatingsKey() = profileManager.profileBooleanKey("show_episode_ratings")
+    private fun animeStructuringStyleKey() = profileManager.profileStringKey(AnimeStructuringStyle.PREFERENCE_KEY)
     private fun iptvFavoritesOnHomeKey() =
         profileManager.profileBooleanKey(com.arflix.tv.util.IPTV_FAVORITES_ON_HOME)
     private fun clockFormatKey() = profileManager.profileStringKey("clock_format")
@@ -525,6 +576,18 @@ class SettingsViewModel @Inject constructor(
                 )
             }
         }
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(
+                iptvRepository.observeHiddenStalkerCategories(StalkerCatalogKind.MOVIES),
+                iptvRepository.observeHiddenStalkerCategories(StalkerCatalogKind.SERIES)
+            ) { movies, series -> Pair(movies, series) }
+            .collect { (movies, series) ->
+                _uiState.value = _uiState.value.copy(
+                    iptvHiddenVodCategories = movies,
+                    iptvHiddenSeriesCategories = series
+                )
+            }
+        }
     }
 
     private fun initializeUpdaterState() {
@@ -593,10 +656,13 @@ class SettingsViewModel @Inject constructor(
             val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: true
             val trailerSoundEnabled = prefs[trailerSoundEnabledKey()] ?: false
             val trailerDelaySeconds = prefs[trailerDelayKey()]?.toIntOrNull() ?: 2
+            val guideRowCount = prefs[guideRowCountKey()]?.toIntOrNull()
+                ?.takeIf { it in 6..10 } ?: 0
             val trailerInCards = prefs[trailerInCardsKey()] ?: true
             val spoilerBlurEnabled = prefs[spoilerBlurKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
             val showEpisodeRatings = prefs[showEpisodeRatingsKey()] ?: false
+            val animeStructuringStyle = AnimeStructuringStyle.fromId(prefs[animeStructuringStyleKey()])
             val iptvFavoritesOnHome = prefs[iptvFavoritesOnHomeKey()] ?: true
             val clockFormat = prefs[clockFormatKey()] ?: "24h"
             // One-time migration: read old "focus_border_color" key if new "accent_color" is absent
@@ -708,9 +774,11 @@ class SettingsViewModel @Inject constructor(
                 trailerAutoPlay = trailerAutoPlay,
                 trailerSoundEnabled = trailerSoundEnabled,
                 trailerDelaySeconds = trailerDelaySeconds,
+                guideRowCount = guideRowCount,
                 trailerInCards = trailerInCards,
                 showBudget = showBudget,
                 showEpisodeRatings = showEpisodeRatings,
+                animeStructuringStyle = animeStructuringStyle,
                 iptvFavoritesOnHome = iptvFavoritesOnHome,
                 volumeBoostDb = volumeBoostDb,
                 showLoadingStats = showLoadingStats,
@@ -1027,20 +1095,100 @@ class SettingsViewModel @Inject constructor(
         if (selectedPlaylistId.isBlank()) {
             _uiState.value = _uiState.value.copy(
                 iptvSelectedPlaylistId = null,
-                iptvAvailableGroups = emptyList()
+                iptvAvailableGroups = emptyList(),
+                iptvSelectedIsStalkerPortal = false,
+                iptvCategoryTab = StalkerCategoryTab.LIVE,
+                iptvStalkerVodCategories = emptyList(),
+                iptvStalkerSeriesCategories = emptyList(),
+                iptvStalkerCategoriesLoaded = false
             )
             return
         }
 
+        // The page always opens on live TV, whatever the last portal was left
+        // on: that is the list it has always shown, and the tab bar above it
+        // says where the other two are.
         _uiState.value = _uiState.value.copy(
             iptvSelectedPlaylistId = selectedPlaylistId,
-            iptvAvailableGroups = emptyList()
+            iptvAvailableGroups = emptyList(),
+            iptvSelectedIsStalkerPortal = _uiState.value.iptvStalkerPortals.any { it.id == selectedPlaylistId },
+            iptvCategoryTab = StalkerCategoryTab.LIVE,
+            iptvStalkerVodCategories = emptyList(),
+            iptvStalkerSeriesCategories = emptyList(),
+            iptvStalkerCategoriesLoaded = false
         )
         viewModelScope.launch {
             val groups = loadIptvGroupsForPlaylist(selectedPlaylistId)
             if (_uiState.value.iptvSelectedPlaylistId == selectedPlaylistId) {
                 _uiState.value = _uiState.value.copy(iptvAvailableGroups = groups)
             }
+        }
+    }
+
+    /**
+     * Switch the categories page between live TV, movies and series.
+     *
+     * Reuse stored names, or fetch a missing list without requiring live TV.
+     */
+    fun setIptvCategoryTab(tab: StalkerCategoryTab) {
+        if (_uiState.value.iptvCategoryTab == tab) return
+        _uiState.value = _uiState.value.copy(
+            iptvCategoryTab = tab,
+            isIptvStalkerCategoriesLoading = false,
+            iptvStalkerCategoriesLoaded = false
+        )
+        val kind = tab.catalogKind() ?: return
+        val portalId = _uiState.value.iptvSelectedPlaylistId.orEmpty()
+        if (portalId.isBlank() || !_uiState.value.iptvSelectedIsStalkerPortal) return
+
+        _uiState.value = _uiState.value.copy(isIptvStalkerCategoriesLoading = true)
+        viewModelScope.launch {
+            val snapshot = runCatching { iptvRepository.stalkerCategories(portalId, kind) }
+                .getOrNull()
+            // A slow portal response must not replace the newly selected tab.
+            if (_uiState.value.iptvSelectedPlaylistId != portalId ||
+                _uiState.value.iptvCategoryTab != tab) return@launch
+            val categories = snapshot?.categories.orEmpty()
+            _uiState.value = when (kind) {
+                StalkerCatalogKind.MOVIES ->
+                    _uiState.value.copy(iptvStalkerVodCategories = categories)
+                StalkerCatalogKind.SERIES ->
+                    _uiState.value.copy(iptvStalkerSeriesCategories = categories)
+            }.copy(
+                isIptvStalkerCategoriesLoading = false,
+                iptvStalkerCategoriesLoaded = snapshot?.loaded == true
+            )
+        }
+    }
+
+    private fun stalkerCategoriesFor(kind: StalkerCatalogKind): List<StalkerApi.StalkerCategory> =
+        when (kind) {
+            StalkerCatalogKind.MOVIES -> _uiState.value.iptvStalkerVodCategories
+            StalkerCatalogKind.SERIES -> _uiState.value.iptvStalkerSeriesCategories
+        }
+
+    /** Show or hide one catalog category of the open Stalker portal. */
+    fun toggleIptvHiddenStalkerCategory(kind: StalkerCatalogKind, portalId: String, categoryId: String) {
+        viewModelScope.launch {
+            iptvRepository.toggleHiddenStalkerCategory(kind, portalId, categoryId)
+        }
+    }
+
+    /** The bulk "show all / hide all" of the movies and series tabs. */
+    fun setAllIptvStalkerCategoriesVisible(
+        kind: StalkerCatalogKind,
+        portalId: String,
+        visible: Boolean
+    ) {
+        viewModelScope.launch {
+            val categories = stalkerCategoriesFor(kind)
+            if (categories.isEmpty()) return@launch
+            iptvRepository.setStalkerCategoriesHidden(
+                kind = kind,
+                portalId = portalId,
+                categoryIds = categories.map { it.id },
+                hidden = !visible
+            )
         }
     }
 
@@ -1670,6 +1818,19 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { context.settingsDataStore.edit { it[trailerInCardsKey()] = enabled }; _uiState.value = _uiState.value.copy(trailerInCards = enabled); syncLocalStateToCloud(silent = true) }
     }
 
+    fun cycleGuideRowCount() {
+        val next = when (val n = _uiState.value.guideRowCount) {
+            in 6..9 -> n + 1
+            10 -> 0
+            else -> 6
+        }
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[guideRowCountKey()] = next.toString() }
+            _uiState.value = _uiState.value.copy(guideRowCount = next)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
     fun cycleTrailerDelay() {
         val next = when (_uiState.value.trailerDelaySeconds) {
             0 -> 1
@@ -1707,6 +1868,20 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(showEpisodeRatings = enabled)
             syncLocalStateToCloud(silent = true)
         }
+    }
+
+    fun setAnimeStructuringStyle(style: AnimeStructuringStyle) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[animeStructuringStyleKey()] = style.id }
+            _uiState.value = _uiState.value.copy(animeStructuringStyle = style)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun cycleAnimeStructuringStyle() {
+        val current = _uiState.value.animeStructuringStyle
+        val next = if (current == AnimeStructuringStyle.BROADCAST) AnimeStructuringStyle.STANDARD else AnimeStructuringStyle.BROADCAST
+        setAnimeStructuringStyle(next)
     }
 
     fun setSmoothScrolling(enabled: Boolean) {
@@ -4167,6 +4342,8 @@ class SettingsViewModel @Inject constructor(
         traktStartupJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
+                traktCodeExpiresAtMillis = null,
+                traktAuthOutcome = null,
                 isTraktAuthStarting = true,
                 isTraktPolling = false,
                 traktUsername = null,
@@ -4180,6 +4357,8 @@ class SettingsViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(
                     traktCode = deviceCode,
+                    traktCodeExpiresAtMillis = System.currentTimeMillis() +
+                        (deviceCode.expiresIn * 1000L),
                     isTraktAuthStarting = false,
                     isTraktAuthenticated = false,
                     traktUsername = null,
@@ -4205,6 +4384,8 @@ class SettingsViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(
                     traktCode = null,
+                    traktCodeExpiresAtMillis = null,
+                    traktAuthOutcome = null,
                     isTraktAuthStarting = false,
                     isTraktPolling = false,
                     traktUsername = null,
@@ -4260,7 +4441,7 @@ class SettingsViewModel @Inject constructor(
                         isSimklPolling = false,
                         simklUserCode = null,
                         simklVerificationUrl = null,
-                        traktCode = null,
+                        traktAuthOutcome = TraktAuthOutcome.CONNECTED,
                         isTraktAuthStarting = false,
                         isTraktPolling = false,
                         traktExpiration = expirationDate,
@@ -4272,6 +4453,14 @@ class SettingsViewModel @Inject constructor(
                         toastMessage = SettingsMessage.Res(R.string.settings_trakt_connected_toast),
                         toastType = ToastType.SUCCESS
                     )
+                    // Let the dialog report the success for a moment instead of vanishing the
+                    // instant the token arrives; the toast below it stays untouched. This runs in
+                    // its own coroutine on purpose: the sync work below belongs to the polling
+                    // job, and waiting here would put it at the mercy of a dismiss.
+                    viewModelScope.launch {
+                        delay(2_000L)
+                        _uiState.value = _uiState.value.dismissTraktSuccess(deviceCode.deviceCode)
+                    }
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
                         isTraktConnected = true,
@@ -4322,23 +4511,23 @@ class SettingsViewModel @Inject constructor(
                 }
             }
 
-            // Expired or failed
-            _uiState.value = _uiState.value.copy(
-                traktCode = null,
-                isTraktAuthStarting = false,
-                isTraktPolling = false,
-                traktUsername = null,
-                toastMessage = lastFailure ?: SettingsMessage.Res(R.string.settings_trakt_code_expired),
-                toastType = ToastType.ERROR
-            )
+            // Local timeout and server-reported expiry both offer Retry; other failures keep
+            // their error toast and dismiss the dialog.
+            _uiState.value = _uiState.value.finishTraktActivationPolling(lastFailure)
         }
     }
 
     fun cancelTraktAuth() {
-        traktPollingJob?.cancel()
-        traktStartupJob?.cancel()
+        // Once the activation succeeded the dialog only lingers to show the result, while the
+        // polling job finishes the first sync. Dismissing that must not cancel the sync.
+        if (_uiState.value.traktAuthOutcome != TraktAuthOutcome.CONNECTED) {
+            traktPollingJob?.cancel()
+            traktStartupJob?.cancel()
+        }
         _uiState.value = _uiState.value.copy(
             traktCode = null,
+            traktCodeExpiresAtMillis = null,
+            traktAuthOutcome = null,
             isTraktAuthStarting = false,
             isTraktPolling = false,
             traktUsername = null

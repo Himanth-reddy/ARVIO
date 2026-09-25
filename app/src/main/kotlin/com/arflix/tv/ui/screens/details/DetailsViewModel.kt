@@ -3,10 +3,13 @@ package com.arflix.tv.ui.screens.details
 import android.content.Context
 import android.util.Log
 import com.arflix.tv.R
+import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.AddonType
+import com.arflix.tv.data.model.AnimeStructuringStyle
+import com.arflix.tv.util.animeEpisodesForDisplay
 import com.arflix.tv.data.model.CastMember
 import com.arflix.tv.data.model.Episode
 import com.arflix.tv.data.model.EpisodeIdentity
@@ -21,6 +24,7 @@ import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.api.TraktComment
 import com.arflix.tv.data.repository.CloudSyncRepository
+import com.arflix.tv.data.repository.ContinueWatchingMerge
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
@@ -32,6 +36,12 @@ import com.arflix.tv.data.repository.StreamIntegrationRepository
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.TraktRepository
+import com.arflix.tv.network.NetworkMonitor
+import com.arflix.tv.network.NetworkType
+import com.arflix.tv.network.TmdbPriorityDispatcher
+import com.arflix.tv.network.TmdbPriorityDispatcher.Priority
+import com.arflix.tv.util.DeviceType
+import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.util.AppLogger
@@ -43,6 +53,8 @@ import com.arflix.tv.util.settingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -120,6 +132,8 @@ data class DetailsUiState(
     val playPositionMs: Long? = null,
     val autoPlaySingleSource: Boolean = true,
     val autoPlayMinQuality: String = "Any",
+    val animeStructuringStyle: AnimeStructuringStyle = AnimeStructuringStyle.BROADCAST,
+    val hasAlternateAnimeStructure: Boolean = false,
     // TMDB collection (franchise) info — populated for movies that belong to a collection
     val collectionId: Int? = null,
     val collectionName: String? = null,
@@ -214,6 +228,8 @@ class DetailsViewModel @Inject constructor(
     private val traktRepository: TraktRepository,
     private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val streamRepository: StreamRepository,
+    private val networkMonitor: NetworkMonitor,
+    private val tmdbPriorityDispatcher: TmdbPriorityDispatcher,
     private val animeMapper: AnimeMapper,
     private val tmdbApi: TmdbApi,
     private val watchHistoryRepository: WatchHistoryRepository,
@@ -229,6 +245,12 @@ class DetailsViewModel @Inject constructor(
         private const val MAX_COMMUNITY_REVIEW_CHARS = 1400
         private const val MIN_COMMUNITY_REVIEW_WORDS = 8
         private const val MIN_COMMUNITY_REVIEW_COUNT = 1
+        // Issue 2: dwell before proactive scraping. TV users D-pad through Similar
+        // chains quickly; mobile users browse on metered connections. The dwell lets
+        // fast navigation outrun the scrape. Play/Sources focus can fast-path via
+        // requestStreamPrefetchNow() (wired fully once DetailsActionSection exists).
+        private const val STREAM_PREFETCH_DWELL_TV_MS = 1000L
+        private const val STREAM_PREFETCH_DWELL_MOBILE_MS = 600L
     }
 
     private val _uiState = MutableStateFlow(DetailsUiState())
@@ -237,6 +259,7 @@ class DetailsViewModel @Inject constructor(
     private var currentMediaType: MediaType = MediaType.MOVIE
     private var currentMediaId: Int = 0
     private var animeSeasonStructure: AnimeSeasonStructure? = null
+    private var availableAnimeStructure: AnimeSeasonStructure? = null
     // The episode the user last started playing from this screen, kept so that returning from the
     // player (which recreates the details screen) points the Continue button at that episode even
     // when the play was too brief to record a resume point. Scoped to a media id.
@@ -329,6 +352,7 @@ class DetailsViewModel @Inject constructor(
     private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
     private fun showEpisodeRatingsKey() = profileManager.profileBooleanKey("show_episode_ratings")
+    private fun animeStructuringStyleKey() = profileManager.profileStringKey(AnimeStructuringStyle.PREFERENCE_KEY)
 
     private fun isBlankRating(value: String): Boolean {
         return value.isBlank() || value == "0.0" || value == "0"
@@ -376,6 +400,7 @@ class DetailsViewModel @Inject constructor(
         currentMediaType = mediaType
         currentMediaId = mediaId
         animeSeasonStructure = null
+        availableAnimeStructure = null
         initialLoadComplete = false
         vodAppendJob?.cancel()
         homeServerAppendJob?.cancel()
@@ -383,6 +408,11 @@ class DetailsViewModel @Inject constructor(
         focusedStreamPrewarmJob?.cancel()
         seasonLoadJob?.cancel()
         seasonPrefetchJob?.cancel()
+        prefetchDwellJob?.cancel()
+        prefetchDwellJob = null
+        pendingPrefetchImdbId = null
+        prefetchJob?.cancel()
+        prefetchJob = null
         seasonLoadRequestedSeason = -1
         lastStreamListPrewarmKey = ""
 
@@ -393,6 +423,7 @@ class DetailsViewModel @Inject constructor(
                 val autoPlayMinQuality = normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()])
                 val showBudget = prefs[showBudgetKey()] ?: true
                 val showEpisodeRatings = prefs[showEpisodeRatingsKey()] ?: false
+                val animeStructuringStyle = AnimeStructuringStyle.fromId(prefs[animeStructuringStyleKey()])
 
                 val previousState = _uiState.value
                 val previousMatches = previousState.item?.id == mediaId &&
@@ -478,12 +509,16 @@ class DetailsViewModel @Inject constructor(
                     }
                 }
 
+                // Issue 1: primary TMDB metadata funnels through the shared
+                // IMMEDIATE budget so Home background decoration yields to it.
                 val itemDeferred = async {
-                    loadDetailsPart("item") {
-                        if (mediaType == MediaType.TV) {
-                            mediaRepository.getTvDetails(mediaId)
-                        } else {
-                            mediaRepository.getMovieDetails(mediaId)
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                        loadDetailsPart("item") {
+                            if (mediaType == MediaType.TV) {
+                                mediaRepository.getTvDetails(mediaId)
+                            } else {
+                                mediaRepository.getMovieDetails(mediaId)
+                            }
                         }
                     }
                 }
@@ -493,17 +528,27 @@ class DetailsViewModel @Inject constructor(
                     } ?: false
                 }
                 // Fetch real IMDB ID and TVDB ID from TMDB external_ids endpoint
-                val externalIdsDeferred = async { resolveExternalIds(mediaType, mediaId) }
+                val externalIdsDeferred = async {
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                        resolveExternalIds(mediaType, mediaId)
+                    }
+                }
                 val resumeDeferred = async { fetchResumeInfo(mediaId, mediaType, initialSeason, initialEpisode) }
                 // Fetch logo URL concurrently with details to avoid ~1s delay
-                val logoDeferred = async { mediaRepository.getLogoUrl(mediaType, mediaId) }
+                val logoDeferred = async {
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                        mediaRepository.getLogoUrl(mediaType, mediaId)
+                    }
+                }
 
                 // For TV shows, also load episodes
                 val episodesDeferred = if (mediaType == MediaType.TV) {
                     async {
-                        loadDetailsPart("season $seasonToLoad episodes") {
-                            mediaRepository.getSeasonEpisodes(mediaId, seasonToLoad)
-                        } ?: emptyList<Episode>()
+                        tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                            loadDetailsPart("season $seasonToLoad episodes") {
+                                mediaRepository.getSeasonEpisodes(mediaId, seasonToLoad)
+                            } ?: emptyList<Episode>()
+                        }
                     }
                 } else null
 
@@ -559,7 +604,9 @@ class DetailsViewModel @Inject constructor(
                     animeStructureDeferred?.await() ?: animeMapper.resolveAnimeSeasonStructure(mediaId)
                 } else null
 
-                animeSeasonStructure = structure
+                availableAnimeStructure = structure
+                val activeStructure = if (animeStructuringStyle == AnimeStructuringStyle.BROADCAST) structure else null
+                animeSeasonStructure = activeStructure
 
                 // Resolve TV show seasonal episodes directly without intermediate layout flash
                 val resolvedTotalSeasons: Int
@@ -567,21 +614,21 @@ class DetailsViewModel @Inject constructor(
                 val resolvedEpisodes: List<Episode>
                 val displayTarget: EpisodeIdentity?
 
-                if (structure != null) {
+                if (activeStructure != null) {
                     val canonicalTargetSeason = seasonToLoad
                     val canonicalTargetEpisode = initialEpisode ?: 1
-                    val target = structure.identityForTmdb(canonicalTargetSeason, canonicalTargetEpisode)
-                    val displaySeason = target?.displaySeason ?: seasonToLoad.coerceIn(1, structure.seasonCount)
-                    val episodes = loadAnimeDisplaySeason(mediaId, displaySeason, structure)
+                    val target = activeStructure.identityForTmdb(canonicalTargetSeason, canonicalTargetEpisode)
+                    val displaySeason = target?.displaySeason ?: seasonToLoad.coerceIn(1, activeStructure.seasonCount)
+                    val episodes = loadAnimeDisplaySeason(mediaId, displaySeason, activeStructure)
 
-                    resolvedTotalSeasons = structure.seasonCount
+                    resolvedTotalSeasons = activeStructure.seasonCount
                     resolvedCurrentSeason = displaySeason
                     resolvedEpisodes = episodes
                     displayTarget = target
 
                     // Pre-fetch all underlying TMDB seasons in background for 0ms season transitions
                     launch(Dispatchers.IO) {
-                        val neededTmdbSeasons = structure.seasons.values.flatten().map { it.tmdbSeason }.distinct()
+                        val neededTmdbSeasons = activeStructure.seasons.values.flatten().map { it.tmdbSeason }.distinct()
                         for (s in neededTmdbSeasons) {
                             if (isCurrentRequest() && mediaRepository.peekCachedSeasonEpisodes(mediaId, s) == null) {
                                 runCatching { mediaRepository.getSeasonEpisodes(mediaId, s) }
@@ -599,7 +646,8 @@ class DetailsViewModel @Inject constructor(
                         tmdbId = mediaId,
                         displaySeason = seasonToLoad,
                         item = mergedItem,
-                        canonicalEpisodes = canonicalEpisodes
+                        canonicalEpisodes = canonicalEpisodes,
+                        style = animeStructuringStyle,
                     )
 
                     resolvedTotalSeasons = tmdbSeasons
@@ -661,6 +709,8 @@ class DetailsViewModel @Inject constructor(
                 val baseState = _uiState.value.copy(
                     isLoading = false,
                     item = itemWithWatchedStatus,
+                    animeStructuringStyle = animeStructuringStyle,
+                    hasAlternateAnimeStructure = (availableAnimeStructure != null),
                     totalSeasons = resolvedTotalSeasons,
                     currentSeason = resolvedCurrentSeason,
                     episodes = resolvedEpisodes,
@@ -717,7 +767,12 @@ class DetailsViewModel @Inject constructor(
                         // cached in StreamRepository, so loading appears near-instant.
                         val prefetchSeason = if (mediaType == MediaType.TV) (initialSeason ?: 1) else null
                         val prefetchEpisode = if (mediaType == MediaType.TV) (initialEpisode ?: 1) else null
-                        prefetchStreamsInBackground(imdbId, prefetchSeason, prefetchEpisode)
+                        // Issue 2: dwell-gated (TV 1000ms / mobile 600ms + WiFi-only on
+                        // mobile) so fast Similar-chain browsing does not fan out to
+                        // every addon. Back-nav cancels via cancelStreamPrefetch().
+                        if (isCurrentRequest()) {
+                            scheduleStreamPrefetch(imdbId, prefetchSeason, prefetchEpisode)
+                        }
 
                         launch {
                             val imdbRating = runCatching {
@@ -744,9 +799,12 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(180L)
+                    // Issue 1: permit-gated, not delay()-staggered. Fast networks
+                    // start immediately; slow networks queue behind IMMEDIATE.
                     val trailerKey = try {
-                        mediaRepository.getTrailerKey(mediaType, mediaId)
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getTrailerKey(mediaType, mediaId)
+                        }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         null
@@ -757,22 +815,32 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(220L)
-                    val cast = runCatching { mediaRepository.getCast(mediaType, mediaId) }.getOrNull()
+                    val cast = runCatching {
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getCast(mediaType, mediaId)
+                        }
+                    }.getOrNull()
                     if (!cast.isNullOrEmpty()) {
                         updateState { state -> state.copy(cast = cast) }
                     }
                 }
 
                 launch {
-                    delay(320L)
-                    val similar = runCatching { mediaRepository.getSimilar(mediaType, mediaId) }.getOrNull()
+                    val similar = runCatching {
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getSimilar(mediaType, mediaId)
+                        }
+                    }.getOrNull()
                     if (!similar.isNullOrEmpty()) {
+                        // Issue 1: the 8-logo fan-out trickles through the single
+                        // shared DEFERRED slot instead of landing simultaneously.
                         val logos = similar.take(8).map { item ->
                             async {
                                 val key = "${item.mediaType}_${item.id}"
                                 val logo = runCatching {
-                                    mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                    tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                                        mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                    }
                                 }.getOrNull()
                                 if (logo.isNullOrBlank()) null else key to logo
                             }
@@ -787,10 +855,11 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(420L)
                     val externalIds = runCatching { externalIdsDeferred.await() }.getOrNull()
                     val reviews = runCatching {
-                        loadCommunityReviews(mediaType, mediaId, externalIds?.imdbId)
+                        tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                            loadCommunityReviews(mediaType, mediaId, externalIds?.imdbId)
+                        }
                     }.getOrNull()
                     if (!reviews.isNullOrEmpty()) {
                         updateState { state -> state.copy(reviews = reviews) }
@@ -801,7 +870,9 @@ class DetailsViewModel @Inject constructor(
                 launch {
                     if (mediaType != MediaType.MOVIE) return@launch
                     val collectionRef = runCatching {
-                        mediaRepository.getMovieCollectionRef(mediaId)
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getMovieCollectionRef(mediaId)
+                        }
                     }.getOrNull()
                     if (collectionRef != null) {
                         updateState { state ->
@@ -814,7 +885,9 @@ class DetailsViewModel @Inject constructor(
                         // Fetch collection items in background
                         launch {
                             val items = runCatching {
-                                mediaRepository.getTmdbCollectionItems(collectionRef.id)
+                                tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                                    mediaRepository.getTmdbCollectionItems(collectionRef.id)
+                                }
                             }.getOrNull() ?: emptyList()
                             updateState { state ->
                                 if (state.collectionId == collectionRef.id) {
@@ -826,13 +899,15 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 launch {
-                    delay(260L)
+                    // Issue 1: permit-gated, not delay()-staggered (see trailer wave).
                     val servicesResult = runCatching {
-                        mediaRepository.getStreamingServices(
-                            mediaType = mediaType,
-                            mediaId = mediaId,
-                            preferredRegion = Locale.getDefault().country
-                        )
+                        tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                            mediaRepository.getStreamingServices(
+                                mediaType = mediaType,
+                                mediaId = mediaId,
+                                preferredRegion = Locale.getDefault().country
+                            )
+                        }
                     }.getOrNull()
                     if (servicesResult != null) {
                         updateState { state ->
@@ -1322,24 +1397,16 @@ class DetailsViewModel @Inject constructor(
         tmdbId: Int,
         displaySeason: Int,
         item: MediaItem?,
-        canonicalEpisodes: List<Episode>
+        canonicalEpisodes: List<Episode>,
+        style: AnimeStructuringStyle = _uiState.value.animeStructuringStyle,
     ): List<Episode> {
-        val usesAbsoluteNumbers = canonicalEpisodes.isNotEmpty() &&
-            canonicalEpisodes.first().episodeNumber != 1 &&
-            animeMapper.isAnimeContent(tmdbId, item?.genreIds.orEmpty(), item?.originalLanguage)
-        if (!usesAbsoluteNumbers) return canonicalEpisodes
-        return canonicalEpisodes.mapIndexed { index, episode ->
-            episode.copy(
-                episodeNumber = index + 1,
-                seasonNumber = displaySeason,
-                identity = EpisodeIdentity(
-                    displaySeason = displaySeason,
-                    displayEpisode = index + 1,
-                    tmdbSeason = episode.seasonNumber,
-                    tmdbEpisode = episode.episodeNumber
-                )
-            )
-        }
+        return animeEpisodesForDisplay(
+            episodes = canonicalEpisodes,
+            style = style,
+            isAnime = style == AnimeStructuringStyle.BROADCAST &&
+                animeMapper.isAnimeContent(tmdbId, item?.genreIds.orEmpty(), item?.originalLanguage),
+            displaySeason = displaySeason,
+        )
     }
 
     fun toggleWatched(episodeIndex: Int? = null) {
@@ -1651,6 +1718,70 @@ class DetailsViewModel @Inject constructor(
      * it only populates StreamRepository's internal cache.
      */
     private var prefetchJob: kotlinx.coroutines.Job? = null
+    private var prefetchDwellJob: kotlinx.coroutines.Job? = null
+    private var pendingPrefetchImdbId: String? = null
+    private var pendingPrefetchSeason: Int? = null
+    private var pendingPrefetchEpisode: Int? = null
+
+    /**
+     * Cancel any pending or running proactive scrape. Called on back-nav / dispose
+     * so leaving within the dwell window does not leak a scraping session, and on
+     * each new loadDetails() so Similar-chain browsing supersedes the previous job.
+     */
+    fun cancelStreamPrefetch() {
+        prefetchDwellJob?.cancel()
+        prefetchDwellJob = null
+        pendingPrefetchImdbId = null
+        prefetchJob?.cancel()
+        prefetchJob = null
+    }
+
+    /**
+     * TV intent fast-path: fired when focus reaches the Play/Sources action row
+     * (to be wired by DetailsActionSection in Issue 5 Layer 2). Fires the pending
+     * scrape immediately instead of waiting out the dwell.
+     */
+    fun requestStreamPrefetchNow() {
+        val imdbId = pendingPrefetchImdbId ?: return
+        val dwell = prefetchDwellJob ?: return
+        if (!dwell.isActive) return
+        val season = pendingPrefetchSeason
+        val episode = pendingPrefetchEpisode
+        prefetchDwellJob?.cancel()
+        prefetchDwellJob = null
+        pendingPrefetchImdbId = null
+        prefetchStreamsInBackground(imdbId, season, episode)
+    }
+
+    private fun scheduleStreamPrefetch(imdbId: String, season: Int?, episode: Int?) {
+        prefetchDwellJob?.cancel()
+        pendingPrefetchImdbId = imdbId
+        pendingPrefetchSeason = season
+        pendingPrefetchEpisode = episode
+        val scheduledMediaId = currentMediaId
+        val scheduledMediaType = currentMediaType
+        val isTv = try {
+            detectDeviceType(context) == DeviceType.TV
+        } catch (_: Exception) {
+            false
+        }
+        val dwellMs = if (isTv) STREAM_PREFETCH_DWELL_TV_MS else STREAM_PREFETCH_DWELL_MOBILE_MS
+        prefetchDwellJob = viewModelScope.launch {
+            delay(dwellMs)
+            // Similar-chain guard: a new loadDetails() supersedes this pending scrape.
+            if (currentMediaId != scheduledMediaId || currentMediaType != scheduledMediaType) return@launch
+            if (pendingPrefetchImdbId != imdbId) return@launch
+            // Mobile metered-network gate: Cellular browsing must not trigger full
+            // parallel addon scraping + TLS prewarming. Play still scrapes on demand.
+            if (!isTv) {
+                val networkType = runCatching { networkMonitor.getNetworkType() }.getOrNull()
+                if (networkType == NetworkType.CELLULAR || networkType == NetworkType.NONE) return@launch
+            }
+            pendingPrefetchImdbId = null
+            prefetchDwellJob = null
+            prefetchStreamsInBackground(imdbId, season, episode)
+        }
+    }
     private fun prefetchStreamsInBackground(imdbId: String, season: Int?, episode: Int?) {
         prefetchJob?.cancel()
         val requestMediaType = currentMediaType
@@ -1769,10 +1900,14 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun loadStreams(imdbId: String?, identity: EpisodeIdentity? = null) {
+        val requestId = ++loadStreamsRequestId
         loadStreamsJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
         streamListPrewarmJob?.cancel()
         homeServerAppendJob?.cancel()
+        vodAppendJob?.cancel()
+        homeServerAppendJob = null
+        vodAppendJob = null
         // Reset synchronously so the modal opens in loading state immediately,
         // before the coroutine below gets a chance to run.
         _uiState.value = _uiState.value.copy(
@@ -1785,11 +1920,11 @@ class DetailsViewModel @Inject constructor(
             streamSearchStartTime = System.currentTimeMillis(),
             pluginScrapersLoading = false
         )
-        val requestId = ++loadStreamsRequestId
         val requestMediaType = currentMediaType
         val requestMediaId = currentMediaId
 
-        loadStreamsJob = viewModelScope.launch {
+        // Register the job before it can synchronously finish or launch providers.
+        loadStreamsJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             fun isCurrentRequest(): Boolean {
                 return requestId == loadStreamsRequestId &&
                     currentMediaType == requestMediaType &&
@@ -1797,50 +1932,52 @@ class DetailsViewModel @Inject constructor(
             }
             if (!isCurrentRequest()) return@launch
 
-            // If the user clicked Play/Sources very fast (e.g. from Search), the background
-            // resolveExternalIds might still be running. Try to recover it from cache
-            // or wait for the UI state to be updated by the background fetch.
-            var currentImdbId = imdbId ?: _uiState.value.imdbId
-            if (currentImdbId.isNullOrBlank()) {
-                currentImdbId = mediaRepository.getCachedImdbId(requestMediaType, requestMediaId)
-            }
-            if (currentImdbId.isNullOrBlank()) {
-                withTimeoutOrNull(3500) {
-                    while (currentImdbId.isNullOrBlank() && isCurrentRequest()) {
-                        delay(200)
-                        currentImdbId = _uiState.value.imdbId
+            var resolvedImdbId: String? = null
+            try {
+                // If the user clicked Play/Sources very fast (e.g. from Search), the background
+                // resolveExternalIds might still be running. Try to recover it from cache
+                // or wait for the UI state to be updated by the background fetch.
+                var currentImdbId = imdbId ?: _uiState.value.imdbId
+                if (currentImdbId.isNullOrBlank()) {
+                    currentImdbId = mediaRepository.getCachedImdbId(requestMediaType, requestMediaId)
+                }
+                if (currentImdbId.isNullOrBlank()) {
+                    withTimeoutOrNull(3500) {
+                        while (currentImdbId.isNullOrBlank() && isCurrentRequest()) {
+                            delay(200)
+                            currentImdbId = _uiState.value.imdbId
+                        }
                     }
                 }
-            }
-            val resolvedImdbId = currentImdbId
-            val effectiveStreamId: String? = when {
-                !resolvedImdbId.isNullOrBlank() -> resolvedImdbId
-                requestMediaId > 0 -> "tmdb:$requestMediaId"
-                else -> null
-            }
+                resolvedImdbId = currentImdbId
+                val effectiveStreamId: String? = when {
+                    !resolvedImdbId.isNullOrBlank() -> resolvedImdbId
+                    requestMediaId > 0 -> "tmdb:$requestMediaId"
+                    else -> null
+                }
 
-            val unifiedOrderedIds = streamIntegrationRepository.getUnifiedSourceOrderedIds().first()
-            _uiState.value = _uiState.value.copy(
-                isLoadingStreams = true,
-                completedAddons = 0,
-                totalAddons = 0,
-                streams = emptyList(),
-                streamsEpisodeIdentity = identity,
-                subtitles = emptyList(),
-                addonOrderedIds = unifiedOrderedIds,
-                streamSearchStartTime = System.currentTimeMillis(),
-                pluginScrapersLoading = false
-            )
-
-            if (requestMediaType == MediaType.MOVIE) {
-                val title = _uiState.value.item?.title.orEmpty()
-                Log.d(
-                    TAG,
-                    "[MovieSources] loadStreams start requestId=$requestId mediaId=$requestMediaId imdbId=${resolvedImdbId ?: "null"} title=$title"
+                val unifiedOrderedIds = streamIntegrationRepository.getUnifiedSourceOrderedIds().first()
+                if (!isCurrentRequest()) return@launch
+                _uiState.value = _uiState.value.copy(
+                    isLoadingStreams = true,
+                    completedAddons = 0,
+                    totalAddons = 0,
+                    streams = emptyList(),
+                    streamsEpisodeIdentity = identity,
+                    subtitles = emptyList(),
+                    addonOrderedIds = unifiedOrderedIds,
+                    streamSearchStartTime = System.currentTimeMillis(),
+                    pluginScrapersLoading = false
                 )
-            }
 
-            try {
+                if (requestMediaType == MediaType.MOVIE) {
+                    val title = _uiState.value.item?.title.orEmpty()
+                    Log.d(
+                        TAG,
+                        "[MovieSources] loadStreams start requestId=$requestId mediaId=$requestMediaId imdbId=${resolvedImdbId ?: "null"} title=$title"
+                    )
+                }
+
                 // Get current item's genre IDs and language for anime detection
                 val item = _uiState.value.item
                 val genreIds = item?.genreIds ?: emptyList()
@@ -1850,35 +1987,54 @@ class DetailsViewModel @Inject constructor(
                 val animeQueryOverride = identity?.kitsuQuery
                 val homeServerEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.HOME_SERVER)
                 val hasHomeServerConnections = homeServerEnabled && streamRepository.hasHomeServerConnections()
+                // Counted alongside the addons: an IPTV playlist or portal is a
+                // source of streams like any other, and leaving it out told every
+                // user whose only provider is IPTV to go install a streaming addon
+                // whenever a search came back empty. Only while IPTV VOD is switched
+                // on, though - switched off, ARVIO does not search there at all.
+                val vodEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)
+                val hasIptvVodProviders = vodEnabled && streamRepository.hasIptvVodProviders()
+                if (!isCurrentRequest()) return@launch
                 if (hasHomeServerConnections) {
                     homeServerAppendJob = viewModelScope.launch {
-                        appendHomeServerSourcesInBackground(
-                            imdbId = resolvedImdbId,
-                            season = canonicalSeason,
-                            episode = canonicalEpisode,
-                            timeoutMs = 20_000L,
-                            requestId = requestId,
-                            requestMediaType = requestMediaType,
-                            requestMediaId = requestMediaId
-                        )
+                        try {
+                            appendHomeServerSourcesInBackground(
+                                imdbId = resolvedImdbId,
+                                season = canonicalSeason,
+                                episode = canonicalEpisode,
+                                timeoutMs = 20_000L,
+                                requestId = requestId,
+                                requestMediaType = requestMediaType,
+                                requestMediaId = requestMediaId
+                            )
+                        } finally {
+                            if (isCurrentRequest()) {
+                                stopStreamSpinnerIfNothingLeft(ignoring = coroutineContext[Job])
+                            }
+                        }
                     }
                 }
                 vodAppendJob?.cancel()
-                val vodEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)
                 if (vodEnabled) {
                     vodAppendJob = viewModelScope.launch {
-                        // VOD lookups use disk-cached catalogs (near-instant on warm starts).
-                        // On rare true cold starts, catalog download can take 15-30s for large providers.
-                        val vodTimeout = if (currentMediaType == MediaType.MOVIE) 30_000L else 45_000L
-                        appendVodSourceInBackground(
-                            imdbId = resolvedImdbId,
-                            season = canonicalSeason,
-                            episode = canonicalEpisode,
-                            timeoutMs = vodTimeout,
-                            requestId = requestId,
-                            requestMediaType = requestMediaType,
-                            requestMediaId = requestMediaId
-                        )
+                        try {
+                            // VOD lookups use disk-cached catalogs (near-instant on warm starts).
+                            // On rare true cold starts, catalog download can take 15-30s for large providers.
+                            val vodTimeout = if (currentMediaType == MediaType.MOVIE) 30_000L else 45_000L
+                            appendVodSourceInBackground(
+                                imdbId = resolvedImdbId,
+                                season = canonicalSeason,
+                                episode = canonicalEpisode,
+                                timeoutMs = vodTimeout,
+                                requestId = requestId,
+                                requestMediaType = requestMediaType,
+                                requestMediaId = requestMediaId
+                            )
+                        } finally {
+                            if (isCurrentRequest()) {
+                                stopStreamSpinnerIfNothingLeft(ignoring = coroutineContext[Job])
+                            }
+                        }
                     }
                 }
 
@@ -1929,19 +2085,17 @@ class DetailsViewModel @Inject constructor(
                             }
                         }
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         Log.w(TAG, "[PluginScrapers] streaming execution failed: ${e.message}")
                     } finally {
+                        if (isCurrentRequest()) {
                         val current = _uiState.value
-                        val stillLoading = loadStreamsJob?.isActive == true ||
-                                           vodAppendJob?.isActive == true ||
-                                           homeServerAppendJob?.isActive == true
-                        val newLoading = current.isLoadingStreams && current.streams.isEmpty() && stillLoading
-
                         _uiState.value = current.copy(
                             pluginScrapersLoading = false,
-                            loadingPluginNames = emptySet(),
-                            isLoadingStreams = newLoading
+                            loadingPluginNames = emptySet()
                         )
+                        stopStreamSpinnerIfNothingLeft(ignoring = coroutineContext[Job])
+                        }
                     }
                 }
             }
@@ -1976,9 +2130,12 @@ class DetailsViewModel @Inject constructor(
                             isLoadingStreams = false,
                             streams = emptyList(),
                             subtitles = emptyList(),
-                            hasStreamingAddons = streamRepository.installedAddons.first()
-                                .count { it.isVodStreamingAddon() } > 0 ||
-                                hasHomeServerConnections
+                            hasStreamingAddons = hasAnyStreamProvider(
+                                streamingAddonCount = streamRepository.installedAddons.first()
+                                    .count { it.isVodStreamingAddon() },
+                                hasHomeServerConnections = hasHomeServerConnections,
+                                hasIptvVodProviders = hasIptvVodProviders
+                            )
                         )
                         return@launch
                     }
@@ -2004,12 +2161,16 @@ class DetailsViewModel @Inject constructor(
                             homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = mergedStreams.isEmpty() &&
-                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading || pluginScraperJob?.isActive == true),
+                                (!progressive.isFinal || supplementalSourcesStillLoading || pluginScraperJob?.isActive == true),
                             completedAddons = progressive.completedAddons,
                             totalAddons = progressive.totalAddons,
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
-                            hasStreamingAddons = addonCount > 0 || hasHomeServerConnections
+                            hasStreamingAddons = hasAnyStreamProvider(
+                                streamingAddonCount = addonCount,
+                                hasHomeServerConnections = hasHomeServerConnections,
+                                hasIptvVodProviders = hasIptvVodProviders
+                            )
                         )
                         prewarmVisibleStreams(mergedStreams)
                         if (progressive.isFinal) {
@@ -2026,9 +2187,12 @@ class DetailsViewModel @Inject constructor(
                             isLoadingStreams = false,
                             streams = emptyList(),
                             subtitles = emptyList(),
-                            hasStreamingAddons = streamRepository.installedAddons.first()
-                                .count { it.isVodStreamingAddon() } > 0 ||
-                                hasHomeServerConnections
+                            hasStreamingAddons = hasAnyStreamProvider(
+                                streamingAddonCount = streamRepository.installedAddons.first()
+                                    .count { it.isVodStreamingAddon() },
+                                hasHomeServerConnections = hasHomeServerConnections,
+                                hasIptvVodProviders = hasIptvVodProviders
+                            )
                         )
                         return@launch
                     }
@@ -2061,18 +2225,23 @@ class DetailsViewModel @Inject constructor(
                             homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = mergedStreams.isEmpty() &&
-                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading || pluginScraperJob?.isActive == true),
+                                (!progressive.isFinal || supplementalSourcesStillLoading || pluginScraperJob?.isActive == true),
                             completedAddons = progressive.completedAddons,
                             totalAddons = progressive.totalAddons,
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
-                            hasStreamingAddons = addonCount > 0 || hasHomeServerConnections
+                            hasStreamingAddons = hasAnyStreamProvider(
+                                streamingAddonCount = addonCount,
+                                hasHomeServerConnections = hasHomeServerConnections,
+                                hasIptvVodProviders = hasIptvVodProviders
+                            )
                         )
                         prewarmVisibleStreams(mergedStreams)
                     }
                     return@launch
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 if (!isCurrentRequest()) return@launch
                 if (requestMediaType == MediaType.MOVIE) {
                     Log.e(
@@ -2081,9 +2250,13 @@ class DetailsViewModel @Inject constructor(
                         e
                     )
                 }
-                _uiState.value = _uiState.value.copy(isLoadingStreams = false)
+            } finally {
+                if (isCurrentRequest()) {
+                    stopStreamSpinnerIfNothingLeft(ignoring = coroutineContext[Job])
+                }
             }
         }
+        loadStreamsJob?.start()
     }
 
     private suspend fun persistNextEpisodePointer(
@@ -2607,7 +2780,30 @@ class DetailsViewModel @Inject constructor(
                 null
             }
 
-            val resumeCandidate = remoteItem ?: localItem ?: localFallbackItem
+            // Which episode to resume is decided by whichever source saw the most
+            // recent activity; a tracker knows about other devices, the local
+            // store knows about a play the tracker write may have missed.
+            val localCandidates = listOfNotNull(localItem, localFallbackItem)
+            val resumeCandidate = (listOfNotNull(remoteItem) + localCandidates)
+                .maxByOrNull { it.updatedAtMs }
+
+            // Where to resume is a separate question. A tracker only stores a
+            // percentage — Trakt has no position field at all — and the duration
+            // behind that percentage is a generic catalogue runtime, not the file
+            // being played. Whenever the local store holds a real position for the
+            // same episode, that is the exact one and the percentage is only a
+            // fallback for titles this device has never played.
+            //
+            // Unless the tracker has moved well past it. Clients that are not
+            // ARVIO write a percentage and no position, so a position saved here
+            // by an older session can sit minutes behind what the tracker knows;
+            // preferring it then would rewind playback on every resume.
+            val exactSource = localCandidates.firstOrNull { local ->
+                local.resumePositionSeconds > 0L &&
+                    local.season == resumeCandidate?.season &&
+                    local.episode == resumeCandidate?.episode &&
+                    !(remoteItem != null && ContinueWatchingMerge.isLocalPositionStale(remoteItem, local))
+            }
             val localResume = if (resumeCandidate != null) {
                 buildResumeFromProgress(
                     mediaType = mediaType,
@@ -2615,8 +2811,12 @@ class DetailsViewModel @Inject constructor(
                     season = resumeCandidate.season,
                     episode = resumeCandidate.episode,
                     progress = resumeCandidate.progress / 100f,
-                    positionSeconds = resumeCandidate.resumePositionSeconds,
-                    durationSeconds = resumeCandidate.durationSeconds,
+                    positionSeconds = exactSource?.resumePositionSeconds
+                        ?: resumeCandidate.resumePositionSeconds,
+                    durationSeconds = maxOf(
+                        exactSource?.durationSeconds ?: 0L,
+                        resumeCandidate.durationSeconds
+                    ),
                     allowProgressDerivedResume = !resumeCandidate.isUpNext
                 ).dropIfWatchedEpisode()
             } else null
@@ -3017,9 +3217,6 @@ class DetailsViewModel @Inject constructor(
         }
         val validSources = sources.filter { !it.url.isNullOrBlank() }
         if (validSources.isEmpty()) {
-            if (_uiState.value.streams.isEmpty() && vodAppendJob?.isActive != true) {
-                _uiState.value = _uiState.value.copy(isLoadingStreams = false)
-            }
             return
         }
         val latest = _uiState.value.streams
@@ -3102,7 +3299,68 @@ class DetailsViewModel @Inject constructor(
         )
         prewarmVisibleStreams(mergedStreams)
     }
+
+    /**
+     * Ends the "searching sources" state once the last source job came back
+     * empty-handed.
+     *
+     * The caller passes itself as [ignoring]: a job is still marked active
+     * while its own last lines run, and it must not read itself as a reason to
+     * keep waiting.
+     */
+    private fun stopStreamSpinnerIfNothingLeft(ignoring: kotlinx.coroutines.Job?) {
+        val state = _uiState.value
+        val stop = shouldStopStreamSpinner(
+            isLoadingStreams = state.isLoadingStreams,
+            hasStreams = state.streams.isNotEmpty(),
+            pluginScrapersLoading = state.pluginScrapersLoading,
+            otherSourceJobsActive = hasOtherActiveStreamJobs(
+                listOf(loadStreamsJob, homeServerAppendJob, vodAppendJob), ignoring
+            )
+        )
+        if (!stop) return
+        _uiState.value = state.copy(isLoadingStreams = false)
+    }
 }
+
+/**
+ * Whether a source job that came back with nothing may switch the
+ * "searching sources" spinner off.
+ *
+ * It may not do so on its own account: the other supplemental job, the addon
+ * resolution and the plugin scrapers can all still be working, and a spinner
+ * taken away while sources are on their way reads as "nothing found". But
+ * someone has to do it - the IPTV path used to return silently, so a details
+ * screen whose only provider is IPTV kept its spinner for good once the
+ * provider answered with nothing, and the source picker never reached the
+ * empty state it was supposed to show.
+ */
+internal fun hasOtherActiveStreamJobs(jobs: List<Job?>, finishingJob: Job?): Boolean =
+    jobs.any { job -> job !== finishingJob && job?.isActive == true }
+
+internal fun shouldStopStreamSpinner(
+    isLoadingStreams: Boolean,
+    hasStreams: Boolean,
+    pluginScrapersLoading: Boolean,
+    otherSourceJobsActive: Boolean
+): Boolean = isLoadingStreams &&
+    !hasStreams &&
+    !pluginScrapersLoading &&
+    !otherSourceJobsActive
+
+/**
+ * Whether this setup has any source of streams at all.
+ *
+ * Decides one thing only: which empty state the source picker shows. An IPTV
+ * playlist or portal counts like an addon or a home server does - left out, as
+ * it was, every user whose only provider is IPTV was told to go install a
+ * streaming addon whenever a search came back empty.
+ */
+internal fun hasAnyStreamProvider(
+    streamingAddonCount: Int,
+    hasHomeServerConnections: Boolean,
+    hasIptvVodProviders: Boolean
+): Boolean = streamingAddonCount > 0 || hasHomeServerConnections || hasIptvVodProviders
 
 private object DetailsVMRegexes {
     val reviewWhitespaceRegex = Regex("\\s+")

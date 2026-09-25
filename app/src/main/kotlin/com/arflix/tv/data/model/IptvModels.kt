@@ -120,3 +120,13 @@ value class PlaylistGroupKey(val key: String) {
         }
     }
 }
+
+/**
+ * Which half of a Stalker portal's catalog a category selection belongs to.
+ *
+ * Movies and series are separate lists on the portal, with their own ids, so
+ * the two selections are stored and applied separately as well. Live TV is not
+ * one of them: its groups are picked by name, through the existing
+ * hidden-groups preference.
+ */
+enum class StalkerCatalogKind { MOVIES, SERIES }

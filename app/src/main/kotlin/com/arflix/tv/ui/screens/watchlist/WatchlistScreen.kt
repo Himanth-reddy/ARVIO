@@ -31,6 +31,9 @@ import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
@@ -70,13 +73,14 @@ fun WatchlistScreen(
     currentProfile: Profile? = null,
     onNavigateToDetails: (MediaType, Int) -> Unit = { _, _ -> },
     onNavigateToHome: () -> Unit = {}, onNavigateToSearch: () -> Unit = {},
-    onNavigateToTv: () -> Unit = {}, onNavigateToSettings: (String) -> Unit = {},
+    onNavigateToTv: () -> Unit = {}, onNavigateToSettings: (String?) -> Unit = {},
     onSwitchProfile: () -> Unit = {}, onBack: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val servers by viewModel.libraryState.collectAsStateWithLifecycle()
     val logos by viewModel.logoUrls.collectAsStateWithLifecycle()
     val touch = LocalDeviceType.current.isTouchDevice()
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val poster = rememberCardLayoutMode() == CardLayoutMode.POSTER
     val scrollScope = rememberCoroutineScope()
     var section by rememberSaveable { mutableStateOf(LibrarySection.WATCHLISTS) }
@@ -166,14 +170,18 @@ fun WatchlistScreen(
             if (!touch) {
                 Box(Modifier.fillMaxWidth().height(60.dp).focusRequester(topFocus).onFocusChanged { topFocused = it.isFocused }
                     .onKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) false else when(event.key) {
+                        // The top bar's index runs left-to-right, but Compose mirrors
+                        // the row in an RTL locale, so the physical key has to be
+                        // mirrored back before it reaches index arithmetic written
+                        // against an LTR layout — otherwise the menu walks the wrong way.
+                        if (event.type != KeyEventType.KeyDown) false else when(event.key.mirrorHorizontalForRtl(isRtl)) {
                             Key.DirectionLeft -> { topIndex = (topIndex - 1).coerceAtLeast(0); true }
                             Key.DirectionRight -> { topIndex = (topIndex + 1).coerceAtMost(topBarMaxIndex(currentProfile != null)); true }
                             Key.DirectionDown -> { firstTab.requestFocus(); true }
                             Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
                                 when(topBarFocusedItem(topIndex, currentProfile != null)) {
                                     SidebarItem.HOME -> onNavigateToHome(); SidebarItem.SEARCH -> onNavigateToSearch()
-                                    SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings("general")
+                                    SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings(null)
                                     SidebarItem.WATCHLIST -> firstTab.requestFocus(); null -> onSwitchProfile()
                                 }; true
                             }

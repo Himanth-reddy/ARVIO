@@ -1140,4 +1140,79 @@ class StalkerApiTest {
 
         assertFalse(requests.single().contains("series="))
     }
+
+    @Test
+    fun `getVodCategories asks the vod endpoint and drops the all-categories entry`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) {
+            """{"js":[{"id":"*","title":"All"},{"id":"958","title":"DE Filme"},{"id":"486","title":"EN Movies"}]}"""
+        }
+
+        val categories = api.getVodCategories()
+
+        assertEquals(
+            listOf(
+                StalkerApi.StalkerCategory("958", "DE Filme"),
+                StalkerApi.StalkerCategory("486", "EN Movies")
+            ),
+            categories
+        )
+        assertTrue(requests.single().contains("type=vod&action=get_categories"))
+    }
+
+    @Test
+    fun `getSeriesCategories asks the series endpoint`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) {
+            """{"js":[{"id":"1372","title":"BG Serien"}]}"""
+        }
+
+        val categories = api.getSeriesCategories()
+
+        assertEquals(listOf(StalkerApi.StalkerCategory("1372", "BG Serien")), categories)
+        assertTrue(requests.single().contains("type=series&action=get_categories"))
+    }
+
+    @Test
+    fun `category without a title falls back to its id rather than vanishing`() = runTest {
+        val api = stubApi(requests = mutableListOf()) {
+            """{"js":[{"id":"77","title":"  "},{"id":"78"}]}"""
+        }
+
+        assertEquals(
+            listOf(
+                StalkerApi.StalkerCategory("77", "77"),
+                StalkerApi.StalkerCategory("78", "78")
+            ),
+            api.getVodCategories()
+        )
+    }
+
+    @Test
+    fun `a duplicate category id is listed once`() = runTest {
+        val api = stubApi(requests = mutableListOf()) {
+            """{"js":[{"id":"12","title":"Action"},{"id":"12","title":"Action (copy)"}]}"""
+        }
+
+        assertEquals(listOf(StalkerApi.StalkerCategory("12", "Action")), api.getVodCategories())
+    }
+
+    @Test
+    fun `a portal without category support answers null, not an empty selection`() = runTest {
+        // Success is measured on the payload: both of these arrive under a
+        // plain HTTP 200, and reading either as "this portal has no
+        // categories" would cache a dead answer for hours.
+        val htmlApi = stubApi(requests = mutableListOf()) { "<html><body>404</body></html>" }
+        assertNull(htmlApi.getVodCategories())
+
+        val emptyJsApi = stubApi(requests = mutableListOf()) { """{"js":""}""" }
+        assertNull(emptyJsApi.getSeriesCategories())
+    }
+
+    @Test
+    fun `a portal that answers with no categories returns an empty list`() = runTest {
+        val api = stubApi(requests = mutableListOf()) { """{"js":[]}""" }
+
+        assertEquals(emptyList<StalkerApi.StalkerCategory>(), api.getVodCategories())
+    }
 }

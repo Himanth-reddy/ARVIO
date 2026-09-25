@@ -1186,6 +1186,7 @@ private fun RowsLayer(
                             )
                         }
 
+                        // The keyed lazy item saves this state across disposal and navigation.
                         val rowState = rememberLazyListState()
                         // Keep visible cards still; only scroll enough to reveal a clipped selection.
                         if (!isTouchDevice) {

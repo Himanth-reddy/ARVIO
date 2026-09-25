@@ -6,5 +6,6 @@
   "Watching": "正在觀看",
   "Completed": "已看完",
   "Dropped": "已棄劇",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: 使用相容 Jellyfin 的位址. 可選個人資料: username#ProfileName. 受保護的個人資料: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: 使用相容 Jellyfin 的位址. 可選個人資料: username#ProfileName. 受保護的個人資料: password#PIN.",
+  "None of your enabled addons provide playback sources.": "您已啟用的附加元件均未提供播放來源。"
 }

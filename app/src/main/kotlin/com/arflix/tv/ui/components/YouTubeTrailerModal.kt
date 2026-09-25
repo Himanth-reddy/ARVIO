@@ -144,6 +144,16 @@ private fun TrailerPlayerSurface(
     val onDurationCb by rememberUpdatedState(onDuration)
     val onErrorCb by rememberUpdatedState(onError)
     val onReleasedCb by rememberUpdatedState(onReleased)
+    // Issue 3: persistent-instance primitive. The WebView is created once by the
+    // factory below; video switches while it is alive go through cueVideo() in
+    // `update` instead of tearing the renderer down and cold-starting a new one.
+    // (FeaturedMediaCard itself holds no player — static art only — so this
+    // modal surface is the single YouTube WebView site to protect.)
+    var boundPlayer by remember { mutableStateOf<YouTubePlayer?>(null) }
+    var loadedKey by remember { mutableStateOf<String?>(null) }
+    // Remembers the init-time autoplay decision so a mid-modal key switch
+    // starts the new playback lifecycle the same way (load vs cue).
+    var autoplayOnReady by remember { mutableStateOf<Boolean?>(null) }
 
     AndroidView(
         factory = { ctx ->
@@ -169,7 +179,11 @@ private fun TrailerPlayerSurface(
                 initialize(
                     object : AbstractYouTubePlayerListener() {
                         override fun onReady(youTubePlayer: YouTubePlayer) {
-                            if (onReadyCb(youTubePlayer)) {
+                            boundPlayer = youTubePlayer
+                            loadedKey = youtubeKey
+                            val autoplay = onReadyCb(youTubePlayer)
+                            autoplayOnReady = autoplay
+                            if (autoplay) {
                                 youTubePlayer.loadVideo(youtubeKey, 0f)
                             } else {
                                 youTubePlayer.cueVideo(youtubeKey, 0f)
@@ -209,7 +223,27 @@ private fun TrailerPlayerSurface(
             }
         },
         modifier = modifier,
+        update = {
+            // Key changed while the WebView is alive (e.g. trailer metadata
+            // resolving mid-modal): start the new video the same way init
+            // would — no WebView reinit, no iframe JS re-parse, no teardown race.
+            if (loadedKey != null && loadedKey != youtubeKey) {
+                loadedKey = youtubeKey
+                runCatching {
+                    if (autoplayOnReady == true) {
+                        boundPlayer?.loadVideo(youtubeKey, 0f)
+                    } else {
+                        boundPlayer?.cueVideo(youtubeKey, 0f)
+                    }
+                }
+            }
+        },
         onRelease = { playerView ->
+            // Pause before release so the renderer is not torn down mid-decode;
+            // narrows the async WebView-teardown window on rapid reopen.
+            runCatching { boundPlayer?.pause() }
+            boundPlayer = null
+            loadedKey = null
             playerView.release()
             onReleasedCb()
         }
@@ -294,8 +328,10 @@ fun YouTubeTrailerModal(
 
     var isYouTubeFocused by remember { mutableStateOf(false) }
 
-    var activePlayer by remember(youtubeKey) { mutableStateOf<YouTubePlayer?>(null) }
-    var nativePlayerView by remember(youtubeKey) { mutableStateOf<YouTubePlayerView?>(null) }
+    var activePlayer by remember { mutableStateOf<YouTubePlayer?>(null) }
+    var nativePlayerView by remember { mutableStateOf<YouTubePlayerView?>(null) }
+    // Per-video state resets on key change; the player/view handles above persist
+    // so a mid-modal key switch cues via cueVideo() without losing D-pad control.
     val playbackLifecycle = remember(youtubeKey) { TrailerPlaybackLifecycle() }
     var playbackError by remember(youtubeKey) { mutableStateOf(false) }
 
@@ -303,6 +339,13 @@ fun YouTubeTrailerModal(
     KeepScreenOn(active = isPlaying)
     var currentSecond by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
+    // New video cued into the persistent player: drop stale progress and
+    // playback state until the player's own callbacks repopulate.
+    LaunchedEffect(youtubeKey) {
+        currentSecond = 0f
+        duration = 0f
+        isPlaying = false
+    }
 
     // Our own bar starts hidden and is only ever shown on a key press (TV).
     var showBar by remember { mutableStateOf(false) }

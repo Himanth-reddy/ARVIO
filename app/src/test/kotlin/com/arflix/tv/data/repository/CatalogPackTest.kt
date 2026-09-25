@@ -68,8 +68,9 @@ class CatalogPackTest {
 
         val addedCatalogs = mutableListOf<CatalogConfig>()
         coEvery { repository.getCatalogs() } returns emptyList()
-        coEvery { repository["saveCatalogs"](any<List<CatalogConfig>>()) } answers {
+        coEvery { repository["saveCatalogs"](any<List<CatalogConfig>>(), any<androidx.datastore.preferences.core.Preferences>(), any<String>()) } answers {
             addedCatalogs.addAll(firstArg<List<CatalogConfig>>())
+            true
         }
 
         coEvery { repository.validateCatalogUrl(any()) } returns CatalogValidationResult(
@@ -115,7 +116,7 @@ class CatalogPackTest {
         val repository = spyk(CatalogRepository(context, profileManager, traktApi, okHttpClient, invalidationBus))
 
         coEvery { repository.getCatalogs() } returns emptyList()
-        coEvery { repository["saveCatalogs"](any<List<CatalogConfig>>()) } returns Unit
+        coEvery { repository["saveCatalogs"](any<List<CatalogConfig>>(), any<androidx.datastore.preferences.core.Preferences>(), any<String>()) } returns true
 
         coEvery { repository.validateCatalogUrl(any()) } returns CatalogValidationResult(
             isValid = true,

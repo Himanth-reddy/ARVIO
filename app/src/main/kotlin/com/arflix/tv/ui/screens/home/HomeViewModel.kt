@@ -25,6 +25,8 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.R
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.network.TmdbPriorityDispatcher
+import com.arflix.tv.network.TmdbPriorityDispatcher.Priority
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.TraktSyncService
 import com.arflix.tv.data.repository.ContinueWatchingItem
@@ -196,6 +198,7 @@ enum class ToastType {
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel @Inject constructor(
     private val mediaRepository: MediaRepository,
+    private val tmdbPriorityDispatcher: TmdbPriorityDispatcher,
     private val catalogRepository: CatalogRepository,
     private val streamRepository: StreamRepository,
     private val sportsRepository: SportsRepository,
@@ -209,6 +212,7 @@ class HomeViewModel @Inject constructor(
     private val cloudSyncRepository: CloudSyncRepository,
     private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
     private val continueWatchingUpdates: ContinueWatchingUpdates,
+    private val appForegroundSignals: com.arflix.tv.data.repository.AppForegroundSignals,
     private val realtimeSyncManager: com.arflix.tv.data.repository.RealtimeSyncManager,
     private val profileManager: ProfileManager,
     private val appUpdateRepository: com.arflix.tv.updater.AppUpdateRepository,
@@ -1107,7 +1111,7 @@ class HomeViewModel @Inject constructor(
         return java.io.File(context.cacheDir, "home_categories_cache_${profileId}_$language.json")
     }
 
-    private fun continueWatchingCacheFile(): java.io.File {
+    private suspend fun continueWatchingCacheFile(): java.io.File {
         val profileId = profileManager.getProfileIdSync()
             .ifBlank { "default" }
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
@@ -1116,7 +1120,16 @@ class HomeViewModel @Inject constructor(
         // v2 invalidates the old snapshot, which could contain a mixed or
         // truncated provider result and would otherwise paint before Trakt
         // had a chance to publish the corrected list.
-        return java.io.File(context.filesDir, "home_continue_watching_v2_${profileId}_$language.json")
+        //
+        // The tracker is part of the name for the same reason it is part of the
+        // repository's key: this file is what Home paints before any network
+        // call returns, and each tracker answers with a different list.
+        val provider = runCatching { remoteSyncManager.selectedProvider().name.lowercase(java.util.Locale.US) }
+            .getOrDefault("none")
+        return java.io.File(
+            context.filesDir,
+            "home_continue_watching_v2_${profileId}_${language}_$provider.json"
+        )
     }
 
     private suspend fun applyContentLanguageFromPrefs(): String {
@@ -1152,7 +1165,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun persistContinueWatchingCache(items: List<ContinueWatchingItem>) {
+    private suspend fun persistContinueWatchingCache(items: List<ContinueWatchingItem>) {
         if (items.isEmpty()) return
         runCatching {
             val target = continueWatchingCacheFile()
@@ -1169,7 +1182,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun loadContinueWatchingCache(): List<ContinueWatchingItem> = runCatching {
+    private suspend fun loadContinueWatchingCache(): List<ContinueWatchingItem> = runCatching {
         val file = continueWatchingCacheFile()
         if (!file.exists() || file.length() > maxContinueWatchingCacheBytes) return emptyList()
         val json = file.readText()
@@ -1791,6 +1804,18 @@ class HomeViewModel @Inject constructor(
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                 }
+            }
+        }
+
+        viewModelScope.launch {
+            // The app came back to the foreground. Another device may have
+            // watched something since, so ask the tracker again rather than
+            // serving the row from the refresh throttle and the repository's
+            // five-minute cache, which is what left an episode watched
+            // elsewhere overnight missing here until something else happened
+            // to clear both windows.
+            appForegroundSignals.returnedToForeground.collect {
+                refreshContinueWatchingOnly(force = true)
             }
         }
 
@@ -2998,7 +3023,10 @@ class HomeViewModel @Inject constructor(
                     async(networkDispatcher) {
                         val key = "${item.mediaType}_${item.id}"
                         try {
-                            val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            // Issue 1: logo decoration trickles through BACKGROUND.
+                            val logoUrl = tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                                mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            }
                             if (logoUrl != null) key to logoUrl else null
                         } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -3217,7 +3245,10 @@ class HomeViewModel @Inject constructor(
                         }
                     } else {
                         try {
-                            val url = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            // Issue 1: card logo decoration is BACKGROUND.
+                            val url = tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                                mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            }
                             if (url != null) {
                                 withContext(Dispatchers.Main.immediate) {
                                     cardLogoUrls[key] = url
@@ -3347,8 +3378,12 @@ class HomeViewModel @Inject constructor(
         }
         tmdbConfigs.forEach { cfg ->
             viewModelScope.launch(networkDispatcher) {
+                // Initial rows must not wait for speculative artwork. Keep this
+                // batch capped at two, leaving the immediate lane for user intent.
                 val page = runCatching {
-                    mediaRepository.loadHomeCategoryPage(cfg.id, 1)
+                    tmdbPriorityDispatcher.withPermit(Priority.DEFERRED) {
+                        mediaRepository.loadHomeCategoryPage(cfg.id, 1)
+                    }
                 }.getOrNull()
                 if (page != null && page.items.isNotEmpty()) {
                     val category = Category(id = cfg.id, title = cfg.title, items = page.items)
@@ -3417,10 +3452,13 @@ class HomeViewModel @Inject constructor(
         val key = "${item.mediaType}_${item.id}_${item.nextEpisode?.seasonNumber ?: 1}"
         if (!prefetchedDetailsKeys.add(key)) return
         viewModelScope.launch(networkDispatcher) {
-            runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }
-            if (item.mediaType == MediaType.TV) {
-                val season = item.nextEpisode?.seasonNumber ?: 1
-                runCatching { mediaRepository.getSeasonEpisodes(item.id, season) }
+            // Issue 1: focus-prefetch decoration shares the BACKGROUND budget.
+            tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }
+                if (item.mediaType == MediaType.TV) {
+                    val season = item.nextEpisode?.seasonNumber ?: 1
+                    runCatching { mediaRepository.getSeasonEpisodes(item.id, season) }
+                }
             }
         }
     }
@@ -3624,7 +3662,10 @@ class HomeViewModel @Inject constructor(
                 async(networkDispatcher) {
                     val key = "${item.mediaType}_${item.id}"
                     try {
-                        val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                        // Issue 1: logo decoration trickles through BACKGROUND.
+                        val logoUrl = tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                            mediaRepository.getLogoUrl(item.mediaType, item.id)
+                        }
                         if (logoUrl != null) key to logoUrl else null
                     } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -3674,7 +3715,11 @@ class HomeViewModel @Inject constructor(
                 ) {
                     // Pure TMDB preinstalled catalog (no MDBList source)
                     val nextPage = (realItems.size / 20) + 1
-                    mediaRepository.loadHomeCategoryPage(categoryId, nextPage)
+                    // The viewer is reaching these cards now. Use the bounded
+                    // foreground lane rather than waiting behind artwork preloads.
+                    tmdbPriorityDispatcher.withPermit(Priority.IMMEDIATE) {
+                        mediaRepository.loadHomeCategoryPage(categoryId, nextPage)
+                    }
                 } else {
                     // MDBList/custom catalog (including preinstalled MDBList ones)
                     val cfg = catalog ?: return@launch
@@ -3721,8 +3766,11 @@ class HomeViewModel @Inject constructor(
                     if (!isActionableMediaItem(item) || isIptvItem(item)) return@mapNotNull null
                     val key = "${item.mediaType}_${item.id}"
                     if (hasCachedLogo(key) || !logoFetchInFlight.add(key)) return@mapNotNull null
+                    // Issue 1: page-fill artwork enrichment is BACKGROUND.
                     val logo = runCatching {
-                        mediaRepository.getLogoUrl(item.mediaType, item.id)
+                        tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                            mediaRepository.getLogoUrl(item.mediaType, item.id)
+                        }
                     }.getOrNull()
                     logoFetchInFlight.remove(key)
                     if (logo == null) return@mapNotNull null
@@ -4564,8 +4612,11 @@ class HomeViewModel @Inject constructor(
             // Fetch logo async if not cached (skip IPTV — uses channel logo directly)
             if (currentCachedLogo == null && isActionableMediaItem(item) && !isIptvItem(item)) {
                 try {
-                    val logoUrl = withContext(networkDispatcher) {
-                        mediaRepository.getLogoUrl(item.mediaType, item.id)
+                    // Issue 1: hero logo fetch yields to Details IMMEDIATE traffic.
+                    val logoUrl = tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                        withContext(networkDispatcher) {
+                            mediaRepository.getLogoUrl(item.mediaType, item.id)
+                        }
                     }
                     if (logoUrl != null && _uiState.value.heroItem?.id == item.id) {
                         putCachedLogo(cacheKey, logoUrl)
@@ -4728,9 +4779,14 @@ class HomeViewModel @Inject constructor(
                     val key = heroDetailsKey(item)
                     try {
                         heroDetailsPrefetchSemaphore.withPermit {
-                            val snapshot = loadHeroDetailsSnapshot(item) ?: return@withPermit null
-                            heroDetailsCache[key] = snapshot
-                            snapshot.primaryNetworkLogo
+                            // Issue 1: hero decoration also draws from the shared
+                            // BACKGROUND budget (TMDB details + provider logo).
+                            tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                                loadHeroDetailsSnapshot(item)
+                            }?.let { snapshot ->
+                                heroDetailsCache[key] = snapshot
+                                snapshot.primaryNetworkLogo
+                            }
                         }
                     } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -4789,7 +4845,10 @@ class HomeViewModel @Inject constructor(
                     async(networkDispatcher) {
                         val key = "${item.mediaType}_${item.id}"
                         try {
-                            val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            // Issue 1: logo decoration trickles through BACKGROUND.
+                            val logoUrl = tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                                mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            }
                             if (logoUrl != null) key to logoUrl else null
                         } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -4861,7 +4920,10 @@ class HomeViewModel @Inject constructor(
                         async(networkDispatcher) {
                             val key = "${item.mediaType}_${item.id}"
                             try {
-                                val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                // Issue 1: logo decoration trickles through BACKGROUND.
+                                val logoUrl = tmdbPriorityDispatcher.withPermit(Priority.BACKGROUND) {
+                                    mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                }
                                 if (logoUrl != null) key to logoUrl else null
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e

@@ -7,5 +7,6 @@
   "Watching": "చూస్తున్నవి",
   "Completed": "పూర్తయినవి",
   "Dropped": "వదిలేసినవి",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-అనుకూల చిరునామాను ఉపయోగించండి. ఐచ్ఛిక ప్రొఫైల్: username#ProfileName. రక్షిత ప్రొఫైల్: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-అనుకూల చిరునామాను ఉపయోగించండి. ఐచ్ఛిక ప్రొఫైల్: username#ProfileName. రక్షిత ప్రొఫైల్: password#PIN.",
+  "None of your enabled addons provide playback sources.": "మీరు ప్రారంభించిన యాడ్‌ఆన్‌లలో ఏదీ ప్లేబ్యాక్ వనరులను అందించడం లేదు."
 }

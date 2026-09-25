@@ -764,6 +764,8 @@ fun HomeScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 // Keep the profile-to-Home transition local-first. A forced remote
                 // refresh here cancelled the cache fast path on every app launch.
+                // Returning from the background is handled by AppForegroundSignals,
+                // which fires whatever screen the app resumes onto.
                 viewModel.refreshContinueWatchingOnly(force = false)
                 // Catalog rows: no-op unless they have gone stale (6h). Home now survives
                 // navigation, so nothing else would re-fetch them in a long session.
@@ -3025,6 +3027,7 @@ private fun MobileHomeRowsLayer(
             val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
             val isPortrait = category.isPortrait(rowUsePosterCards)
             val rowMobileItemWidth = if (isPortrait) 120.dp else 200.dp
+            // The keyed lazy item saves this state across disposal and navigation.
             val rowState = rememberLazyListState()
 
             LaunchedEffect(rowState, category.id) {

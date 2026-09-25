@@ -56,5 +56,6 @@
   "Turkish": "Turko",
   "Web build:": "Bersyon ng web:",
   "· {value0}d archive": "· {value0} araw na archive",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gamitin ang address na tugma sa Jellyfin. Opsyonal na profile: username#ProfileName. Protektadong profile: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gamitin ang address na tugma sa Jellyfin. Opsyonal na profile: username#ProfileName. Protektadong profile: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Wala sa mga naka-enable mong addon ang nagbibigay ng mga source ng playback."
 }

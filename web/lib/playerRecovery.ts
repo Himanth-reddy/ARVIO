@@ -63,6 +63,93 @@ export function nextStallAction(state: StallState): StallAction {
   return { kind: "wait" };
 }
 
+/** Observe real playback progress without counting our own recovery seeks as success. */
+export function monitorPlaybackStall(video: HTMLVideoElement, options: {
+  reload: (position: number) => void;
+  live?: boolean;
+  /** Live streams can return to the live edge instead of seeking past it. */
+  nudge?: (position: number) => void;
+  onRecover: () => void;
+  onFailure: () => void;
+}): () => void {
+  let lastPosition = video.currentTime;
+  let elapsed = 0;
+  let nudged = false;
+  let reloaded = false;
+  let internalSeek = false;
+  let awaitingReload = false;
+  let reloadPosition = 0;
+  let finished = false;
+  const reset = () => { elapsed = 0; nudged = false; reloaded = false; awaitingReload = false; };
+  const seeked = () => {
+    lastPosition = video.currentTime;
+    if (internalSeek || awaitingReload) { internalSeek = false; return; }
+    reset();
+  };
+  video.addEventListener("seeked", seeked);
+  const timer = setInterval(() => {
+    if (finished) return;
+    if (document.visibilityState === "hidden" || video.ended) { reset(); lastPosition = video.currentTime; return; }
+    // load() pauses and clears the element before metadata arrives. That is not
+    // a user pause and must not restart the recovery budget indefinitely.
+    // A new live manifest may start a fresh timestamp window. Only VOD is
+    // expected to restore the old position; live recovery proves itself by
+    // advancing from the new timeline on subsequent samples.
+    if (awaitingReload && video.readyState >= 2 && (video.paused || options.live || video.currentTime >= reloadPosition)) {
+      awaitingReload = false;
+      lastPosition = video.currentTime;
+    }
+    if (!awaitingReload && (video.paused || (video.seeking && !internalSeek))) {
+      reset(); lastPosition = video.currentTime; return;
+    }
+    if (!awaitingReload && !internalSeek && video.currentTime > lastPosition + 0.05) {
+      reset(); lastPosition = video.currentTime; return;
+    }
+    if (internalSeek && !video.seeking) { internalSeek = false; lastPosition = video.currentTime; }
+    elapsed += 1000;
+    const action = nextStallAction({ stalledForMs: elapsed, currentTime: awaitingReload ? reloadPosition : video.currentTime, nudged, reloaded });
+    if (action.kind === "wait") return;
+    if (!nudged) options.onRecover();
+    if (action.kind === "nudge") {
+      nudged = true;
+      internalSeek = true;
+      try {
+        if (options.nudge) options.nudge(action.seekTo);
+        else video.currentTime = action.seekTo;
+      } catch { internalSeek = false; }
+      lastPosition = video.currentTime;
+      void video.play().catch(() => undefined);
+    } else if (action.kind === "reload") {
+      reloaded = true;
+      awaitingReload = true;
+      reloadPosition = action.resumeAt;
+      options.reload(action.resumeAt);
+    } else {
+      finished = true;
+      options.onFailure();
+    }
+  }, 1000);
+  return () => { finished = true; clearInterval(timer); video.removeEventListener("seeked", seeked); };
+}
+
+export type PlaybackFailureKind = "network" | "format" | "timeout" | "browser_restriction" | "engine" | "unknown";
+
+/** Low-cardinality diagnostics only: never send source URLs, credentials or titles. */
+export function playbackFailureKind(fault?: { kind?: string; code?: string | number; message?: string }): PlaybackFailureKind {
+  if (!fault) return "unknown";
+  if (fault.code === "STARTUP_TIMEOUT" || fault.code === "PLAYBACK_STALLED") return "timeout";
+  if (fault.code === "NATIVE_HEADERS_UNSUPPORTED") return "browser_restriction";
+  if (fault.code === "ENGINE_LOAD_FAILED") return "engine";
+  if (fault.kind === "network") return "network";
+  if (fault.kind === "media" || fault.kind === "unsupported") return "format";
+  // Worker failures have messages rather than MediaError codes. Keep the
+  // original message local and only classify into the fixed categories above.
+  if (/timeout|timed out|stopped delivering|stopped responding/i.test(fault.message ?? "")) return "timeout";
+  if (/fetch|network|cors|connection|http/i.test(fault.message ?? "")) return "network";
+  if (/codec|decode|format|track|profile/i.test(fault.message ?? "")) return "format";
+  return "unknown";
+}
+
 /**
  * Whether playback counts as stalled.
  *

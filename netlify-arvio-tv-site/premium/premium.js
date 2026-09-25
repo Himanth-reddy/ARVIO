@@ -1,4 +1,4 @@
-/* Public copy only. No account data or tracking is collected by this page. */
+/* Localized public copy. Campaign measurement is handled by premium-journey.js. */
 (async function () {
   const response = await fetch('./languages.json');
   if (!response.ok) return;
@@ -30,7 +30,7 @@
     select.value = code;
     select.setAttribute('aria-label', copy.language);
     for (const element of document.querySelectorAll('[data-copy]')) element.textContent = copy[element.dataset.copy];
-    for (const [index, key] of ['library','server','tv','sports'].entries()) document.querySelectorAll('.gallery img')[index].alt = 'ARVIO Web — ' + copy[key];
+    for (const [index, key] of ['tv','library','server','sports'].entries()) document.querySelectorAll('.gallery img')[index].alt = 'ARVIO Web — ' + copy[key];
     document.querySelector('.hero-image img').alt = 'ARVIO Web — ' + copy.home;
     document.title = 'ARVIO Premium — ' + copy.hosting.split('. ')[0];
   }

@@ -1304,7 +1304,12 @@ fun PlayerScreen(
                             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
                             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
                             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
-                            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT
+                            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ||
+                            // Audio-track failures were missing here, which left the audio recovery
+                            // ladder below unreachable for the two codes it was written for:
+                            // onPlayerError did nothing at all and playback hung silently.
+                            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED
 
                         if (isSourceError) {
                             val sourceLikelyDv = isLikelyDolbyVisionStream(latestUiState.selectedStream)
@@ -1388,13 +1393,54 @@ fun PlayerScreen(
                                 }
                             }
 
+                            // True when the failing renderer is the AUDIO one. A decoder that dies
+                            // mid-stream surfaces as ERROR_CODE_DECODING_FAILED with no audio hint
+                            // in its message, so neither the error code nor the text sniff below
+                            // recognized it and the whole source was thrown away.
+                            val audioRendererError =
+                                (error as? androidx.media3.exoplayer.ExoPlaybackException)
+                                    ?.takeIf { it.type == androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER }
+                                    ?.let { MimeTypes.isAudio(it.rendererFormat?.sampleMimeType) } == true
+
+                            // Rung 0 — keep the SOUND. A hardware audio decoder can crash while
+                            // running and take an otherwise perfect source down with it (Pixel 7:
+                            // c2.dolby.eac3.decoder.eac3 dies ~0.5 s into a 5.1 E-AC3 track while
+                            // reporting format_supported=YES). setEnableDecoderFallback does not
+                            // cover this: it only reacts to codec INIT failures. Block the crashed
+                            // decoder and re-prepare — track selection then hands the track to the
+                            // bundled FFmpeg software renderer, so the audio survives instead of
+                            // being constrained or muted by the rungs below.
+                            val crashedAudioDecoder =
+                                (error.cause as? androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException)
+                                    ?.codecInfo?.name
+                            if (audioRendererError &&
+                                crashedAudioDecoder != null &&
+                                aiRenderersFactory.blockAudioDecoder(
+                                    crashedAudioDecoder,
+                                    (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+                                )
+                            ) {
+                                playbackStartupDiag(
+                                    "audio recovery: software decoder after crash in $crashedAudioDecoder"
+                                )
+                                val player = this@apply
+                                val resumeAt = player.currentPosition.coerceAtLeast(0L)
+                                val keepPlaying = player.playWhenReady
+                                player.stop()
+                                player.prepare()
+                                player.seekTo(resumeAt)
+                                player.playWhenReady = keepPlaying
+                                return
+                            }
+
                             // Audio recovery ladder — try to save the SAME source
                             // before skipping. An audio-track init/write failure (e.g. TrueHD/DTS
                             // the device can't render, or a channel layout it rejects) shouldn't
                             // lose an otherwise-good video source. Rung 1: constrain channels + no
                             // tunneling. Rung 2: drop audio entirely so video still plays.
                             val isAudioFailure =
-                                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                                audioRendererError ||
+                                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
                                     error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
                                     "audiotrack" in timeoutMessage || "audio track" in timeoutMessage
                             if (isAudioFailure) {
