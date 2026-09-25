@@ -1562,6 +1562,7 @@
     <string name="watchlist_failed_remove_trakt">Aus Trakt-Merkliste entfernen fehlgeschlagen</string>
     <string name="watchlist_failed_remove">Aus Merkliste entfernen fehlgeschlagen</string>
     <string name="collection_failed_load">Collection konnte nicht geladen werden</string>
+    <string name="collection_missing_addon">Diese Collection braucht ein Add-on, das nicht installiert oder ausgeschaltet ist: %1$s</string>
     <string name="collection_not_found">Collection nicht gefunden</string>
     <string name="auth_account_exists">Konto existiert bereits. Stattdessen anmelden.</string>
     <string name="auth_signin_retry">Anmelden fehlgeschlagen. Bitte erneut versuchen.</string>
