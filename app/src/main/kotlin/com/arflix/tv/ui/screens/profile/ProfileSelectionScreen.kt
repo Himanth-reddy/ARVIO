@@ -78,7 +78,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun ProfileSelectionScreen(
     viewModel: ProfileViewModel = hiltViewModel(),
-    onProfileSelected: () -> Unit,
+    onProfileSelected: (String) -> Unit,
     onShowAddProfile: () -> Unit,
     onConnectCloud: () -> Unit = {},
     isCloudConnected: Boolean = false
@@ -169,7 +169,7 @@ fun ProfileSelectionScreen(
             minAnimationCompleted &&
             uiState.canFinishSelection(transitionProfile?.id)
         ) {
-            onProfileSelected()
+            uiState.activeProfile?.id?.let(onProfileSelected)
         }
     }
 

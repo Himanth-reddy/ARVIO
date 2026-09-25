@@ -979,6 +979,20 @@ export async function searchMedia(query: string, language = "en-US") {
     .map((item) => mapTmdbItem(item, item.media_type === "tv" ? "tv" : "movie"));
 }
 
+export interface SearchFilters { query: string; type: "movie" | "tv"; genre: string; year: string; sort: string; }
+export async function searchMediaPage(filters: SearchFilters, language: string, page = 1) {
+  const searching = !!filters.query.trim();
+  const response = await tmdb<TmdbList & { total_pages?: number }>(searching ? `search/${filters.type}` : `discover/${filters.type}`, {
+    language, page, include_adult: "false",
+    ...(!searching && filters.sort === "vote_average.desc" ? { "vote_count.gte": 100 } : {}),
+    ...(searching ? { query: filters.query.trim() } : { sort_by: filters.sort, ...(filters.genre ? { with_genres: filters.genre } : {}) }),
+    ...(filters.year ? { [filters.type === "tv" ? "first_air_date_year" : searching ? "year" : "primary_release_year"]: filters.year } : {})
+  });
+  const items = response.results.filter(item => !searching || !filters.genre || item.genre_ids?.includes(Number(filters.genre)))
+    .map(item => mapTmdbItem(item, filters.type));
+  return { items, hasMore: page < Math.min(response.total_pages ?? 1, 500) };
+}
+
 const seasonCache = new Map<string, EpisodeInfo[]>();
 const seriesEpisodeRatingsCache = new Map<string, Map<string, string>>();
 const SEASON_EPISODE_CACHE_KEY = "arvio.web.seasonEpisodes.v1";
