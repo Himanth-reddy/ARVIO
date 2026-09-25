@@ -1150,6 +1150,7 @@ class HomeServerRepository @Inject constructor(
         if (connection?.serverKind == HomeServerKind.PLEX) {
             plexHeaders(connection.accessToken).forEach { (key, value) -> builder.header(key, value) }
         } else {
+            builder.header("Authorization", authHeader(connection?.accessToken))
             builder.header("X-Emby-Authorization", authHeader(connection?.accessToken))
             if (connection != null) {
                 builder.header("X-Emby-Token", connection.accessToken)
@@ -1162,6 +1163,7 @@ class HomeServerRepository @Inject constructor(
         if (connection.serverKind == HomeServerKind.PLEX) return plexHeaders(connection.accessToken)
         return mapOf(
             "User-Agent" to "ARVIO/${BuildConfig.VERSION_NAME}",
+            "Authorization" to authHeader(connection.accessToken),
             "X-Emby-Authorization" to authHeader(connection.accessToken),
             "X-Emby-Token" to connection.accessToken
         )
@@ -2418,6 +2420,7 @@ class HomeServerRepository @Inject constructor(
             val parsed = absolute.toHttpUrlOrNull() ?: return absolute
             return parsed.newBuilder()
                 .apply {
+                    setQueryParameter("ApiKey", connection.accessToken)
                     if (parsed.queryParameter("api_key").isNullOrBlank()) {
                         addQueryParameter("api_key", connection.accessToken)
                     }
@@ -2435,6 +2438,7 @@ class HomeServerRepository @Inject constructor(
                 "Static" to "true",
                 "MediaSourceId" to id,
                 "DeviceId" to deviceId(),
+                "ApiKey" to connection.accessToken,
                 "api_key" to connection.accessToken,
                 "Tag" to eTag.takeIf { it.isNotBlank() }
             )
@@ -2829,12 +2833,12 @@ class HomeServerRepository @Inject constructor(
             val imageUrl = when {
                 primaryImageTag.isBlank() -> ""
                 connection.serverKind == HomeServerKind.PLEX -> "$base$primaryImageTag?X-Plex-Token=$token"
-                else -> "$base/Items/$id/Images/Primary?maxWidth=600&tag=${URLEncoder.encode(primaryImageTag, Charsets.UTF_8.name())}&api_key=$token"
+                else -> "$base/Items/$id/Images/Primary?maxWidth=600&tag=${URLEncoder.encode(primaryImageTag, Charsets.UTF_8.name())}&ApiKey=$token&api_key=$token"
             }
             val backdropUrl = when {
                 backdropImageTag.isBlank() -> null
                 connection.serverKind == HomeServerKind.PLEX -> "$base$backdropImageTag?X-Plex-Token=$token"
-                else -> "$base/Items/$id/Images/Backdrop/0?maxWidth=1280&tag=${URLEncoder.encode(backdropImageTag, Charsets.UTF_8.name())}&api_key=$token"
+                else -> "$base/Items/$id/Images/Backdrop/0?maxWidth=1280&tag=${URLEncoder.encode(backdropImageTag, Charsets.UTF_8.name())}&ApiKey=$token&api_key=$token"
             }
             return HomeServerCatalogItem(
                 id = id,

@@ -69,6 +69,7 @@ function mediaUrl(server: HomeServerConfig, raw: string, token: string): URL {
     throw new Error("The home server returned an unsafe playback URL.");
   }
   setParam(url, server.type === "plex" ? "X-Plex-Token" : "api_key", token);
+  if (server.type !== "plex") setParam(url, "ApiKey", token);
   return url;
 }
 
@@ -87,6 +88,7 @@ function param(url: URL, name: string): string | undefined {
 function headers(server: HomeServerConfig, token: string, deviceId: string): Record<string, string> {
   if (server.type === "plex") return { Accept: "application/json", "X-Plex-Token": token, "X-Plex-Client-Identifier": deviceId };
   return {
+    Authorization: `MediaBrowser Client="ARVIO Web", Device="Browser", DeviceId="${encodeURIComponent(deviceId)}", Version="1.0.0", Token="${encodeURIComponent(token)}"`,
     "X-Emby-Token": token,
     "X-Emby-Authorization": `MediaBrowser Client="ARVIO Web", Device="Browser", DeviceId="${deviceId}", Version="1.0.0"`
   };
@@ -179,6 +181,7 @@ async function prepareJellyfin(stream: StreamSource, server: HomeServerConfig, c
   const deviceId = `arvio-web-${globalThis.crypto.randomUUID()}`;
   const url = endpoint(server, `Items/${encodeURIComponent(context.itemId)}/PlaybackInfo`);
   url.searchParams.set("api_key", auth.token);
+  url.searchParams.set("ApiKey", auth.token);
   url.searchParams.set("UserId", auth.userId);
   const body = {
     UserId: auth.userId, MediaSourceId: context.mediaSourceId, DeviceProfile: buildHomeServerDeviceProfile(caps, server.type === "emby" ? "emby" : "jellyfin"),
@@ -396,6 +399,7 @@ async function sendReport(session: Session, state: Pick<SessionState, "server" |
   } else {
     const url = endpoint(server, event === "start" ? "Sessions/Playing" : event === "progress" ? "Sessions/Playing/Progress" : "Sessions/Playing/Stopped");
     url.searchParams.set("api_key", token);
+    url.searchParams.set("ApiKey", token);
     await textRequest(proxiedUrl(url.toString(), requestHeaders), {
       method: "POST", signal: options.signal, body: JSON.stringify({
         ItemId: session.itemId, MediaSourceId: session.mediaSourceId, PlaySessionId: session.sessionId,
