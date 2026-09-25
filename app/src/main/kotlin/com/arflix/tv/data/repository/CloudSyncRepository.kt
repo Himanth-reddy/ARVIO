@@ -1174,11 +1174,9 @@ class CloudSyncRepository @Inject constructor(
                     credentialField = "simklAccessToken",
                     timestampField = "simklCredentialUpdatedAt"
                 )
-                mergeTrackingCredential(
+                mergeMdbListCredentials(
                     local = localSelection,
-                    remote = remoteSelection,
-                    credentialField = "mdbListApiKey",
-                    timestampField = "mdbListCredentialUpdatedAt"
+                    remote = remoteSelection
                 )
             }
             localRoot.toString()
@@ -1246,6 +1244,25 @@ class CloudSyncRepository @Inject constructor(
 
         copyOptionalJsonField(local, remote, credentialField)
         copyOptionalJsonField(local, remote, timestampField)
+    }
+
+    private fun mergeMdbListCredentials(local: JSONObject, remote: JSONObject) {
+        val remoteUpdatedAt = remote.optLong("mdbListCredentialUpdatedAt", 0L)
+        val localUpdatedAt = local.optLong("mdbListCredentialUpdatedAt", 0L)
+        val remoteIsModern = remoteUpdatedAt > 0L
+        val remoteWins = remoteUpdatedAt > localUpdatedAt ||
+            (remoteIsModern && remoteUpdatedAt == localUpdatedAt)
+        val legacyRemoteCanRestore = remoteUpdatedAt == 0L && localUpdatedAt == 0L &&
+            (remote.has("mdbListApiKey") || remote.has("mdbListAccessToken"))
+        if (!remoteWins && !legacyRemoteCanRestore) return
+
+        listOf(
+            "mdbListApiKey",
+            "mdbListAccessToken",
+            "mdbListRefreshToken",
+            "mdbListTokenExpiresAt",
+            "mdbListCredentialUpdatedAt"
+        ).forEach { field -> copyOptionalJsonField(local, remote, field) }
     }
 
     private fun copyOptionalJsonField(target: JSONObject, source: JSONObject, field: String) {
@@ -1439,7 +1456,9 @@ class CloudSyncRepository @Inject constructor(
             val map: Map<String, com.arflix.tv.data.repository.sync.SyncProviderStore.ProfileSyncSelection> =
                 gson.fromJson(json, type) ?: emptyMap()
             map.filterValues { selection ->
-                !selection.mdbListApiKey.isNullOrBlank() || !selection.simklAccessToken.isNullOrBlank()
+                !selection.mdbListApiKey.isNullOrBlank() ||
+                    !selection.mdbListAccessToken.isNullOrBlank() ||
+                    !selection.simklAccessToken.isNullOrBlank()
             }.keys.filter { it.isNotBlank() }.toSet()
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

@@ -16,10 +16,16 @@ export interface MdbExternalRating {
   value: string;
 }
 
+export interface MdbListOAuthToken {
+  accessToken: string;
+  refreshToken?: string | null;
+  expiresAt?: number | null;
+}
+
 /**
- * MDBList client. Per-profile alternative to Trakt, authenticated with a static
- * user API key (mdblist.com/preferences). All calls go through the
- * `/api/mdblist` proxy (CORS + key injection).
+ * MDBList client. Per-profile alternative to Trakt, authenticated with either
+ * OAuth 2.0 Bearer tokens or a static user API key (mdblist.com/preferences).
+ * All calls go through the `/api/mdblist` proxy (CORS + credential injection).
  *
  * Read methods intentionally return data in the SAME shapes as TraktClient
  * (watchlist / playback / watched), so the existing mappers and store pipeline
@@ -27,16 +33,21 @@ export interface MdbExternalRating {
  */
 export class MdbListClient {
   key: string | null = null;
+  token: MdbListOAuthToken | null = null;
   private profileId: string | null = null;
 
   get currentProfileId(): string | null { return this.profileId; }
 
   get isConnected() {
-    return Boolean(this.key);
+    return Boolean(this.token?.accessToken || this.key);
   }
 
   private keyStorage(profileId: string) {
     return `arvio.web.mdblist.key:${profileId}`;
+  }
+
+  private tokenStorage(profileId: string) {
+    return `arvio.web.mdblist.token:${profileId}`;
   }
 
   setProfile(profileId: string | null) {
@@ -46,6 +57,7 @@ export class MdbListClient {
     this.watchedCache = null;
     if (!normalized) {
       this.key = null;
+      this.token = null;
       return;
     }
 
@@ -59,6 +71,7 @@ export class MdbListClient {
       }
     }
     this.key = stored;
+    this.token = loadStored<MdbListOAuthToken | null>(this.tokenStorage(normalized), null);
   }
 
   setKey(key: string | null) {
@@ -70,8 +83,17 @@ export class MdbListClient {
     else removeStored(this.keyStorage(this.profileId));
   }
 
+  setToken(token: MdbListOAuthToken | null) {
+    this.token = token && token.accessToken ? token : null;
+    this.watchedCache = null;
+    if (!this.profileId) return;
+    if (this.token) saveStored(this.tokenStorage(this.profileId), this.token);
+    else removeStored(this.tokenStorage(this.profileId));
+  }
+
   disconnect() {
     this.setKey(null);
+    this.setToken(null);
   }
 
   async validateKey(key: string): Promise<boolean> {
@@ -84,7 +106,7 @@ export class MdbListClient {
   }
 
   async externalRatings(mediaType: "movie" | "tv", tmdbId: number): Promise<MdbExternalRating[]> {
-    if (!this.key || !tmdbId) return [];
+    if (!this.isConnected || !tmdbId) return [];
     const cacheKey = `arvio.web.mdblist.ratings.v1:${mediaType}:${tmdbId}`;
     const cached = loadStored<{ at: number; ratings: MdbExternalRating[] } | null>(cacheKey, null);
     if (cached && Date.now() - cached.at < 12 * 60 * 60 * 1000) return cached.ratings;
@@ -104,7 +126,7 @@ export class MdbListClient {
   // ===== Reads (Trakt-compatible shapes) =====
 
   async watchlist(): Promise<unknown[]> {
-    if (!this.key) return [];
+    if (!this.isConnected) return [];
     const rows = await this.request<MdbWatchlistRow[]>("watchlist/items?unified=true&limit=1000", {}).catch(() => []);
     return (rows ?? []).map((row) => {
       const isShow = row.mediatype === "show";
@@ -116,7 +138,7 @@ export class MdbListClient {
   }
 
   async playback(): Promise<unknown[]> {
-    if (!this.key) return [];
+    if (!this.isConnected) return [];
     const rows = await this.request<MdbPlaybackRow[]>("sync/playback", {}).catch(() => []);
     return (rows ?? []).map((row) => {
       const progress = Number(row.progress) || 0;
@@ -137,7 +159,7 @@ export class MdbListClient {
   }
 
   async watched(type: "movies" | "shows"): Promise<unknown[]> {
-    if (!this.key) return [];
+    if (!this.isConnected) return [];
     const data = await this.fetchAllWatched();
     if (type === "movies") {
       return (data.movies ?? [])
@@ -256,7 +278,7 @@ export class MdbListClient {
   }
 
   async scrobble(action: "start" | "pause" | "stop", item: MdbMediaRef & { progress: number }) {
-    if (!this.key) return;
+    if (!this.isConnected) return;
     const progress = Math.round(item.progress);
     let body: unknown;
     if (item.mediaType === "tv") {
@@ -278,7 +300,14 @@ export class MdbListClient {
     new Headers(init.headers ?? {}).forEach((value, key) => {
       headers[key] = value;
     });
-    if (!headers["x-mdblist-key"] && this.key) headers["x-mdblist-key"] = this.key;
+    if (!headers["authorization"] && !headers["x-mdblist-token"] && !headers["x-mdblist-key"]) {
+      if (this.token?.accessToken) {
+        headers["authorization"] = `Bearer ${this.token.accessToken}`;
+        headers["x-mdblist-token"] = this.token.accessToken;
+      } else if (this.key) {
+        headers["x-mdblist-key"] = this.key;
+      }
+    }
     if (init.body && !headers["content-type"]) headers["content-type"] = "application/json";
     const url = new URL(`/api/mdblist/${path.replace(/^\/+/, "")}`, window.location.origin);
     return jsonRequest<T>(url.toString(), {

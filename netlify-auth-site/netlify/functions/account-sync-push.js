@@ -79,7 +79,7 @@ function preserveTrackingRouting(existingSnapshot, incomingPayload) {
       previousSelection,
       incomingSelection,
       "mdbListCredentialUpdatedAt",
-      ["mdbListApiKey"]
+      ["mdbListApiKey", "mdbListAccessToken", "mdbListRefreshToken", "mdbListTokenExpiresAt"]
     );
     merged[profileId] = next;
   }

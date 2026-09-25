@@ -2407,12 +2407,15 @@ fun SettingsScreen(
                             },
                             onDisconnectCloud = { showCloudDisconnectConfirm = true },
                             onConnectTrakt = { viewModel.startTraktAuth() },
+                            onCancelTrakt = { viewModel.cancelTraktAuth() },
                             onDisconnectTrakt = { showTraktDisconnectConfirm = true },
                             isMdbListConnected = uiState.isMdbListConnected,
                             onConnectMdbList = { viewModel.startMdbListAuth() },
+                            onCancelMdbList = { viewModel.cancelMdbListAuth() },
                             onDisconnectMdbList = { showMdbListDisconnectConfirm = true },
                             isSimklConnected = uiState.isSimklConnected,
                             onConnectSimkl = { viewModel.startSimklAuth() },
+                            onCancelSimkl = { viewModel.cancelSimklAuth() },
                             onDisconnectSimkl = { viewModel.disconnectSimkl() },
                             trackingUiState = uiState,
                             onTrackingReadMode = viewModel::setTrackingReadMode,
@@ -3068,7 +3071,20 @@ fun SettingsScreen(
                 verificationUrl = verificationUrl,
                 userCode = mdbListCode,
                 onOpenUrl = { openExternalUrl(context, verificationUrl) },
-                onDismiss = { viewModel.cancelMdbListAuth() }
+                onDismiss = { viewModel.cancelMdbListAuth() },
+                secondaryActionLabel = stringResource(R.string.mdblist_connect_with_key),
+                onSecondaryAction = {
+                    viewModel.cancelMdbListAuth()
+                    viewModel.openMdbListApiKeyDialog()
+                }
+            )
+        }
+
+        if (uiState.showMdbListApiKeyDialog) {
+            MdbListConnectDialog(
+                connecting = uiState.mdbListConnecting,
+                onConnect = { key -> viewModel.connectMdbListApiKey(key) },
+                onDismiss = { viewModel.dismissMdbListApiKeyDialog() }
             )
         }
 
@@ -4177,7 +4193,9 @@ private fun TraktActivationModal(
     instruction: String? = null,
     onOpenUrl: (() -> Unit)? = null,
     openUrlLabel: String? = null,
-    showCopyCode: Boolean = true
+    showCopyCode: Boolean = true,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null
 ) {
     val resolvedTitle = title ?: stringResource(R.string.settings_connect_trakt)
     val resolvedInstruction = instruction ?: stringResource(R.string.settings_trakt_instruction, verificationUrl)
@@ -4323,26 +4341,125 @@ private fun TraktActivationModal(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                Box(
-                    modifier = Modifier
-                        .background(
-                            if (isMobile && onOpenUrl != null) Color.White.copy(alpha = 0.08f) else accentColor,
-                            RoundedCornerShape(10.dp)
+                if (isMobile && !secondaryActionLabel.isNullOrBlank() && onSecondaryAction != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                            .clickable { onSecondaryAction() }
+                            .padding(vertical = 12.dp, horizontal = 18.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = secondaryActionLabel,
+                            style = ArflixTypography.button,
+                            color = Color.White
                         )
-                        .then(if (isMobile && onOpenUrl != null) Modifier.fillMaxWidth() else Modifier)
-                        .clickable { onDismiss() }
-                        .padding(vertical = 12.dp, horizontal = 18.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = stringResource(R.string.cancel),
-                        style = ArflixTypography.button,
-                        color = if (isMobile && onOpenUrl != null) TextPrimary else accentContentColor
-                    )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                if (!isMobile && !secondaryActionLabel.isNullOrBlank() && onSecondaryAction != null) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .background(accentColor, RoundedCornerShape(10.dp))
+                                .clickable { onDismiss() }
+                                .padding(vertical = 12.dp, horizontal = 18.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = stringResource(R.string.cancel),
+                                style = ArflixTypography.button,
+                                color = accentContentColor
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                                .clickable { onSecondaryAction() }
+                                .padding(vertical = 12.dp, horizontal = 18.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = secondaryActionLabel,
+                                style = ArflixTypography.button,
+                                color = Color.White
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                if (isMobile && onOpenUrl != null) Color.White.copy(alpha = 0.08f) else accentColor,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .then(if (isMobile && onOpenUrl != null) Modifier.fillMaxWidth() else Modifier)
+                            .clickable { onDismiss() }
+                            .padding(vertical = 12.dp, horizontal = 18.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = stringResource(R.string.cancel),
+                            style = ArflixTypography.button,
+                            color = if (isMobile && onOpenUrl != null) TextPrimary else accentContentColor
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun MdbListConnectDialog(
+    connecting: Boolean,
+    onConnect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var apiKey by remember { mutableStateOf("") }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.mdblist_connect_title)) },
+        text = {
+            Column {
+                androidx.compose.material3.TextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    singleLine = true,
+                    enabled = !connecting,
+                    label = { Text(stringResource(R.string.mdblist_key_hint)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.mdblist_key_help),
+                    style = ArflixTypography.caption,
+                    color = TextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = { if (apiKey.isNotBlank()) onConnect(apiKey) },
+                enabled = !connecting && apiKey.isNotBlank()
+            ) { Text(stringResource(R.string.connect)) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -4674,10 +4791,14 @@ private fun MobileSettingsLayout(
                     onAddCustomAddonClick = onAddCustomAddonClick,
                     openCustomUserAgentDialog = openCustomUserAgentDialog,
                     onConnectTrakt = { viewModel.startTraktAuth() },
+                    onCancelTrakt = { viewModel.cancelTraktAuth() },
                     onDisconnectTrakt = onDisconnectTrakt,
                     onConnectMdbList = { viewModel.startMdbListAuth() },
                     onCancelMdbList = { viewModel.cancelMdbListAuth() },
-                    onDisconnectMdbList = { viewModel.disconnectMdbList() }
+                    onDisconnectMdbList = { viewModel.disconnectMdbList() },
+                    onConnectSimkl = { viewModel.startSimklAuth() },
+                    onCancelSimkl = { viewModel.cancelSimklAuth() },
+                    onDisconnectSimkl = { viewModel.disconnectSimkl() }
                 )
             }
         }
@@ -4925,10 +5046,14 @@ private fun MobileSettingsSubPage(
     openCustomUserAgentDialog: () -> Unit = {},
     // Tracking integrations
     onConnectTrakt: () -> Unit = {},
+    onCancelTrakt: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {},
     onConnectMdbList: () -> Unit = {},
     onCancelMdbList: () -> Unit = {},
     onDisconnectMdbList: () -> Unit = {},
+    onConnectSimkl: () -> Unit = {},
+    onCancelSimkl: () -> Unit = {},
+    onDisconnectSimkl: () -> Unit = {},
     onSwitchProfile: () -> Unit = {}
 ) {
 
@@ -5509,12 +5634,14 @@ private fun MobileSettingsSubPage(
                 TrackingIntegrationsPage(
                     uiState = uiState,
                     onConnectTrakt = onConnectTrakt,
+                    onCancelTrakt = onCancelTrakt,
                     onDisconnectTrakt = onDisconnectTrakt,
                     onConnectMdbList = onConnectMdbList,
                     onCancelMdbList = onCancelMdbList,
                     onDisconnectMdbList = onDisconnectMdbList,
-                    onConnectSimkl = { viewModel.startSimklAuth() },
-                    onDisconnectSimkl = { viewModel.disconnectSimkl() },
+                    onConnectSimkl = onConnectSimkl,
+                    onCancelSimkl = onCancelSimkl,
+                    onDisconnectSimkl = onDisconnectSimkl,
                     onReadMode = { feature, mode -> viewModel.setTrackingReadMode(feature, mode) },
                     onWriteTarget = { provider, enabled ->
                         viewModel.setTrackingWriteTarget(provider, enabled)
@@ -9655,9 +9782,11 @@ private fun AccountsSettings(
     isTraktAuthenticated: Boolean,
     isMdbListConnected: Boolean,
     onConnectMdbList: () -> Unit,
+    onCancelMdbList: () -> Unit = {},
     onDisconnectMdbList: () -> Unit,
     isSimklConnected: Boolean = false,
     onConnectSimkl: () -> Unit = {},
+    onCancelSimkl: () -> Unit = {},
     onDisconnectSimkl: () -> Unit = {},
     trackingUiState: SettingsUiState,
     onTrackingReadMode: (
@@ -9674,6 +9803,7 @@ private fun AccountsSettings(
     onConnectCloud: () -> Unit,
     onDisconnectCloud: () -> Unit,
     onConnectTrakt: () -> Unit,
+    onCancelTrakt: () -> Unit = {},
     onDisconnectTrakt: () -> Unit,
     onForceCloudSync: () -> Unit,
     onSwitchProfile: () -> Unit,
@@ -9700,6 +9830,8 @@ private fun AccountsSettings(
             description = cloudEmail ?: stringResource(R.string.settings_cloud_account_desc),
             isConnected = isCloudAuthenticated,
             isWorking = false,
+            authCode = null,
+            authUrl = null,
             isFocused = focusedIndex == 0,
             onConnect = {
                 onConnectCloud()
@@ -9716,9 +9848,11 @@ private fun AccountsSettings(
             name = "Trakt.tv",
             description = stringResource(R.string.settings_trakt_desc),
             isConnected = isTraktAuthenticated,
-            isWorking = false,
+            isWorking = trackingUiState.isTraktAuthStarting || trackingUiState.isTraktPolling,
+            authCode = trackingUiState.traktCode?.userCode,
+            authUrl = trackingUiState.traktCode?.verificationUrl,
             isFocused = focusedIndex == 1,
-            onConnect = onConnectTrakt,
+            onConnect = { if (trackingUiState.isTraktPolling) onCancelTrakt() else onConnectTrakt() },
             onDisconnect = onDisconnectTrakt,
             modifier = Modifier.settingsFocusSlot(1),
             expirationText = null  // Don't show expiration - Trakt tokens auto-refresh
@@ -9731,9 +9865,11 @@ private fun AccountsSettings(
             name = stringResource(R.string.mdblist_account),
             description = stringResource(R.string.settings_mdblist_tagline),
             isConnected = isMdbListConnected,
-            isWorking = false,
+            isWorking = trackingUiState.mdbListConnecting || trackingUiState.isMdbListPolling,
+            authCode = trackingUiState.mdbListCode,
+            authUrl = trackingUiState.mdbListUrl,
             isFocused = focusedIndex == 2,
-            onConnect = onConnectMdbList,
+            onConnect = { if (trackingUiState.isMdbListPolling) onCancelMdbList() else onConnectMdbList() },
             onDisconnect = onDisconnectMdbList,
             modifier = Modifier.settingsFocusSlot(2),
             expirationText = null
@@ -9746,9 +9882,11 @@ private fun AccountsSettings(
             name = "Simkl",
             description = stringResource(R.string.settings_simkl_tagline),
             isConnected = isSimklConnected,
-            isWorking = false,
+            isWorking = trackingUiState.isSimklAuthStarting || trackingUiState.isSimklPolling,
+            authCode = trackingUiState.simklUserCode,
+            authUrl = trackingUiState.simklVerificationUrl,
             isFocused = focusedIndex == 3,
-            onConnect = onConnectSimkl,
+            onConnect = { if (trackingUiState.isSimklPolling) onCancelSimkl() else onConnectSimkl() },
             onDisconnect = onDisconnectSimkl,
             modifier = Modifier.settingsFocusSlot(3),
             expirationText = null
@@ -10214,11 +10352,13 @@ private fun AccountDisconnectConfirmDialog(
 private fun TrackingIntegrationsPage(
     uiState: SettingsUiState,
     onConnectTrakt: () -> Unit,
+    onCancelTrakt: () -> Unit = {},
     onDisconnectTrakt: () -> Unit,
     onConnectMdbList: () -> Unit = {},
     onCancelMdbList: () -> Unit = {},
     onDisconnectMdbList: () -> Unit,
     onConnectSimkl: () -> Unit = {},
+    onCancelSimkl: () -> Unit = {},
     onDisconnectSimkl: () -> Unit = {},
     onReadMode: (
         com.arflix.tv.data.repository.sync.TrackingFeature,
@@ -10319,10 +10459,16 @@ private fun TrackingIntegrationsPage(
                 title = "Trakt",
                 tagline = stringResource(R.string.settings_trakt_tagline),
                 isConnected = uiState.isTraktAuthenticated,
-                isWorking = false,
+                isWorking = uiState.isTraktPolling || uiState.isTraktAuthStarting,
                 connectedAs = uiState.traktUsername,
                 showDivider = true,
-                onConnect = onConnectTrakt,
+                onConnect = {
+                    if (uiState.isTraktPolling) {
+                        onCancelTrakt()
+                    } else {
+                        onConnectTrakt()
+                    }
+                },
                 onDisconnect = { showTraktDisconnectConfirm = true }
             )
 
@@ -10332,10 +10478,16 @@ private fun TrackingIntegrationsPage(
                 title = "MDBList",
                 tagline = stringResource(R.string.settings_mdblist_tagline),
                 isConnected = uiState.isMdbListConnected,
-                isWorking = false,
+                isWorking = uiState.mdbListConnecting || uiState.isMdbListPolling,
                 connectedAs = if (uiState.isMdbListConnected) (uiState.mdbListUsername ?: stringResource(R.string.connected)) else null,
                 showDivider = true,
-                onConnect = onConnectMdbList,
+                onConnect = {
+                    if (uiState.isMdbListPolling) {
+                        onCancelMdbList()
+                    } else {
+                        onConnectMdbList()
+                    }
+                },
                 onDisconnect = { showMdbListDisconnectConfirm = true }
             )
 
@@ -10345,11 +10497,17 @@ private fun TrackingIntegrationsPage(
                 title = "Simkl",
                 tagline = stringResource(R.string.settings_simkl_tagline),
                 isConnected = uiState.isSimklConnected,
-                isWorking = false,
+                isWorking = uiState.isSimklAuthStarting || uiState.isSimklPolling,
                 connectedAs = if (uiState.isSimklConnected) (uiState.simklUsername ?: stringResource(R.string.connected)) else null,
                 comingSoon = false,
                 showDivider = false,
-                onConnect = onConnectSimkl,
+                onConnect = {
+                    if (uiState.isSimklPolling || uiState.isSimklConnected) {
+                        onCancelSimkl()
+                    } else {
+                        onConnectSimkl()
+                    }
+                },
                 onDisconnect = onDisconnectSimkl
             )
         }
@@ -10632,6 +10790,8 @@ private fun AccountRow(
     isConnected: Boolean,
     isWorking: Boolean = false,
     isEnabled: Boolean = true,
+    authCode: String? = null,
+    authUrl: String? = null,
     isFocused: Boolean,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -10643,7 +10803,7 @@ private fun AccountRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = isEnabled && !isWorking) {
+            .clickable(enabled = isEnabled) {
                 if (isConnected) onDisconnect() else onConnect()
             }
             .background(
@@ -10733,6 +10893,48 @@ private fun AccountRow(
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = expirationText,
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                color = TextSecondary.copy(alpha = 0.7f)
+            )
+        }
+
+        // Show auth code when polling
+        if (!isConnected && isWorking && !authCode.isNullOrBlank() && !authUrl.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = stringResource(R.string.settings_go_to, authUrl),
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                color = TextSecondary.copy(alpha = 0.9f)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(R.string.enter_code),
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                    color = TextSecondary.copy(alpha = 0.9f)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Box(
+                    modifier = Modifier
+                        .background(Pink.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                        .border(1.dp, Pink.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = authCode,
+                        style = ArflixTypography.label,
+                        color = Pink
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = stringResource(R.string.loading_label),
                 style = ArflixTypography.caption.copy(fontSize = 13.sp),
                 color = TextSecondary.copy(alpha = 0.7f)
             )

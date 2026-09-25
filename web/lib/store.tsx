@@ -851,11 +851,14 @@ export function AppProvider({
         if (cloudTracking) {
           if (!cloudTracking.hasCloudState) {
             const localPreferences = loadTrackingPreferences(profileId);
-            const localTracking = traktClient.token || simklClient.token || mdblistClient.key
+            const localTracking = traktClient.token || simklClient.token || mdblistClient.isConnected
               ? {
                   provider: traktClient.token ? "TRAKT" as const : simklClient.token ? "SIMKL" as const : "MDBLIST" as const,
                   traktToken: traktClient.token,
                   mdbListApiKey: mdblistClient.key,
+                  mdbListAccessToken: mdblistClient.token?.accessToken ?? null,
+                  mdbListRefreshToken: mdblistClient.token?.refreshToken ?? null,
+                  mdbListTokenExpiresAt: mdblistClient.token?.expiresAt ?? null,
                   simklToken: simklClient.token,
                   trackingPreferences: localPreferences
                 }
@@ -868,6 +871,15 @@ export function AppProvider({
             traktClient.setToken(cloudTracking.traktToken);
             simklClient.setToken(cloudTracking.simklToken);
             mdblistClient.setKey(cloudTracking.mdbListApiKey);
+            if (cloudTracking.mdbListAccessToken) {
+              mdblistClient.setToken({
+                accessToken: cloudTracking.mdbListAccessToken,
+                refreshToken: cloudTracking.mdbListRefreshToken,
+                expiresAt: cloudTracking.mdbListTokenExpiresAt
+              });
+            } else {
+              mdblistClient.setToken(null);
+            }
             const preferences = cloudTracking.trackingPreferences ?? defaultTrackingPreferences();
             saveTrackingPreferences(profileId, preferences);
             setTrackingPreferences(preferences);
@@ -2004,6 +2016,9 @@ export function AppProvider({
         provider: "TRAKT",
         traktToken: token,
         mdbListApiKey: mdblistClient.key,
+        mdbListAccessToken: mdblistClient.token?.accessToken ?? null,
+        mdbListRefreshToken: mdblistClient.token?.refreshToken ?? null,
+        mdbListTokenExpiresAt: mdblistClient.token?.expiresAt ?? null,
         simklToken: simklClient.token,
         trackingPreferences: nextPreferences,
         changedDomains: ["routing", "trakt"]
@@ -2037,6 +2052,9 @@ export function AppProvider({
         provider: simklClient.isConnected ? "SIMKL" : mdblistClient.isConnected ? "MDBLIST" : "NONE",
         traktToken: null,
         mdbListApiKey: mdblistClient.key,
+        mdbListAccessToken: mdblistClient.token?.accessToken ?? null,
+        mdbListRefreshToken: mdblistClient.token?.refreshToken ?? null,
+        mdbListTokenExpiresAt: mdblistClient.token?.expiresAt ?? null,
         simklToken: simklClient.token,
         trackingPreferences: nextPreferences,
         changedDomains: ["routing", "trakt"]
@@ -2073,6 +2091,9 @@ export function AppProvider({
         provider: traktClient.isConnected ? "TRAKT" : simklClient.isConnected ? "SIMKL" : "MDBLIST",
         traktToken: traktClient.token,
         mdbListApiKey: key,
+        mdbListAccessToken: null,
+        mdbListRefreshToken: null,
+        mdbListTokenExpiresAt: null,
         simklToken: simklClient.token,
         trackingPreferences: mdbPreferences,
         changedDomains: ["routing", "mdblist"]
@@ -2109,6 +2130,9 @@ export function AppProvider({
         provider: traktClient.isConnected ? "TRAKT" : simklClient.isConnected ? "SIMKL" : "NONE",
         traktToken: traktClient.token,
         mdbListApiKey: null,
+        mdbListAccessToken: null,
+        mdbListRefreshToken: null,
+        mdbListTokenExpiresAt: null,
         simklToken: simklClient.token,
         trackingPreferences: nextPreferences,
         changedDomains: ["routing", "mdblist"]
@@ -2157,6 +2181,9 @@ export function AppProvider({
         provider: traktClient.isConnected ? "TRAKT" : "SIMKL",
         traktToken: traktClient.token,
         mdbListApiKey: mdblistClient.key,
+        mdbListAccessToken: mdblistClient.token?.accessToken ?? null,
+        mdbListRefreshToken: mdblistClient.token?.refreshToken ?? null,
+        mdbListTokenExpiresAt: mdblistClient.token?.expiresAt ?? null,
         simklToken: token,
         trackingPreferences: nextPreferences,
         changedDomains: ["routing", "simkl"]
@@ -2190,6 +2217,9 @@ export function AppProvider({
         provider: traktClient.isConnected ? "TRAKT" : mdblistClient.isConnected ? "MDBLIST" : "NONE",
         traktToken: traktClient.token,
         mdbListApiKey: mdblistClient.key,
+        mdbListAccessToken: mdblistClient.token?.accessToken ?? null,
+        mdbListRefreshToken: mdblistClient.token?.refreshToken ?? null,
+        mdbListTokenExpiresAt: mdblistClient.token?.expiresAt ?? null,
         simklToken: null,
         trackingPreferences: nextPreferences,
         changedDomains: ["routing", "simkl"]
@@ -2218,6 +2248,9 @@ export function AppProvider({
             : "NONE",
       traktToken: traktClient.token,
       mdbListApiKey: mdblistClient.key,
+      mdbListAccessToken: mdblistClient.token?.accessToken ?? null,
+      mdbListRefreshToken: mdblistClient.token?.refreshToken ?? null,
+      mdbListTokenExpiresAt: mdblistClient.token?.expiresAt ?? null,
       simklToken: simklClient.token,
       trackingPreferences: next,
       changedDomains: ["routing"]

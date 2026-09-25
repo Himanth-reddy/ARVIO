@@ -1,23 +1,27 @@
 package com.arflix.tv.data.repository
 
-import com.arflix.tv.data.api.MdbListApi
+import android.content.Context
+import com.arflix.tv.data.api.MdbDeviceAuthorizationResponse
+import com.arflix.tv.data.api.MdbEpisodeInfo
 import com.arflix.tv.data.api.MdbIds
 import com.arflix.tv.data.api.MdbIdsItem
+import com.arflix.tv.data.api.MdbListApi
+import com.arflix.tv.data.api.MdbMovieInfo
 import com.arflix.tv.data.api.MdbPlaybackItem
 import com.arflix.tv.data.api.MdbRating
-import com.arflix.tv.data.api.MdbScrobbleBody
 import com.arflix.tv.data.api.MdbScrobbleClearBody
 import com.arflix.tv.data.api.MdbScrobbleEpisodeNumber
 import com.arflix.tv.data.api.MdbScrobbleMovie
 import com.arflix.tv.data.api.MdbScrobbleSeason
 import com.arflix.tv.data.api.MdbScrobbleShow
+import com.arflix.tv.data.api.MdbScrobbleBody
+import com.arflix.tv.data.api.MdbShowInfo
 import com.arflix.tv.data.api.MdbTmdbRef
+import com.arflix.tv.data.api.MdbTokenResponse
 import com.arflix.tv.data.api.MdbWatchedBody
 import com.arflix.tv.data.api.MdbWatchedEpisodeRef
 import com.arflix.tv.data.api.MdbWatchedSeasonRef
 import com.arflix.tv.data.api.MdbWatchedShowRef
-import com.arflix.tv.data.api.MdbDeviceAuthorizationResponse
-import com.arflix.tv.data.api.MdbTokenResponse
 import com.arflix.tv.data.api.MdbWatchlistItem
 import com.arflix.tv.data.api.MdbWatchlistModifyBody
 import com.arflix.tv.data.model.MediaItem
@@ -27,31 +31,26 @@ import com.arflix.tv.data.repository.sync.SyncProviderStore
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import com.google.gson.JsonParser
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
-/**
- * MDBList data layer. Mirrors the subset of TraktRepository behavior the app
- * needs when a profile uses MDBList instead of Trakt: watchlist, scrobble,
- * watched reads, and Continue Watching (paused sessions).
- *
- * Supabase stays the source of truth for watched state; this repository only
- * talks to the MDBList remote. API contract is verified live — see the
- * project_mdblist_api memory.
- */
-/**
- * A show the user is part-way through on MDBList: which episodes are watched (by season) and
- * when they last watched. The next unwatched episode is resolved against TMDB by the caller.
- */
 data class MdbShowWatchedProgress(
     val showTmdbId: Int,
     val title: String,
     val year: String,
-    val watchedBySeason: Map<Int, Set<Int>>,
+    val watchedBySeason: Map<Int, Set<Int>>, // season -> Set<episodeNumber>
     val lastWatchedAtMs: Long
+)
+
+data class MdbWatchedSnapshot(
+    val movies: Set<Int>,
+    val episodes: Set<String>
 )
 
 data class MdbExternalRating(
@@ -60,25 +59,180 @@ data class MdbExternalRating(
     val value: String
 )
 
-data class MdbWatchedSnapshot(
-    val movies: Set<Int>,
-    val episodes: Set<String>
-)
+enum class MdbListDeviceError {
+    AUTHORIZATION_PENDING,
+    SLOW_DOWN,
+    ACCESS_DENIED,
+    EXPIRED_TOKEN,
+    OTHER
+}
+
+fun parseMdbListDeviceError(throwable: Throwable): MdbListDeviceError {
+    val httpError = throwable as? retrofit2.HttpException
+    val code = httpError?.code() ?: -1
+
+    // Single-read the response body string once to prevent stream consumption / closed errors
+    val errorBodyString = runCatching { httpError?.response()?.errorBody()?.string() }.getOrNull()
+    val errorCode = if (!errorBodyString.isNullOrBlank()) {
+        runCatching {
+            JsonParser.parseString(errorBodyString).asJsonObject.get("error")?.asString
+        }.getOrNull() ?: runCatching {
+            org.json.JSONObject(errorBodyString).optString("error").takeIf { it.isNotBlank() }
+        }.getOrNull()
+    } else null
+
+    return when {
+        errorCode == "authorization_pending" ||
+            (code == 400 && (errorBodyString?.contains("authorization_pending", ignoreCase = true) == true ||
+                errorBodyString?.contains("pending", ignoreCase = true) == true)) ||
+            throwable.message?.contains("pending", ignoreCase = true) == true -> MdbListDeviceError.AUTHORIZATION_PENDING
+
+        errorCode == "slow_down" || code == 429 ||
+            (code == 400 && errorBodyString?.contains("slow_down", ignoreCase = true) == true) -> MdbListDeviceError.SLOW_DOWN
+
+        errorCode == "access_denied" || code == 403 ||
+            (code == 400 && errorBodyString?.contains("access_denied", ignoreCase = true) == true) -> MdbListDeviceError.ACCESS_DENIED
+
+        errorCode == "expired_token" ||
+            (code == 400 && errorBodyString?.contains("expired_token", ignoreCase = true) == true) -> MdbListDeviceError.EXPIRED_TOKEN
+
+        else -> MdbListDeviceError.OTHER
+    }
+}
 
 @Singleton
 class MdbListRepository @Inject constructor(
     private val api: MdbListApi,
-    private val store: SyncProviderStore
+    private val store: SyncProviderStore,
+    private val profileManager: ProfileManager
 ) {
     private val TAG = "MdbListRepository"
     private data class RatingsCacheEntry(val storedAt: Long, val ratings: List<MdbExternalRating>)
     private val ratingsCache = ConcurrentHashMap<String, RatingsCacheEntry>()
 
-    private suspend fun key(): String? = store.getMdbListAuthToken()
-    private fun authHeader(k: String): String =
-        if (k.startsWith("Bearer ", ignoreCase = true)) k else "Bearer $k"
+    private val tokenRenewalMutex = Mutex()
+    @Volatile private var tokenRenewalBackoffUntilMs = 0L
 
-    suspend fun isConnected(): Boolean = key() != null
+    sealed interface MdbListAuth {
+        data class OAuth(val accessToken: String) : MdbListAuth
+        data class ApiKey(val apiKey: String) : MdbListAuth
+    }
+
+    suspend fun isConnected(profileId: String? = null): Boolean {
+        val targetProfile = profileId ?: profileManager.getProfileIdSync()
+        return store.getMdbListCredential(targetProfile) != null
+    }
+
+    suspend fun resolveAuth(profileId: String? = null, forceRefresh: Boolean = false): MdbListAuth? {
+        val targetProfile = profileId ?: profileManager.getProfileIdSync()
+        val cred = store.getMdbListCredential(targetProfile) ?: return null
+        return when (cred) {
+            is SyncProviderStore.MdbListCredential.ApiKey -> MdbListAuth.ApiKey(cred.apiKey)
+            is SyncProviderStore.MdbListCredential.OAuth -> {
+                val validToken = getValidOAuthAccessToken(
+                    profileId = targetProfile,
+                    currentOAuth = cred,
+                    forceRefresh = forceRefresh
+                )
+                validToken?.let { MdbListAuth.OAuth(it) }
+            }
+        }
+    }
+
+    private suspend fun getValidOAuthAccessToken(
+        profileId: String,
+        currentOAuth: SyncProviderStore.MdbListCredential.OAuth,
+        forceRefresh: Boolean
+    ): String? {
+        val refreshToken = currentOAuth.refreshToken
+        val expiresAt = currentOAuth.expiresAt
+        val nowMs = System.currentTimeMillis()
+
+        val clientId = Constants.MDBLIST_CLIENT_ID.trim()
+        if (refreshToken.isNullOrBlank() || expiresAt == null || clientId.isBlank()) {
+            return currentOAuth.accessToken
+        }
+
+        val shouldRefresh = forceRefresh || (nowMs >= (expiresAt - 3600_000L))
+        if (!shouldRefresh) {
+            return currentOAuth.accessToken
+        }
+
+        return tokenRenewalMutex.withLock {
+            val lockedCred = store.getMdbListCredential(profileId) as? SyncProviderStore.MdbListCredential.OAuth
+                ?: return@withLock null
+            val lockedNow = System.currentTimeMillis()
+            val lockedRefreshToken = lockedCred.refreshToken ?: return@withLock lockedCred.accessToken
+            val lockedExpiresAt = lockedCred.expiresAt ?: return@withLock lockedCred.accessToken
+
+            if (!forceRefresh && lockedNow < (lockedExpiresAt - 3600_000L)) {
+                return@withLock lockedCred.accessToken
+            }
+
+            if (lockedNow < tokenRenewalBackoffUntilMs && !forceRefresh) {
+                return@withLock if (lockedNow < lockedExpiresAt) lockedCred.accessToken else null
+            }
+
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    api.refreshToken(
+                        grantType = "refresh_token",
+                        refreshToken = lockedRefreshToken,
+                        clientId = clientId
+                    )
+                }
+                tokenRenewalBackoffUntilMs = 0L
+
+                val newRefreshToken = response.refreshToken?.takeIf { it.isNotBlank() } ?: lockedRefreshToken
+                store.setMdbListOAuthTokens(
+                    accessToken = response.accessToken,
+                    refreshToken = newRefreshToken,
+                    expiresInSeconds = response.expiresIn,
+                    profileId = profileId
+                )
+                response.accessToken
+            } catch (e: retrofit2.HttpException) {
+                val code = e.code()
+                if (code == 400 || code == 401 || code == 403) {
+                    AppLogger.w(TAG, "MDBList refresh token rejected ($code). Clearing tokens for profile $profileId")
+                    store.clearAllMdbListCredentials(profileId)
+                    store.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+                    return@withLock null
+                }
+                tokenRenewalBackoffUntilMs = System.currentTimeMillis() + 30_000L
+                AppLogger.w(TAG, "MDBList token renewal deferred after HTTP $code")
+                if (lockedNow < lockedExpiresAt) lockedCred.accessToken else null
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                tokenRenewalBackoffUntilMs = System.currentTimeMillis() + 30_000L
+                AppLogger.w(TAG, "MDBList token renewal failed: ${e.message}")
+                if (lockedNow < lockedExpiresAt) lockedCred.accessToken else null
+            }
+        }
+    }
+
+    private suspend inline fun <T> executeWithAuth(
+        profileId: String? = null,
+        crossinline block: suspend (authHeader: String?, apiKey: String?) -> T
+    ): T? {
+        val targetProfile = profileId ?: profileManager.getProfileIdSync()
+        val auth = resolveAuth(targetProfile, forceRefresh = false) ?: return null
+
+        try {
+            return when (auth) {
+                is MdbListAuth.OAuth -> block("Bearer ${auth.accessToken}", null)
+                is MdbListAuth.ApiKey -> block(null, auth.apiKey)
+            }
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 401 && auth is MdbListAuth.OAuth) {
+                val renewedAuth = resolveAuth(targetProfile, forceRefresh = true)
+                if (renewedAuth is MdbListAuth.OAuth) {
+                    return block("Bearer ${renewedAuth.accessToken}", null)
+                }
+            }
+            throw e
+        }
+    }
 
     /** Initiates OAuth 2.0 Device Code flow. */
     suspend fun requestDeviceCode(clientId: String): MdbDeviceAuthorizationResponse = withContext(Dispatchers.IO) {
@@ -91,29 +245,46 @@ class MdbListRepository @Inject constructor(
     }
 
     /** Saves OAuth access & refresh tokens and notifies SyncProviderStore. */
-    suspend fun saveTokens(tokenResponse: MdbTokenResponse) {
+    suspend fun saveTokens(tokenResponse: MdbTokenResponse, profileId: String? = null) {
+        val targetProfile = profileId ?: profileManager.getProfileIdSync()
         store.setMdbListOAuthTokens(
             accessToken = tokenResponse.accessToken,
             refreshToken = tokenResponse.refreshToken,
-            expiresInSeconds = tokenResponse.expiresIn
+            expiresInSeconds = tokenResponse.expiresIn,
+            profileId = targetProfile
         )
         store.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
     }
 
-    /** Disconnects MDBList by clearing OAuth tokens. */
-    suspend fun disconnect() {
-        store.setMdbListOAuthTokens(null, null, null)
+    /** Disconnects MDBList by clearing both OAuth tokens and legacy API keys. */
+    suspend fun disconnect(profileId: String? = null) {
+        val targetProfile = profileId ?: profileManager.getProfileIdSync()
+        store.clearAllMdbListCredentials(targetProfile)
         store.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+    }
+
+    /** Validates an MDBList API key directly without creating bearer tokens. */
+    suspend fun validateKey(key: String): Boolean = withContext(Dispatchers.IO) {
+        val trimmed = key.trim()
+        if (trimmed.isEmpty()) return@withContext false
+        try {
+            api.getUser(authHeader = null, apiKey = trimmed).username != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /**
      * Fetches the MDBList username for the currently connected API key or token.
      * Returns null gracefully if not connected or if the request fails.
      */
-    suspend fun fetchUsername(): String? = withContext(Dispatchers.IO) {
+    suspend fun fetchUsername(profileId: String? = null): String? = withContext(Dispatchers.IO) {
         try {
-            val k = key() ?: return@withContext null
-            api.getUser(authHeader = authHeader(k), apiKey = k).username
+            executeWithAuth(profileId) { authHeader, apiKey ->
+                api.getUser(authHeader = authHeader, apiKey = apiKey).username
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -127,18 +298,20 @@ class MdbListRepository @Inject constructor(
      */
     suspend fun getExternalRatings(mediaType: MediaType, tmdbId: Int): List<MdbExternalRating> =
         withContext(Dispatchers.IO) {
-            val k = key() ?: return@withContext emptyList()
-            val cacheKey = "${k.hashCode()}:${mediaType.name}:$tmdbId"
+            val auth = resolveAuth() ?: return@withContext emptyList()
+            val cacheKey = "${auth.hashCode()}:${mediaType.name}:$tmdbId"
             ratingsCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.storedAt < RATINGS_CACHE_TTL_MS }
                 ?.let { return@withContext it.ratings }
             try {
                 val apiType = if (mediaType == MediaType.MOVIE) "movie" else "show"
-                val ratings = api.getMediaInfo(
-                    mediaType = apiType,
-                    mediaId = tmdbId,
-                    authHeader = authHeader(k),
-                    apiKey = k
-                ).ratings
+                val ratings = executeWithAuth { authHeader, apiKey ->
+                    api.getMediaInfo(
+                        mediaType = apiType,
+                        mediaId = tmdbId,
+                        authHeader = authHeader,
+                        apiKey = apiKey
+                    )
+                }?.ratings
                     .orEmpty()
                     .mapNotNull(::normalizeRating)
                     .distinctBy { it.source }
@@ -155,7 +328,7 @@ class MdbListRepository @Inject constructor(
 
     private fun normalizeRating(rating: MdbRating): MdbExternalRating? {
         val source = rating.source?.lowercase()?.trim().orEmpty()
-        if (source == "imdb") return null // IMDb already has its own verified badge.
+        if (source == "imdb") return null
         val label = RATING_LABELS[source] ?: return null
         val value = when (source) {
             "tomatoes", "popcorn", "metacritic", "metacriticuser" ->
@@ -204,15 +377,16 @@ class MdbListRepository @Inject constructor(
         tmdbId: Int,
         action: String
     ): Boolean = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext false
         try {
             val body = if (mediaType == MediaType.MOVIE) {
                 MdbWatchlistModifyBody(movies = listOf(MdbTmdbRef(tmdbId)))
             } else {
                 MdbWatchlistModifyBody(shows = listOf(MdbTmdbRef(tmdbId)))
             }
-            api.modifyWatchlist(action = action, authHeader = authHeader(k), apiKey = k, body = body)
-            true
+            val result = executeWithAuth { authHeader, apiKey ->
+                api.modifyWatchlist(action = action, authHeader = authHeader, apiKey = apiKey, body = body)
+            }
+            result != null
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e(TAG, "watchlist $action failed", e)
@@ -221,9 +395,9 @@ class MdbListRepository @Inject constructor(
     }
 
     suspend fun getWatchlist(): RemoteWatchlistResult = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext RemoteWatchlistResult(connected = false, items = null, rawCount = 0)
+        if (!isConnected()) return@withContext RemoteWatchlistResult(connected = false, items = null, rawCount = 0)
         try {
-            val raw = fetchAllWatchlistItems(k)
+            val raw = fetchAllWatchlistItems()
             val items = raw
                 .mapIndexedNotNull { index, item -> mapWatchlistItem(item, index) }
                 .sortedWith(compareBy<MediaItem> { it.sourceOrder }.thenByDescending { it.addedAt })
@@ -235,18 +409,20 @@ class MdbListRepository @Inject constructor(
         }
     }
 
-    private suspend fun fetchAllWatchlistItems(apiKey: String): List<MdbWatchlistItem> {
+    private suspend fun fetchAllWatchlistItems(): List<MdbWatchlistItem> {
         val all = mutableListOf<MdbWatchlistItem>()
         val limit = 1000
         var offset = 0
         while (true) {
-            val page = api.getWatchlistItems(
-                authHeader = authHeader(apiKey),
-                apiKey = apiKey,
-                limit = limit,
-                offset = offset,
-                unified = "true"
-            )
+            val page = executeWithAuth { authHeader, apiKey ->
+                api.getWatchlistItems(
+                    authHeader = authHeader,
+                    apiKey = apiKey,
+                    limit = limit,
+                    offset = offset,
+                    unified = "true"
+                )
+            } ?: break
             all.addAll(page)
             if (page.size < limit) break
             offset += limit
@@ -259,8 +435,6 @@ class MdbListRepository @Inject constructor(
         val type = if (item.mediatype.equals("show", ignoreCase = true)) MediaType.TV else MediaType.MOVIE
         val year = item.releaseYear?.toString()
             ?: item.releaseDate?.take(4).orEmpty()
-        // No poster in the watchlist payload — WatchlistRepository enriches via TMDB,
-        // mirroring the Trakt path (mapWatchlistItemFast).
         return MediaItem(
             id = tmdbId,
             title = item.title.orEmpty(),
@@ -275,20 +449,13 @@ class MdbListRepository @Inject constructor(
     // ===== Scrobble =====
 
     suspend fun scrobble(
-        action: String, // start | pause | stop
+        action: String,
         mediaType: MediaType,
         tmdbId: Int,
         progress: Float,
         season: Int?,
         episode: Int?
     ) = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext
-        // Two decimals: a whole percent is 13 seconds of a 22-minute episode and
-        // over a minute of a feature film, and this is the only precision the
-        // resume point ever has, since no tracker stores a position. More than
-        // two is rejected outright — the API answers 400 to 26.735 while taking
-        // 26.73 — and a rejected scrobble is silently swallowed, which would
-        // stop progress reaching MDBList at all.
         val prog = (progress.coerceIn(0f, 100f) * 100f).roundToInt() / 100f
         val body = if (mediaType == MediaType.MOVIE) {
             MdbScrobbleBody(progress = prog, movie = MdbScrobbleMovie(MdbIds(tmdb = tmdbId)))
@@ -303,7 +470,9 @@ class MdbListRepository @Inject constructor(
             )
         }
         try {
-            api.scrobble(action = action, authHeader = authHeader(k), apiKey = k, body = body)
+            executeWithAuth { authHeader, apiKey ->
+                api.scrobble(action = action, authHeader = authHeader, apiKey = apiKey, body = body)
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e(TAG, "scrobble $action failed", e)
@@ -313,7 +482,6 @@ class MdbListRepository @Inject constructor(
     /** Clear a paused session so it drops out of Continue Watching. */
     suspend fun clearPlayback(mediaType: MediaType, tmdbId: Int, season: Int?, episode: Int?) =
         withContext(Dispatchers.IO) {
-            val k = key() ?: return@withContext
             val body = if (mediaType == MediaType.MOVIE) {
                 MdbScrobbleClearBody(movie = MdbScrobbleMovie(MdbIds(tmdb = tmdbId)))
             } else {
@@ -326,7 +494,9 @@ class MdbListRepository @Inject constructor(
                 )
             }
             try {
-                api.scrobbleClear(authHeader = authHeader(k), apiKey = k, body = body)
+                executeWithAuth { authHeader, apiKey ->
+                    api.scrobbleClear(authHeader = authHeader, apiKey = apiKey, body = body)
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 AppLogger.e(TAG, "scrobble clear failed", e)
@@ -335,27 +505,27 @@ class MdbListRepository @Inject constructor(
 
     // ===== Watched mirror (Trakt-style ids objects) =====
 
-    suspend fun markMovieWatched(tmdbId: Int): Boolean = watchedCall {
-        api.addWatched(authHeader = authHeader(it), apiKey = it, body = MdbWatchedBody(movies = listOf(MdbIdsItem(MdbIds(tmdb = tmdbId)))))
+    suspend fun markMovieWatched(tmdbId: Int): Boolean = watchedCall { authHeader, apiKey ->
+        api.addWatched(authHeader = authHeader, apiKey = apiKey, body = MdbWatchedBody(movies = listOf(MdbIdsItem(MdbIds(tmdb = tmdbId)))))
     }
 
-    suspend fun markMovieUnwatched(tmdbId: Int): Boolean = watchedCall {
-        api.removeWatched(authHeader = authHeader(it), apiKey = it, body = MdbWatchedBody(movies = listOf(MdbIdsItem(MdbIds(tmdb = tmdbId)))))
+    suspend fun markMovieUnwatched(tmdbId: Int): Boolean = watchedCall { authHeader, apiKey ->
+        api.removeWatched(authHeader = authHeader, apiKey = apiKey, body = MdbWatchedBody(movies = listOf(MdbIdsItem(MdbIds(tmdb = tmdbId)))))
     }
 
-    suspend fun markEpisodeWatched(showTmdbId: Int, season: Int, episode: Int): Boolean = watchedCall {
-        api.addWatched(authHeader = authHeader(it), apiKey = it, body = episodeBody(showTmdbId, season, episode))
+    suspend fun markEpisodeWatched(showTmdbId: Int, season: Int, episode: Int): Boolean = watchedCall { authHeader, apiKey ->
+        api.addWatched(authHeader = authHeader, apiKey = apiKey, body = episodeBody(showTmdbId, season, episode))
     }
 
-    suspend fun markEpisodeUnwatched(showTmdbId: Int, season: Int, episode: Int): Boolean = watchedCall {
-        api.removeWatched(authHeader = authHeader(it), apiKey = it, body = episodeBody(showTmdbId, season, episode))
+    suspend fun markEpisodeUnwatched(showTmdbId: Int, season: Int, episode: Int): Boolean = watchedCall { authHeader, apiKey ->
+        api.removeWatched(authHeader = authHeader, apiKey = apiKey, body = episodeBody(showTmdbId, season, episode))
     }
 
     /** Batch-mark a whole season's episodes watched in one /sync/watched call. */
-    suspend fun markSeasonWatched(showTmdbId: Int, season: Int, episodes: List<Int>): Boolean = watchedCall {
+    suspend fun markSeasonWatched(showTmdbId: Int, season: Int, episodes: List<Int>): Boolean = watchedCall { authHeader, apiKey ->
         api.addWatched(
-            authHeader = authHeader(it),
-            apiKey = it,
+            authHeader = authHeader,
+            apiKey = apiKey,
             body = MdbWatchedBody(
                 shows = listOf(
                     MdbWatchedShowRef(
@@ -380,11 +550,12 @@ class MdbListRepository @Inject constructor(
         )
     )
 
-    private suspend fun watchedCall(block: suspend (String) -> Any): Boolean = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext false
+    private suspend fun watchedCall(block: suspend (authHeader: String?, apiKey: String?) -> Any): Boolean = withContext(Dispatchers.IO) {
         try {
-            block(k)
-            true
+            val result = executeWithAuth { authHeader, apiKey ->
+                block(authHeader, apiKey)
+            }
+            result != null
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e(TAG, "watched mirror failed", e)
@@ -395,14 +566,16 @@ class MdbListRepository @Inject constructor(
     // ===== Watched reads =====
 
     suspend fun getWatchedSnapshot(): Result<MdbWatchedSnapshot> = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext Result.failure(IllegalStateException("MDBList is not connected"))
+        if (!isConnected()) return@withContext Result.failure(IllegalStateException("MDBList is not connected"))
         try {
             val movies = mutableSetOf<Int>()
             val episodes = mutableSetOf<String>()
             var offset = 0
             val limit = 1000
             while (true) {
-                val response = api.getWatched(authHeader = authHeader(k), apiKey = k, limit = limit, offset = offset)
+                val response = executeWithAuth { authHeader, apiKey ->
+                    api.getWatched(authHeader = authHeader, apiKey = apiKey, limit = limit, offset = offset)
+                } ?: break
                 response.movies?.forEach { row ->
                     row.movie?.ids?.tmdb?.let(movies::add)
                 }
@@ -426,13 +599,14 @@ class MdbListRepository @Inject constructor(
     }
 
     suspend fun getWatchedMovies(): Set<Int> = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext emptySet()
         try {
             val out = mutableSetOf<Int>()
             var offset = 0
             val limit = 1000
             while (true) {
-                val resp = api.getWatched(authHeader = authHeader(k), apiKey = k, limit = limit, offset = offset)
+                val resp = executeWithAuth { authHeader, apiKey ->
+                    api.getWatched(authHeader = authHeader, apiKey = apiKey, limit = limit, offset = offset)
+                } ?: break
                 resp.movies?.forEach { row -> row.movie?.ids?.tmdb?.let { out.add(it) } }
                 if (resp.pagination?.hasMore != true) break
                 offset += limit
@@ -446,12 +620,9 @@ class MdbListRepository @Inject constructor(
 
     /**
      * Per-show watched progress from /sync/watched, grouped by show tmdb id. Powers MDBList's
-     * "Now Playing" (up-next) — shows with episodes watched but not finished. Unlike Trakt,
-     * MDBList has no server-side "next episode" endpoint, so the caller resolves the next
-     * episode from this watched set + TMDB.
+     * "Now Playing" (up-next) — shows with episodes watched but not finished.
      */
     suspend fun getWatchedShowsProgress(): List<MdbShowWatchedProgress> = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext emptyList()
         try {
             class Acc(var title: String, var year: String) {
                 val eps = mutableMapOf<Int, MutableSet<Int>>()
@@ -461,7 +632,9 @@ class MdbListRepository @Inject constructor(
             var offset = 0
             val limit = 1000
             while (true) {
-                val resp = api.getWatched(authHeader = authHeader(k), apiKey = k, limit = limit, offset = offset)
+                val resp = executeWithAuth { authHeader, apiKey ->
+                    api.getWatched(authHeader = authHeader, apiKey = apiKey, limit = limit, offset = offset)
+                } ?: break
                 resp.episodes?.forEach { row ->
                     val ep = row.episode ?: return@forEach
                     val showTmdb = ep.show?.ids?.tmdb ?: return@forEach
@@ -495,13 +668,14 @@ class MdbListRepository @Inject constructor(
     }
 
     suspend fun getWatchedEpisodes(): Set<String> = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext emptySet()
         try {
             val out = mutableSetOf<String>()
             var offset = 0
             val limit = 1000
             while (true) {
-                val resp = api.getWatched(authHeader = authHeader(k), apiKey = k, limit = limit, offset = offset)
+                val resp = executeWithAuth { authHeader, apiKey ->
+                    api.getWatched(authHeader = authHeader, apiKey = apiKey, limit = limit, offset = offset)
+                } ?: break
                 resp.episodes?.forEach { row ->
                     val ep = row.episode ?: return@forEach
                     val showTmdb = ep.show?.ids?.tmdb ?: return@forEach
@@ -522,20 +696,16 @@ class MdbListRepository @Inject constructor(
     // ===== Continue Watching (paused sessions) =====
 
     suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = withContext(Dispatchers.IO) {
-        val k = key() ?: return@withContext emptyList()
         try {
-            api.getPlayback(
-                authHeader = authHeader(k),
-                apiKey = k,
-                cacheControl = if (forceRefresh) "no-cache" else null
-            )
-                .mapNotNull { mapPlaybackItem(it) }
+            val items = executeWithAuth { authHeader, apiKey ->
+                api.getPlayback(
+                    authHeader = authHeader,
+                    apiKey = apiKey,
+                    cacheControl = if (forceRefresh) "no-cache" else null
+                )
+            } ?: return@withContext emptyList()
+            items.mapNotNull { mapPlaybackItem(it) }
                 .sortedByDescending { it.updatedAtMs }
-                // One card per title. A paused session is kept for every episode
-                // ever abandoned, so without this a single show can take a large
-                // share of MAX_CONTINUE_WATCHING and push other shows off the row
-                // entirely. Newest-first ordering makes the survivor the one to
-                // resume.
                 .distinctBy { it.mediaType to it.id }
                 .take(Constants.MAX_CONTINUE_WATCHING)
         } catch (e: Exception) {
@@ -547,10 +717,6 @@ class MdbListRepository @Inject constructor(
 
     private fun mapPlaybackItem(item: MdbPlaybackItem): ContinueWatchingItem? {
         val progress = item.progress?.toFloatOrNull()?.roundToInt() ?: return null
-        // Only a genuinely unstarted session is dropped. The old
-        // MIN_PROGRESS_THRESHOLD floor hid a show's newest episode whenever the
-        // user had watched under three percent of it, leaving the row pointing
-        // at an older episode they had already moved on from.
         if (progress <= 0 || progress >= Constants.WATCHED_THRESHOLD) return null
         val durationSeconds = (item.runtime ?: 0).toLong() * 60L
         val updatedMs = item.updatedAtTs?.let { it * 1000L } ?: parseIsoMillis(item.updatedAt)

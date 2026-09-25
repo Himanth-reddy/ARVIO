@@ -548,6 +548,7 @@
     <string name="mdblist_auth_error">MDBList connection failed: %1$s</string>
     <string name="mdblist_code_expired">MDBList code expired. Please try again.</string>
     <string name="mdblist_code_denied">MDBList authorization denied.</string>
+    <string name="mdblist_connect_with_key">Enter API Key manually</string>
     <!-- Tracking Integrations sub-page -->
     <string name="settings_tracking_integrations">Tracking Integrations</string>
     <string name="settings_connected_as">Connected as %1$s</string>
