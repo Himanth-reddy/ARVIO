@@ -11,6 +11,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sync-tests:
+    name: Sync tests (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        directory: [netlify-auth-site, web]
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.20.0"
+          cache: npm
+          cache-dependency-path: ${{ matrix.directory }}/package-lock.json
+      - name: Install backend dependencies
+        if: matrix.directory == 'netlify-auth-site'
+        run: npm ci --omit=dev --ignore-scripts
+      - name: Install web dependencies
+        if: matrix.directory == 'web'
+        run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Check web types
+        if: matrix.directory == 'web'
+        run: npx tsc --noEmit
+
   verify:
     name: Verify build
     runs-on: ubuntu-latest

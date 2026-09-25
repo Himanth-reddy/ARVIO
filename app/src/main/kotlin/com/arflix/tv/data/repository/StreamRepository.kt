@@ -835,7 +835,7 @@ class StreamRepository @Inject constructor(
             // Remove existing addon with same ID if present
             addons.removeAll { it.id == newAddon.id }
             addons.add(newAddon)
-            saveAddons(addons)
+            saveAddons(addons, addedIds = setOf(newAddon.id))
 
             Result.success(newAddon)
         } catch (e: Exception) {
@@ -868,7 +868,7 @@ class StreamRepository @Inject constructor(
             addons.removeAll { it.id == addon.id || it.id in replaceAddonIds }
             // A replacement keeps the old addon's place in the list.
             if (replacedIndex in 0..addons.size) addons.add(replacedIndex, addon) else addons.add(addon)
-            saveAddons(addons)
+            saveAddons(addons, addedIds = setOf(addon.id), removedIds = replaceAddonIds - addon.id)
         }
 
     /**
@@ -953,7 +953,7 @@ class StreamRepository @Inject constructor(
         val addons = installedAddons.first().toMutableList()
         addons.removeAll { it.id == addonId }
         addons.add(newAddon)
-        saveAddons(addons)
+        saveAddons(addons, addedIds = setOf(newAddon.id))
         return newAddon
     }
 
@@ -1003,7 +1003,7 @@ class StreamRepository @Inject constructor(
         if (removableIds.isEmpty()) return@withContext false
 
         val retained = current.filterNot { it.id in removableIds }
-        saveAddons(retained)
+        saveAddons(retained, removedIds = removableIds)
         true
     }
 
@@ -1102,7 +1102,7 @@ class StreamRepository @Inject constructor(
         if (addonId == "opensubtitles") return
         val current = installedAddons.first()
         val addons = current.filter { it.id != addonId }
-        saveAddons(addons)
+        saveAddons(addons, removedIds = setOf(addonId))
     }
 
     @Deprecated(
@@ -1167,6 +1167,40 @@ class StreamRepository @Inject constructor(
     // intentional empty state can propagate (see reconcileAddonsWithCloud). Not bumped when applying
     // the cloud's addons, which would create false "local change" churn.
     private val addonsUpdatedAtKey = androidx.datastore.preferences.core.longPreferencesKey("addons_updated_at")
+    private val addonChangesKey = stringPreferencesKey("addon_changes_v1")
+
+    private fun readAddonChanges(prefs: Preferences): Map<String, AddonChange> = runCatching {
+        val type = object : TypeToken<Map<String, AddonChange>>() {}.type
+        val parsed: Map<String, AddonChange> = gson.fromJson(prefs[addonChangesKey], type) ?: emptyMap()
+        mergeAddonChanges(emptyMap(), parsed)
+    }.getOrDefault(emptyMap())
+
+    private fun addonCloudState(prefs: Preferences) = AddonCloudState(
+        enforceOpenSubtitles(readSharedOrLegacyAddons(prefs) ?: getDefaultAddonList()),
+        prefs[addonsUpdatedAtKey] ?: 0L,
+        readAddonChanges(prefs)
+    )
+
+    suspend fun exportAddonCloudState(): AddonCloudState = addonCloudState(context.streamDataStore.data.first())
+
+    suspend fun applyAddonCloudState(addons: List<Addon>, updatedAt: Long, changes: Map<String, AddonChange>?) {
+        context.streamDataStore.edit { prefs ->
+            val local = addonCloudState(prefs)
+            val resolved = if (changes != null) {
+                reconcileExplicitAddonState(local, AddonCloudState(addons, updatedAt, changes))
+            } else {
+                val legacy = reconcileAddonsWithCloud(addons, local.addons, updatedAt, local.updatedAt).first
+                local.copy(addons = legacy.filterNot { local.changes[it.id]?.removed == true },
+                    updatedAt = maxOf(local.updatedAt, updatedAt))
+            }
+            prefs[sharedAddonsKey] = gson.toJson(enforceOpenSubtitles(resolved.addons).filterNot(::isIncompleteExternalAddon))
+            prefs.remove(sharedPendingAddonsKey)
+            prefs[addonChangesKey] = gson.toJson(resolved.changes)
+            prefs[addonsUpdatedAtKey] = resolved.updatedAt
+        }
+        synchronized(streamResultCache) { streamResultCache.clear() }
+        invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "apply addon cloud state")
+    }
 
     suspend fun getAddonsUpdatedAt(): Long = context.streamDataStore.data.first()[addonsUpdatedAtKey] ?: 0L
 
@@ -1174,17 +1208,24 @@ class StreamRepository @Inject constructor(
         context.streamDataStore.edit { prefs -> prefs[addonsUpdatedAtKey] = value }
     }
 
-    private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true) {
-        val json = gson.toJson(addons.map { sanitizeAddonDisplayName(it) })
-
+    private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true,
+        removedIds: Set<String> = emptySet(), addedIds: Set<String> = emptySet()) {
         // Save locally to the shared account-level addon list. Mirror to the
         // active profile key so older builds/cloud payloads can still recover it.
         context.streamDataStore.edit { prefs ->
+            if (stampChange) {
+                val previous = addonCloudState(prefs)
+                val timestamp = maxOf(System.currentTimeMillis(), previous.updatedAt + 1)
+                val changes = recordAddonChanges(previous.changes, addedIds, removedIds, timestamp)
+                prefs[addonChangesKey] = gson.toJson(changes)
+                prefs[addonsUpdatedAtKey] = timestamp
+            }
+            val changes = readAddonChanges(prefs)
+            val json = gson.toJson(addons.filterNot { changes[it.id]?.removed == true }.map { sanitizeAddonDisplayName(it) })
             prefs[sharedAddonsKey] = json
             prefs.remove(sharedPendingAddonsKey)
             prefs[addonsKey()] = json
             prefs.remove(pendingAddonsKey())
-            if (stampChange) prefs[addonsUpdatedAtKey] = System.currentTimeMillis()
         }
         synchronized(streamResultCache) { streamResultCache.clear() }
         invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "save addons")

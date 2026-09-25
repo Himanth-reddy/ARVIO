@@ -809,7 +809,8 @@ class CloudSyncRepository @Inject constructor(
         // For backwards compatibility with older versions of ARVIO that read
         // stream provider priority directly from the addons list order, order the
         // Stremio addons in the exported snapshot to reflect their configured priority.
-        val installed = streamRepository.installedAddons.first()
+        val addonState = streamRepository.exportAddonCloudState()
+        val installed = addonState.addons
         val activeProfileCustomOrder = prefs[profileManager.profileStringKeyFor(profileManager.getProfileIdSync(), "stream_providers_custom_order")].orEmpty()
         val activeOrderedStremioIds = if (activeProfileCustomOrder.isNotBlank()) {
             activeProfileCustomOrder.split(",")
@@ -852,7 +853,8 @@ class CloudSyncRepository @Inject constructor(
         root.put("addonsByProfile", JSONObject(gson.toJson(addonsByProfile)))
         // Set-level timestamp so an intentional "removed everything" can be told apart from a blank
         // pull on apply (see reconcileAddonsWithCloud).
-        root.put("addonsUpdatedAt", streamRepository.getAddonsUpdatedAt())
+        root.put("addonsUpdatedAt", addonState.updatedAt)
+        root.put("addonChanges", JSONObject(gson.toJson(addonState.changes)))
 
         // Catalogs per profile
         val catalogsByProfile = buildMap<String, List<CatalogConfig>> {
@@ -1793,35 +1795,26 @@ class CloudSyncRepository @Inject constructor(
         // ── Addons ──
         try {
             val cloudAddonsTs = root.optLong("addonsUpdatedAt", 0L)
-            val localAddonsTs = streamRepository.getAddonsUpdatedAt()
-            var appliedCloudAddons = false
+            val changeType = object : TypeToken<Map<String, AddonChange>>() {}.type
+            val changes: Map<String, AddonChange>? = root.optJSONObject("addonChanges")?.let {
+                gson.fromJson(it.toString(), changeType)
+            }
             root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Addon::class.java).type).type
                 val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
-                val sharedAddons = mergeAddonsForSharedRestore(map.values)
-                val localAddons = streamRepository.installedAddons.first()
-                val (resolvedAddons, _) = reconcileAddonsWithCloud(sharedAddons, localAddons, cloudAddonsTs, localAddonsTs)
-                // Apply the reconciled list even when it is empty — an intentional "removed all"
-                // must propagate (reconcile only returns empty when the cloud set is genuinely newer;
-                // opensubtitles is re-enforced downstream so playback isn't left with nothing).
-                // Legacy order from cloud is preserved for compatibility with older versions.
-                streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
-                appliedCloudAddons = true
+                val addonType = object : TypeToken<List<Addon>>() {}.type
+                val rootAddons: List<Addon> = root.optJSONArray("addons")?.let {
+                    gson.fromJson(it.toString(), addonType)
+                } ?: emptyList()
+                val sharedAddons = mergeAddonsForSharedRestore(map.values + listOf(rootAddons))
+                streamRepository.applyAddonCloudState(sharedAddons, cloudAddonsTs, changes)
             }
             root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 if (!root.has("addonsByProfile")) {
                     val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
                     val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
-                    val localAddons = streamRepository.installedAddons.first()
-                    val (resolvedAddons, _) = reconcileAddonsWithCloud(addons, localAddons, cloudAddonsTs, localAddonsTs)
-                    streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
-                    appliedCloudAddons = true
+                    streamRepository.applyAddonCloudState(addons, cloudAddonsTs, changes)
                 }
-            }
-            // Keep the local set-timestamp in step with the cloud we just adopted, so we don't
-            // re-adopt/loop on the next pull.
-            if (appliedCloudAddons && cloudAddonsTs > localAddonsTs) {
-                streamRepository.setAddonsUpdatedAt(cloudAddonsTs)
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
