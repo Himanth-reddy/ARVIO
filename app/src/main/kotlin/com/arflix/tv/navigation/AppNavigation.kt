@@ -149,6 +149,7 @@ fun AppNavigation(
     currentProfile: Profile? = null,
     isCloudConnected: Boolean = false,
     onSwitchProfile: () -> Unit = {},
+    onProfileSelected: (String) -> Unit = {},
     onTvFullscreenChanged: (Boolean) -> Unit = {},
     onOverlayFullscreenChanged: (Boolean) -> Unit = {},
     onSettingsSubPageChanged: (Boolean) -> Unit = {},
@@ -329,7 +330,7 @@ fun AppNavigation(
 
         // Settings screen
         composable(
-            route = "settings?autoCloudAuth={autoCloudAuth}&initialSection={initialSection}&installPackUrl={installPackUrl}",
+            route = "settings?autoCloudAuth={autoCloudAuth}&initialSection={initialSection}&installPackUrl={installPackUrl}&installAddonUrl={installAddonUrl}",
             arguments = listOf(
                 navArgument("autoCloudAuth") {
                     type = NavType.BoolType
@@ -344,17 +345,24 @@ fun AppNavigation(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument("installAddonUrl") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
             val autoCloudAuth = backStackEntry.arguments?.getBoolean("autoCloudAuth") ?: false
             val initialSection = backStackEntry.arguments?.getString("initialSection")
             val installPackUrl = backStackEntry.arguments?.getString("installPackUrl")
+            val installAddonUrl = backStackEntry.arguments?.getString("installAddonUrl")
             SettingsScreen(
                 currentProfile = currentProfile,
                 autoStartCloudAuth = autoCloudAuth,
                 initialSection = initialSection,
                 installPackUrl = installPackUrl,
+                installAddonUrl = installAddonUrl,
                 onNavigateToHome = { navigateHome() },
                 onNavigateToSearch = { navigateTopLevel(Screen.Search.route) },
                 onNavigateToTv = { navigateTopLevel(Screen.Tv.createRoute()) },
@@ -377,7 +385,8 @@ fun AppNavigation(
         // Profile selection screen
         composable(Screen.ProfileSelection.route) {
             ProfileSelectionScreen(
-                onProfileSelected = {
+                onProfileSelected = { profileId ->
+                    onProfileSelected(profileId)
                     navController.navigate(Screen.Home.route) {
                         popUpTo(Screen.ProfileSelection.route) { inclusive = true }
                     }

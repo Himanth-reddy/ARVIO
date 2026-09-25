@@ -22,6 +22,7 @@ import com.arflix.tv.util.QrCodeGenerator
 import com.arflix.tv.data.api.StalkerApi
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.needsConfiguration
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
@@ -185,6 +186,16 @@ fun StalkerCategoryTab.catalogKind(): StalkerCatalogKind? = when (this) {
     StalkerCategoryTab.SERIES -> StalkerCatalogKind.SERIES
 }
 
+/**
+ * An addon fetched but not installed yet, waiting for the user to confirm.
+ * [existing] holds installed setups of the same addon (same manifest id, other settings).
+ */
+data class PendingAddonInstall(
+    val addon: Addon,
+    val existing: List<Addon> = emptyList(),
+    val fromLink: Boolean = false
+)
+
 data class SettingsUiState(
     val defaultSubtitle: String = "Off",
     val subtitleOptions: List<String> = emptyList(),
@@ -332,6 +343,8 @@ data class SettingsUiState(
     // Addons
     val addons: List<Addon> = emptyList(),
     val isRefreshingAddons: Boolean = false,
+    val isAddonInstallLoading: Boolean = false,
+    val pendingAddonInstall: PendingAddonInstall? = null,
     val torrServerBaseUrl: String = "",
     val homeServerConnection: HomeServerConnection? = null,
     val homeServerConnections: List<HomeServerConnection> = emptyList(),
@@ -2387,6 +2400,14 @@ class SettingsViewModel @Inject constructor(
 
     fun toggleAddon(addonId: String) {
         viewModelScope.launch {
+            val addon = streamRepository.installedAddons.first().firstOrNull { it.id == addonId }
+            if (addon != null && addon.needsConfiguration && !addon.isEnabled) {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = SettingsMessage.Res(R.string.settings_addon_setup_first, listOf(addon.name)),
+                    toastType = ToastType.INFO
+                )
+                return@launch
+            }
             streamRepository.toggleAddon(addonId)
             val addonsAfterToggle = streamRepository.installedAddons.first()
             runCatching {
@@ -2397,9 +2418,68 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun addCustomAddon(url: String) {
-        viewModelScope.launch {
-            val result = streamRepository.addCustomAddon(url)
+        requestAddonInstall(url, fromLink = false)
+    }
+
+    private var addonInstallJob: Job? = null
+
+    /**
+     * Fetch the addon behind [url] and install it. A link opened from a website always asks
+     * first; so does any install that would add a second setup of an addon already installed.
+     */
+    fun requestAddonInstall(url: String, fromLink: Boolean) {
+        addonInstallJob?.cancel()
+        addonInstallJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isAddonInstallLoading = fromLink,
+                pendingAddonInstall = null
+            )
+            val result = streamRepository.prepareCustomAddon(url)
+            _uiState.value = _uiState.value.copy(isAddonInstallLoading = false)
             result.onSuccess { addon ->
+                val manifestId = addon.manifest?.id
+                val existing = if (manifestId == null) {
+                    emptyList()
+                } else {
+                    streamRepository.installedAddons.first()
+                        .filter { it.manifest?.id == manifestId && it.id != addon.id }
+                }
+                if (fromLink || existing.isNotEmpty()) {
+                    _uiState.value = _uiState.value.copy(
+                        pendingAddonInstall = PendingAddonInstall(addon, existing, fromLink)
+                    )
+                } else {
+                    installAddon(addon, replaceAddonIds = emptySet())
+                }
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.message.orMessage(
+                        SettingsMessage.Res(R.string.addon_failed_add)
+                    ),
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    /** Install the pending addon; [replaceExisting] removes the older setups of it. */
+    fun confirmAddonInstall(replaceExisting: Boolean) {
+        val pending = _uiState.value.pendingAddonInstall ?: return
+        _uiState.value = _uiState.value.copy(pendingAddonInstall = null)
+        viewModelScope.launch {
+            val replaceIds = if (replaceExisting) pending.existing.map { it.id }.toSet() else emptySet()
+            installAddon(pending.addon, replaceIds)
+        }
+    }
+
+    fun cancelAddonInstall() {
+        addonInstallJob?.cancel()
+        _uiState.value = _uiState.value.copy(pendingAddonInstall = null, isAddonInstallLoading = false)
+    }
+
+    private suspend fun installAddon(addon: Addon, replaceAddonIds: Set<String>) {
+        runCatching { streamRepository.installPreparedAddon(addon, replaceAddonIds) }
+            .onSuccess {
                 // Small delay to let DataStore flush the write before reading back
                 delay(150)
                 val currentAddons = streamRepository.installedAddons.first()
@@ -2424,6 +2504,7 @@ class SettingsViewModel @Inject constructor(
                 )
                 syncLocalStateToCloud(silent = true)
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.value = _uiState.value.copy(
                     toastMessage = error.message.orMessage(
                         SettingsMessage.Res(R.string.addon_failed_add)
@@ -2431,7 +2512,6 @@ class SettingsViewModel @Inject constructor(
                     toastType = ToastType.ERROR
                 )
             }
-        }
     }
 
     fun refreshAddons() {

@@ -157,6 +157,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -202,6 +203,9 @@ import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
 import com.arflix.tv.data.model.CatalogPackManifest
 import com.arflix.tv.data.model.effectivePackId
+import com.arflix.tv.data.model.isRemovable
+import com.arflix.tv.data.model.needsConfiguration
+import com.arflix.tv.data.model.settingsPageUrl
 import com.arflix.tv.data.model.effectivePackName
 import com.arflix.tv.data.model.isBulkDeletablePack
 import com.arflix.tv.data.model.CatalogSourceType
@@ -510,6 +514,7 @@ fun SettingsScreen(
     autoStartCloudAuth: Boolean = false,
     initialSection: String? = null,
     installPackUrl: String? = null,
+    installAddonUrl: String? = null,
     onNavigateToHome: () -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
     onNavigateToTv: () -> Unit = {},
@@ -573,7 +578,11 @@ fun SettingsScreen(
     var sectionIndex by remember { mutableIntStateOf(initialSectionIdx ?: 0) }
     var mobilePage by remember {
         mutableStateOf(
-            if (initialSection == "iptv") "TV" else "MAIN"
+            when (initialSection) {
+                "iptv" -> "TV"
+                "stremio" -> "Addons"
+                else -> "MAIN"
+            }
         )
     }
     val currentOnSubPageChanged by rememberUpdatedState(onSubPageChanged)
@@ -624,6 +633,17 @@ fun SettingsScreen(
             viewModel.loadPackManifest(installPackUrl)
         }
     }
+
+    // Saved so the link is not offered again when the user comes back to this screen.
+    var handledInstallAddonUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(installAddonUrl) {
+        if (!installAddonUrl.isNullOrBlank() && installAddonUrl != handledInstallAddonUrl) {
+            handledInstallAddonUrl = installAddonUrl
+            viewModel.requestAddonInstall(installAddonUrl, fromLink = true)
+        }
+    }
+    // TV only: the addon whose settings page is shown as a QR code.
+    var addonConfigureTarget by remember { mutableStateOf<com.arflix.tv.data.model.Addon?>(null) }
 
     // Input modal states
     var showCustomAddonInput by remember { mutableStateOf(false) }
@@ -1041,16 +1061,9 @@ fun SettingsScreen(
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
                     val focusedStremioAddon = stremioAddons.getOrNull(contentFocusIndex)
-                    val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
-                        !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
-                    } ?: false
-                    val focusedStremioAddonMaxAction = if (focusedStremioAddon == null) {
-                        0
-                    } else if (focusedStremioAddonCanDelete) {
-                        1
-                    } else {
-                        0
-                    }
+                    val focusedStremioAddonMaxAction = focusedStremioAddon
+                        ?.let { addonRowActions(it).size - 1 }
+                        ?: 0
 
                     val isRtl = isRtlLayoutDirection
                     val actualKey = event.key
@@ -1679,10 +1692,9 @@ fun SettingsScreen(
                                             when {
                                                 contentFocusIndex in 0 until stremioAddons.size -> {
                                                     val addon = stremioAddons[contentFocusIndex]
-                                                    val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
-                                                    when (addonActionIndex) {
-                                                        0 -> viewModel.toggleAddon(addon.id)
-                                                        1 -> if (canDelete) {
+                                                    when (addonRowActions(addon).getOrNull(addonActionIndex)) {
+                                                        AddonRowAction.CONFIGURE -> addonConfigureTarget = addon
+                                                        AddonRowAction.DELETE -> {
                                                             viewModel.removeAddon(addon.id)
                                                             addonActionIndex = 0
                                                             if (contentFocusIndex >= stremioAddons.size && contentFocusIndex > 0) {
@@ -2371,6 +2383,7 @@ fun SettingsScreen(
                             focusedActionIndex = addonActionIndex,
                             onToggleAddon = { viewModel.toggleAddon(it) },
                             onDeleteAddon = { viewModel.removeAddon(it) },
+                            onConfigureAddon = { addonConfigureTarget = it },
                             onAddCustomAddon = { showCustomAddonInput = true },
                             onRefreshAddons = { viewModel.refreshAddons() }
                         )
@@ -2806,6 +2819,27 @@ fun SettingsScreen(
             )
         }
 
+        if (uiState.pendingAddonInstall != null || uiState.isAddonInstallLoading) {
+            AddonInstallDialog(
+                pending = uiState.pendingAddonInstall,
+                isLoading = uiState.isAddonInstallLoading,
+                onInstall = { viewModel.confirmAddonInstall(replaceExisting = false) },
+                onReplace = { viewModel.confirmAddonInstall(replaceExisting = true) },
+                onKeepBoth = { viewModel.confirmAddonInstall(replaceExisting = false) },
+                onDismiss = { viewModel.cancelAddonInstall() }
+            )
+        }
+
+        val configureTarget = addonConfigureTarget
+        val configureTargetUrl = configureTarget?.settingsPageUrl
+        if (configureTarget != null && configureTargetUrl != null) {
+            AddonConfigureQrDialog(
+                addon = configureTarget,
+                url = configureTargetUrl,
+                onDismiss = { addonConfigureTarget = null }
+            )
+        }
+
         if (uiState.pendingPackManifest != null || uiState.isPackLoading || uiState.packError != null) {
             CatalogPackImportDialog(
                 pendingPack = uiState.pendingPackManifest,
@@ -3187,7 +3221,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ModalScrim(
+internal fun ModalScrim(
     onDismiss: () -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
@@ -9653,10 +9687,12 @@ private fun StremioAddonsSettings(
     focusedActionIndex: Int = 0,
     onToggleAddon: (String) -> Unit = {},
     onDeleteAddon: (String) -> Unit = {},
+    onConfigureAddon: (com.arflix.tv.data.model.Addon) -> Unit = {},
     onAddCustomAddon: () -> Unit = {},
     onRefreshAddons: () -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
+    val context = LocalContext.current
 
     if (isMobile) {
         Column(
@@ -9693,21 +9729,42 @@ private fun StremioAddonsSettings(
                     MobileSettingsRow(icon = Icons.Default.Extension, title = stringResource(R.string.settings_no_addons_installed), value = "", isFocused = false, showDivider = false, onClick = {})
                 } else {
                     addons.forEachIndexed { index, addon ->
-                        val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
+                        val canDelete = addon.isRemovable
+                        val settingsUrl = addon.settingsPageUrl
+                        val needsSetup = addon.needsConfiguration && !addon.isEnabled
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { onToggleAddon(addon.id) }.padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(imageVector = Icons.Default.Extension, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
+                            AddonLogo(addon = addon, size = 32.dp, fallbackTint = TextSecondary)
+                            Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(addon.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(addon.description, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (needsSetup) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    AddonSetupRequiredChip()
+                                } else {
+                                    Text(addon.description, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
-                            // Toggle switch
-                            Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
-                                Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                            if (needsSetup && settingsUrl != null) {
+                                // Replaces the toggle: it cannot be switched on before setup anyway,
+                                // and the row is too narrow on phones for both.
+                                Box(modifier = Modifier.clickable { openExternalUrl(context, settingsUrl) }.background(AddonSetupRequiredColor, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 7.dp), contentAlignment = Alignment.Center) {
+                                    Text(stringResource(R.string.settings_addon_setup), style = ArflixTypography.button.copy(fontSize = 13.sp), color = Color.Black, maxLines = 1)
+                                }
+                            } else {
+                                // Toggle switch
+                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                }
+                            }
+                            if (settingsUrl != null && !needsSetup) {
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Box(modifier = Modifier.size(32.dp).clickable { openExternalUrl(context, settingsUrl) }.background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_addon_configure), tint = TextSecondary, modifier = Modifier.size(18.dp))
+                                }
                             }
                             if (canDelete) {
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -9731,13 +9788,12 @@ private fun StremioAddonsSettings(
                 Text(stringResource(R.string.settings_no_addons_installed), style = ArflixTypography.body, color = TextSecondary)
             } else {
                 addons.forEachIndexed { index, addon ->
-                    val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
                     AddonRow(
                         addon = addon,
                         isFocused = focusedIndex == index,
                         focusedAction = if (focusedIndex == index) focusedActionIndex else -1,
-                        canDelete = canDelete,
                         onToggle = { onToggleAddon(addon.id) },
+                        onConfigure = { onConfigureAddon(addon) },
                         onDelete = { onDeleteAddon(addon.id) },
                         modifier = Modifier.settingsFocusSlot(index)
                     )
@@ -9816,14 +9872,18 @@ private fun AddonRow(
     addon: com.arflix.tv.data.model.Addon,
     isFocused: Boolean,
     focusedAction: Int = -1,
-    canDelete: Boolean = true,
     onToggle: () -> Unit,
+    onConfigure: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isToggleFocused = isFocused && focusedAction == 0
-    val isDeleteFocused = canDelete && isFocused && focusedAction == 1
+    val actions = addonRowActions(addon)
+    val focusedRowAction = if (isFocused) actions.getOrNull(focusedAction) else null
+    val isToggleFocused = focusedRowAction == AddonRowAction.TOGGLE
+    val isConfigureFocused = focusedRowAction == AddonRowAction.CONFIGURE
+    val isDeleteFocused = focusedRowAction == AddonRowAction.DELETE
     val isEnabled = addon.isEnabled
+    val needsSetup = addon.needsConfiguration && !isEnabled
     val focusRingColor = resolveAccentColor(fallback = Pink)
 
     Row(
@@ -9853,12 +9913,7 @@ private fun AddonRow(
                     .background(Pink.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Widgets,
-                    contentDescription = null,
-                    tint = Pink,
-                    modifier = Modifier.size(24.dp)
-                )
+                AddonLogo(addon = addon, size = 32.dp, fallbackTint = Pink)
             }
 
             Spacer(modifier = Modifier.width(16.dp))
@@ -9890,6 +9945,13 @@ private fun AddonRow(
                         background = if (isEnabled) SuccessGreen.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.08f),
                         textColor = if (isEnabled) SuccessGreen else TextSecondary
                     )
+                    if (needsSetup) {
+                        AddonStatusChip(
+                            text = stringResource(R.string.settings_addon_setup_required),
+                            background = AddonSetupRequiredColor,
+                            textColor = Color.Black
+                        )
+                    }
                 }
             }
         }
@@ -9929,7 +9991,15 @@ private fun AddonRow(
                 }
             }
 
-            if (canDelete) {
+            if (AddonRowAction.CONFIGURE in actions) {
+                CatalogActionChip(
+                    icon = Icons.Default.Settings,
+                    isFocused = isConfigureFocused,
+                    onClick = onConfigure
+                )
+            }
+
+            if (AddonRowAction.DELETE in actions) {
                 CatalogActionChip(
                     icon = Icons.Default.Delete,
                     isFocused = isDeleteFocused,
