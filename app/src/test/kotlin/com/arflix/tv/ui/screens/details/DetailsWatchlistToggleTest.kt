@@ -219,4 +219,117 @@ class DetailsWatchlistToggleTest {
         assertTrue(model.uiState.value.isInWatchlist)
         coVerify(exactly = 1) { watchlist.addToWatchlist(MediaType.MOVIE, movie.id, movie) }
     }
+
+    @Test
+    fun `double tap before initial read still saves the final intent`() = runTest {
+        coEvery { remote.removeFromWatchlist(any(), any(), any()) } returns true
+        val model = openDetails(inWatchlist = null)
+
+        model.toggleWatchlist()
+        model.toggleWatchlist()
+        runCurrent()
+        watchlistRead.complete(true)
+        runCurrent()
+
+        assertFalse(model.uiState.value.isInWatchlist)
+        coVerify(exactly = 1) { remote.removeFromWatchlist(MediaType.MOVIE, movie.id, any()) }
+        coVerify(exactly = 1) { watchlist.removeFromWatchlist(MediaType.MOVIE, movie.id) }
+        coVerify(exactly = 0) { remote.addToWatchlist(any(), any(), any()) }
+    }
+
+    @Test
+    fun `old title save cannot make the next title skip its write`() = runTest {
+        val otherMovie = movie.copy(id = 604, title = "Another movie")
+        every { media.getCachedFullItem(MediaType.MOVIE, otherMovie.id) } returns otherMovie
+        coEvery { media.getMovieDetails(otherMovie.id) } returns otherMovie
+        coEvery { watchlist.isInWatchlist(MediaType.MOVIE, otherMovie.id) } returns false
+        val firstSave = CompletableDeferred<Boolean>()
+        coEvery { remote.addToWatchlist(MediaType.MOVIE, movie.id, any()) } coAnswers { firstSave.await() }
+        coEvery { remote.addToWatchlist(MediaType.MOVIE, otherMovie.id, any()) } returns true
+        val model = openDetails()
+
+        model.toggleWatchlist()
+        runCurrent()
+        model.loadDetails(MediaType.MOVIE, otherMovie.id)
+        runCurrent()
+        assertEquals(otherMovie.id, model.uiState.value.item?.id)
+        assertFalse(model.uiState.value.isInWatchlist)
+        firstSave.complete(true)
+        runCurrent()
+        model.toggleWatchlist()
+        runCurrent()
+
+        assertTrue(model.uiState.value.isInWatchlist)
+        coVerify(exactly = 1) { watchlist.addToWatchlist(MediaType.MOVIE, otherMovie.id, otherMovie) }
+    }
+
+    @Test
+    fun `reentering details during a save preserves the pending bookmark`() = runTest {
+        val firstSave = CompletableDeferred<Boolean>()
+        coEvery { remote.addToWatchlist(any(), any(), any()) } coAnswers { firstSave.await() }
+        val model = openDetails()
+        model.toggleWatchlist()
+        runCurrent()
+
+        model.loadDetails(MediaType.MOVIE, movie.id)
+        runCurrent()
+        assertTrue(model.uiState.value.isInWatchlist)
+        firstSave.complete(true)
+        runCurrent()
+
+        assertTrue(model.uiState.value.isInWatchlist)
+        coVerify(exactly = 1) { watchlist.addToWatchlist(MediaType.MOVIE, movie.id, movie) }
+    }
+
+    @Test
+    fun `failed removal restores a previously saved bookmark`() = runTest {
+        coEvery { remote.removeFromWatchlist(any(), any(), any()) } returns false
+        val model = openDetails(inWatchlist = true)
+        model.toggleWatchlist()
+        assertFalse(model.uiState.value.isInWatchlist)
+        runCurrent()
+
+        assertTrue(model.uiState.value.isInWatchlist)
+        assertEquals(ToastType.ERROR, model.uiState.value.toastType)
+        coVerify(exactly = 0) { watchlist.removeFromWatchlist(any(), any()) }
+    }
+
+    @Test
+    fun `two immediate taps with known state need no writes`() = runTest {
+        val model = openDetails()
+        model.toggleWatchlist()
+        model.toggleWatchlist()
+        runCurrent()
+
+        assertFalse(model.uiState.value.isInWatchlist)
+        coVerify(exactly = 0) { remote.addToWatchlist(any(), any(), any()) }
+        coVerify(exactly = 0) { remote.removeFromWatchlist(any(), any(), any()) }
+        coVerify(exactly = 0) { cloud.pushToCloud(any()) }
+    }
+
+    @Test
+    fun `local save failure rolls back and does not push cloud`() = runTest {
+        coEvery { remote.isRemoteConnected(any()) } returns false
+        coEvery { watchlist.addToWatchlist(any(), any(), any()) } throws IllegalStateException("Disk write failed")
+        val model = openDetails()
+        model.toggleWatchlist()
+        runCurrent()
+
+        assertFalse(model.uiState.value.isInWatchlist)
+        assertEquals(ToastType.ERROR, model.uiState.value.toastType)
+        coVerify(exactly = 0) { cloud.pushToCloud(any()) }
+    }
+
+    @Test
+    fun `cloud failure does not roll back a successful local save`() = runTest {
+        coEvery { remote.isRemoteConnected(any()) } returns false
+        coEvery { cloud.pushToCloud(any()) } throws IllegalStateException("Offline")
+        val model = openDetails()
+        model.toggleWatchlist()
+        runCurrent()
+
+        assertTrue(model.uiState.value.isInWatchlist)
+        assertEquals(ToastType.SUCCESS, model.uiState.value.toastType)
+        coVerify(exactly = 1) { watchlist.addToWatchlist(MediaType.MOVIE, movie.id, movie) }
+    }
 }

@@ -287,11 +287,15 @@ class DetailsViewModel @Inject constructor(
     // Watchlist taps flip the bookmark at once; the Trakt/SIMKL and local writes then run one at
     // a time so a quick double tap cannot land out of order.
     private val watchlistWriteMutex = Mutex()
-    // Bumped on every tap, so an older details load or failed write cannot undo a newer tap.
-    private var watchlistToggleVersion = 0L
-    // Last watchlist state known to be saved for the current title; null until the details load
-    // or the first tap tells us.
-    private var savedInWatchlist: Boolean? = null
+    // Writes outlive page loads. Keep their saved state and latest intent attached to the title,
+    // not to whichever page happens to be visible when a slow remote write completes.
+    private class WatchlistSaveState {
+        var saved: Boolean? = null
+        var wanted: Boolean? = null
+        var version = 0L
+        var pendingWrites = 0
+    }
+    private val watchlistSaveStates = mutableMapOf<Pair<MediaType, Int>, WatchlistSaveState>()
 
     private enum class WatchlistWrite { SAVED, UNCHANGED, FAILED }
 
@@ -485,9 +489,15 @@ class DetailsViewModel @Inject constructor(
                     1
                 }
 
+                val watchlistSaveState = watchlistSaveStates.getOrPut(mediaType to mediaId) { WatchlistSaveState() }
+                val watchlistVersionAtLoad = watchlistSaveState.version
+                val watchlistPendingAtLoad = watchlistSaveState.pendingWrites > 0
+                if (!watchlistPendingAtLoad) watchlistSaveState.saved = null
+
                 _uiState.value = DetailsUiState(
                     isLoading = initialItem == null,
                     item = initialItem,
+                    isInWatchlist = watchlistSaveState.wanted ?: false,
                     logoUrl = cachedLogoUrl,
                     episodes = cachedEpisodes ?: emptyList(),
                     currentSeason = seasonToLoad,
@@ -505,8 +515,6 @@ class DetailsViewModel @Inject constructor(
                     autoPlaySingleSource = autoPlaySingleSource,
                     autoPlayMinQuality = autoPlayMinQuality
                 )
-                savedInWatchlist = null
-                val watchlistVersionAtLoad = watchlistToggleVersion
 
                 fun logDetailsLoadFailure(label: String, throwable: Throwable) {
                     if (throwable is CancellationException) throw throwable
@@ -1022,8 +1030,10 @@ class DetailsViewModel @Inject constructor(
                     val isInWatchlist = runCatching { watchlistDeferred.await() }.getOrDefault(false)
                     // A tap while this was loading already set the bookmark; the older read must
                     // not undo it.
-                    if (!isCurrentRequest() || watchlistToggleVersion != watchlistVersionAtLoad) return@launch
-                    savedInWatchlist = isInWatchlist
+                    if (!isCurrentRequest() || watchlistSaveState.version != watchlistVersionAtLoad ||
+                        watchlistPendingAtLoad) return@launch
+                    watchlistSaveState.saved = isInWatchlist
+                    watchlistSaveState.wanted = isInWatchlist
                     updateState { state -> state.copy(isInWatchlist = isInWatchlist) }
                 }
 
@@ -1476,10 +1486,13 @@ class DetailsViewModel @Inject constructor(
         val currentItem = _uiState.value.item ?: return
         val mediaType = currentMediaType
         val mediaId = currentMediaId
+        if (currentItem.mediaType != mediaType || currentItem.id != mediaId) return
+        val saveState = watchlistSaveStates.getOrPut(mediaType to mediaId) { WatchlistSaveState() }
         val previousInWatchlist = _uiState.value.isInWatchlist
         val newInWatchlist = !previousInWatchlist
-        if (savedInWatchlist == null) savedInWatchlist = previousInWatchlist
-        val toggleVersion = ++watchlistToggleVersion
+        saveState.wanted = newInWatchlist
+        val toggleVersion = ++saveState.version
+        saveState.pendingWrites++
 
         // Show the new state right away: the Trakt/SIMKL write and the cloud push behind it can
         // take several seconds, and the bookmark used to wait for both.
@@ -1490,34 +1503,39 @@ class DetailsViewModel @Inject constructor(
         )
 
         viewModelScope.launch {
-            val result = watchlistWriteMutex.withLock {
-                val isCurrentTitle = currentMediaType == mediaType && currentMediaId == mediaId
-                // A later tap may already have flipped the bookmark back, so save what is shown
-                // now rather than this tap's value.
-                val wanted = if (isCurrentTitle) _uiState.value.isInWatchlist else newInWatchlist
-                if (isCurrentTitle && wanted == savedInWatchlist) return@withLock WatchlistWrite.UNCHANGED
-                try {
-                    writeWatchlist(currentItem, mediaType, mediaId, wanted)
-                    if (isCurrentTitle) savedInWatchlist = wanted
-                    WatchlistWrite.SAVED
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    Log.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
-                    AppLogger.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
-                    WatchlistWrite.FAILED
+            val result = try {
+                watchlistWriteMutex.withLock {
+                    val wanted = saveState.wanted ?: newInWatchlist
+                    // Unknown initial membership is not proof that a cancelling tap needs no write.
+                    if (wanted == saveState.saved) return@withLock WatchlistWrite.UNCHANGED
+                    try {
+                        writeWatchlist(currentItem, mediaType, mediaId, wanted)
+                        saveState.saved = wanted
+                        WatchlistWrite.SAVED
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Log.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
+                        AppLogger.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
+                        WatchlistWrite.FAILED
+                    }
                 }
+            } finally {
+                saveState.pendingWrites--
             }
             when (result) {
                 WatchlistWrite.SAVED -> runCatching { cloudSyncRepository.pushToCloud() }
                 WatchlistWrite.FAILED -> {
                     // Only the latest tap may roll back; an older one is settled by the newer write.
                     val isCurrentTitle = currentMediaType == mediaType && currentMediaId == mediaId
-                    if (isCurrentTitle && toggleVersion == watchlistToggleVersion) {
-                        _uiState.value = _uiState.value.copy(
-                            isInWatchlist = savedInWatchlist ?: previousInWatchlist,
-                            toastMessage = context.getString(R.string.details_failed_update_watchlist),
-                            toastType = ToastType.ERROR
-                        )
+                    if (toggleVersion == saveState.version) {
+                        saveState.wanted = saveState.saved ?: previousInWatchlist
+                        if (isCurrentTitle) {
+                            _uiState.value = _uiState.value.copy(
+                                isInWatchlist = saveState.wanted == true,
+                                toastMessage = context.getString(R.string.details_failed_update_watchlist),
+                                toastType = ToastType.ERROR
+                            )
+                        }
                     }
                 }
                 WatchlistWrite.UNCHANGED -> Unit
