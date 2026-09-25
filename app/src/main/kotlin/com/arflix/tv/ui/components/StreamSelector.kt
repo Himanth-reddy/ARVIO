@@ -1463,7 +1463,11 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
         "1080p" -> add(SourceBadge("1080p", SourceBadgeImages.FULL_HD_1080))
         "720p" -> add(SourceBadge("720p", SourceBadgeImages.HD_720))
         "480p" -> add(SourceBadge("480p"))
-        else -> add(SourceBadge(presentation.resolutionLabel))
+        // A source whose text names no resolution has nothing to show here, and
+        // an empty badge is a pill with no word in it. Leave the slot out.
+        else -> if (presentation.resolutionLabel.isNotBlank()) {
+            add(SourceBadge(presentation.resolutionLabel))
+        }
     }
 
     when (presentation.releaseLabel) {

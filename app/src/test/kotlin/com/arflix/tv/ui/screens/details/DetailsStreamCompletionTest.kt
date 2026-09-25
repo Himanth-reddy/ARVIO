@@ -75,6 +75,8 @@ class DetailsStreamCompletionTest {
                     traktRepository = mockk(relaxed = true),
                     remoteSyncManager = mockk(relaxed = true),
                     streamRepository = streams,
+                    networkMonitor = mockk(relaxed = true),
+                    tmdbPriorityDispatcher = mockk(relaxed = true),
                     animeMapper = mockk(relaxed = true),
                     tmdbApi = mockk(relaxed = true),
                     watchHistoryRepository = mockk(relaxed = true),

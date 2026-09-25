@@ -191,6 +191,14 @@ import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.focus.arvioManualBringIntoViewBoundary
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.focus.isArvioDpadNavigationKey
+import com.arflix.tv.ui.focus.DetailsFocusIndices
+import com.arflix.tv.ui.focus.DetailsSectionContent
+import com.arflix.tv.ui.focus.FocusSection
+import com.arflix.tv.ui.focus.handleLeft
+import com.arflix.tv.ui.focus.handleRight
+import com.arflix.tv.ui.focus.isAtLeftmost
+import com.arflix.tv.ui.focus.moveDownSection
+import com.arflix.tv.ui.focus.moveUpSection
 import com.arflix.tv.ui.focus.rememberArvioDpadRepeatGate
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
@@ -577,7 +585,15 @@ fun DetailsScreen(
     }
 
     BackHandler(enabled = !showStreamSelector && !showEpisodeContextMenu && !showSeasonContextMenu && !uiState.showPersonModal && !showTrailerPlayer) {
+        // Issue 2: leaving within the dwell window must not leak a scraping session.
+        viewModel.cancelStreamPrefetch()
         onBack()
+    }
+
+    // Issue 2: leaving the composition by any path (nav pop, player launch,
+    // Similar-chain replace) cancels the pending dwell / running prefetch.
+    DisposableEffect(mediaType, mediaId) {
+        onDispose { viewModel.cancelStreamPrefetch() }
     }
 
     // D-pad key handler — only used on TV (skipped on mobile/touch devices)
@@ -635,17 +651,15 @@ fun DetailsScreen(
                                 }
                                 true
                             } else {
-                                // Check if at leftmost item in any section - go to sidebar
-                                val atLeftmost = when (focusedSection) {
-                                    FocusSection.BUTTONS -> buttonIndex == 0
-                                    FocusSection.EPISODES -> episodeIndex == 0
-                                    FocusSection.RATINGS -> ratingsIndex == 0
-                                    FocusSection.SEASONS -> seasonIndex == 0
-                                    FocusSection.CAST -> castIndex == 0
-                                    FocusSection.REVIEWS -> reviewIndex == 0
-                                    FocusSection.SIMILAR -> similarIndex == 0
-                                    FocusSection.COLLECTION -> collectionIndex == 0
-                                }
+                                // At the leftmost item focus goes to the sidebar;
+                                // otherwise move within the section (rules in TvFocusCoordinator).
+                                val atLeftmost = isAtLeftmost(
+                                    focusedSection,
+                                    DetailsFocusIndices(
+                                        buttonIndex, episodeIndex, ratingsIndex, seasonIndex,
+                                        castIndex, reviewIndex, similarIndex, collectionIndex
+                                    )
+                                )
                                 if (atLeftmost) {
                                     true
                                 } else {
@@ -667,7 +681,15 @@ fun DetailsScreen(
                             } else {
                                 handleRight(
                                     focusedSection, buttonIndex, episodeIndex, ratingsIndex, seasonIndex, castIndex, reviewIndex, similarIndex, collectionIndex,
-                                    uiState, { buttonIndex = it }, { episodeIndex = it }, { ratingsIndex = it }, { seasonIndex = it },
+                                    if (uiState.collectionId != null) 5 else 4,
+                                    uiState.episodes.size,
+                                    (uiState.episodes.size + 11) / 12,
+                                    uiState.totalSeasons,
+                                    uiState.cast.size,
+                                    uiState.reviews.size,
+                                    uiState.similar.size,
+                                    uiState.collectionItems.size,
+                                    { buttonIndex = it }, { episodeIndex = it }, { ratingsIndex = it }, { seasonIndex = it },
                                     { castIndex = it }, { reviewIndex = it }, { similarIndex = it },
                                     { collectionIndex = it }
                                 )
@@ -677,54 +699,28 @@ fun DetailsScreen(
                             if (isSidebarFocused) {
                                 true
                             } else {
-                                // Navigation: BUTTONS -> SEASONS -> EPISODES -> CAST -> REVIEWS -> SIMILAR -> COLLECTION
+                                // Vertical section order (rules in TvFocusCoordinator):
+                                // BUTTONS -> SEASONS -> EPISODES -> RATINGS -> CAST
+                                //   -> REVIEWS -> COLLECTION -> SIMILAR
                                 val isTV = mediaType == MediaType.TV
                                 val hasEpisodes = uiState.episodes.isNotEmpty()
                                 val hasAnyValidRating = uiState.episodes.any { (it.imdbRating.toFloatOrNull() ?: 0f) > 0f }
-                                val hasRatings = isTV && hasEpisodes && uiState.showEpisodeRatings && hasAnyValidRating
-                                val hasCast = uiState.cast.isNotEmpty()
-                                val hasReviews = uiState.reviews.isNotEmpty()
-                                val hasSimilar = uiState.similar.isNotEmpty()
-                                val hasCollection = uiState.collectionItems.isNotEmpty()
-                                focusedSection = when (focusedSection) {
-                                    FocusSection.BUTTONS -> {
-                                        isSidebarFocused = true
-                                        FocusSection.BUTTONS
-                                    }
-                                    FocusSection.SEASONS -> FocusSection.BUTTONS
-                                    FocusSection.EPISODES -> {
-                                        if (uiState.totalSeasons > 1) FocusSection.SEASONS else FocusSection.BUTTONS
-                                    }
-                                    FocusSection.CAST -> {
-                                        if (isTV) {
-                                            when {
-                                                hasRatings -> FocusSection.RATINGS
-                                                hasEpisodes -> FocusSection.EPISODES
-                                                uiState.totalSeasons > 1 -> FocusSection.SEASONS
-                                                else -> FocusSection.BUTTONS
-                                            }
-                                        } else FocusSection.BUTTONS
-                                    }
-                                    FocusSection.RATINGS -> {
-                                        when {
-                                            hasEpisodes -> FocusSection.EPISODES
-                                            uiState.totalSeasons > 1 -> FocusSection.SEASONS
-                                            else -> FocusSection.BUTTONS
-                                        }
-                                    }
-                                    FocusSection.REVIEWS -> if (hasCast) FocusSection.CAST else FocusSection.BUTTONS
-                                    FocusSection.SIMILAR -> {
-                                        if (hasCollection) FocusSection.COLLECTION
-                                        else if (hasReviews) FocusSection.REVIEWS
-                                        else if (hasCast) FocusSection.CAST
-                                        else FocusSection.BUTTONS
-                                    }
-                                    FocusSection.COLLECTION -> {
-                                        if (hasReviews) FocusSection.REVIEWS
-                                        else if (hasCast) FocusSection.CAST
-                                        else FocusSection.BUTTONS
-                                    }
+                                val content = DetailsSectionContent(
+                                    episodeCount = uiState.episodes.size,
+                                    totalSeasons = uiState.totalSeasons,
+                                    ratingsPageCount = (uiState.episodes.size + 11) / 12,
+                                    castCount = uiState.cast.size,
+                                    reviewCount = uiState.reviews.size,
+                                    similarCount = uiState.similar.size,
+                                    collectionCount = uiState.collectionItems.size,
+                                    maxButtonIndex = if (uiState.collectionId != null) 5 else 4,
+                                    isTv = isTV,
+                                    hasRatingsSection = isTV && hasEpisodes && uiState.showEpisodeRatings && hasAnyValidRating
+                                )
+                                if (focusedSection == FocusSection.BUTTONS) {
+                                    isSidebarFocused = true
                                 }
+                                focusedSection = moveUpSection(focusedSection, content)
                                 true
                             }
                         }
@@ -733,67 +729,25 @@ fun DetailsScreen(
                                 isSidebarFocused = false
                                 true
                             } else {
-                                // Navigation: BUTTONS -> SEASONS -> EPISODES -> CAST -> REVIEWS -> SIMILAR -> COLLECTION
+                                // Vertical section order (rules in TvFocusCoordinator):
+                                // BUTTONS -> SEASONS -> EPISODES -> RATINGS -> CAST
+                                //   -> REVIEWS -> COLLECTION -> SIMILAR
                                 val isTV = mediaType == MediaType.TV
                                 val hasEpisodes = uiState.episodes.isNotEmpty()
                                 val hasAnyValidRating = uiState.episodes.any { (it.imdbRating.toFloatOrNull() ?: 0f) > 0f }
-                                val hasRatings = isTV && hasEpisodes && uiState.showEpisodeRatings && hasAnyValidRating
-                                val hasSeasons = uiState.totalSeasons > 1
-                                val hasCast = uiState.cast.isNotEmpty()
-                                val hasReviews = uiState.reviews.isNotEmpty()
-                                val hasSimilar = uiState.similar.isNotEmpty()
-                                val hasCollection = uiState.collectionItems.isNotEmpty()
-                                focusedSection = when (focusedSection) {
-                                    FocusSection.BUTTONS -> {
-                                        if (isTV && hasSeasons) FocusSection.SEASONS
-                                        else if (isTV && hasEpisodes) FocusSection.EPISODES
-                                        else if (hasRatings) FocusSection.RATINGS
-                                        else if (hasCast) FocusSection.CAST
-                                        else if (hasReviews) FocusSection.REVIEWS
-                                        else if (hasCollection) FocusSection.COLLECTION
-                                        else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.BUTTONS
-                                    }
-                                    FocusSection.SEASONS -> {
-                                        if (hasEpisodes) FocusSection.EPISODES
-                                        else if (hasRatings) FocusSection.RATINGS
-                                        else if (hasCast) FocusSection.CAST
-                                        else if (hasReviews) FocusSection.REVIEWS
-                                        else if (hasCollection) FocusSection.COLLECTION
-                                        else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.SEASONS
-                                    }
-                                    FocusSection.EPISODES -> {
-                                        if (hasRatings) FocusSection.RATINGS
-                                        else if (hasCast) FocusSection.CAST
-                                        else if (hasReviews) FocusSection.REVIEWS
-                                        else if (hasCollection) FocusSection.COLLECTION
-                                        else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.EPISODES
-                                    }
-                                    FocusSection.RATINGS -> {
-                                        if (hasCast) FocusSection.CAST
-                                        else if (hasReviews) FocusSection.REVIEWS
-                                        else if (hasCollection) FocusSection.COLLECTION
-                                        else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.RATINGS
-                                    }
-                                    FocusSection.CAST -> {
-                                        if (hasReviews) FocusSection.REVIEWS
-                                        else if (hasCollection) FocusSection.COLLECTION
-                                        else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.CAST
-                                    }
-                                    FocusSection.REVIEWS -> {
-                                        if (hasCollection) FocusSection.COLLECTION
-                                        else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.REVIEWS
-                                    }
-                                    FocusSection.COLLECTION -> {
-                                        if (hasSimilar) FocusSection.SIMILAR else FocusSection.COLLECTION
-                                    }
-                                    FocusSection.SIMILAR -> FocusSection.SIMILAR
-                                }
+                                val content = DetailsSectionContent(
+                                    episodeCount = uiState.episodes.size,
+                                    totalSeasons = uiState.totalSeasons,
+                                    ratingsPageCount = (uiState.episodes.size + 11) / 12,
+                                    castCount = uiState.cast.size,
+                                    reviewCount = uiState.reviews.size,
+                                    similarCount = uiState.similar.size,
+                                    collectionCount = uiState.collectionItems.size,
+                                    maxButtonIndex = if (uiState.collectionId != null) 5 else 4,
+                                    isTv = isTV,
+                                    hasRatingsSection = isTV && hasEpisodes && uiState.showEpisodeRatings && hasAnyValidRating
+                                )
+                                focusedSection = moveDownSection(focusedSection, content)
                                 true
                             }
                         }
@@ -1131,59 +1085,8 @@ fun DetailsScreen(
     }
 }
 
-private enum class FocusSection {
-    BUTTONS, EPISODES, SEASONS, RATINGS, CAST, REVIEWS, SIMILAR, COLLECTION
-}
-
-private fun handleLeft(
-    section: FocusSection,
-    buttonIdx: Int, episodeIdx: Int, ratingsIdx: Int, seasonIdx: Int, castIdx: Int, reviewIdx: Int, similarIdx: Int,
-    collectionIdx: Int,
-    setButton: (Int) -> Unit, setEpisode: (Int) -> Unit, setRatings: (Int) -> Unit, setSeason: (Int) -> Unit,
-    setCast: (Int) -> Unit, setReview: (Int) -> Unit, setSimilar: (Int) -> Unit,
-    setCollection: (Int) -> Unit
-): Boolean {
-    when (section) {
-        FocusSection.BUTTONS -> if (buttonIdx > 0) setButton(buttonIdx - 1)
-        FocusSection.EPISODES -> if (episodeIdx > 0) setEpisode(episodeIdx - 1)
-        FocusSection.RATINGS -> if (ratingsIdx > 0) setRatings(ratingsIdx - 1)
-        FocusSection.SEASONS -> if (seasonIdx > 0) setSeason(seasonIdx - 1)
-        FocusSection.CAST -> if (castIdx > 0) setCast(castIdx - 1)
-        FocusSection.REVIEWS -> if (reviewIdx > 0) setReview(reviewIdx - 1)
-        FocusSection.SIMILAR -> if (similarIdx > 0) setSimilar(similarIdx - 1)
-        FocusSection.COLLECTION -> if (collectionIdx > 0) setCollection(collectionIdx - 1)
-    }
-    return true
-}
-
-private fun handleRight(
-    section: FocusSection,
-    buttonIdx: Int, episodeIdx: Int, ratingsIdx: Int, seasonIdx: Int, castIdx: Int, reviewIdx: Int, similarIdx: Int,
-    collectionIdx: Int,
-    uiState: DetailsUiState,
-    setButton: (Int) -> Unit, setEpisode: (Int) -> Unit, setRatings: (Int) -> Unit, setSeason: (Int) -> Unit,
-    setCast: (Int) -> Unit, setReview: (Int) -> Unit, setSimilar: (Int) -> Unit,
-    setCollection: (Int) -> Unit
-): Boolean {
-    when (section) {
-        FocusSection.BUTTONS -> {
-            val maxButton = if (uiState.collectionId != null) 5 else 4
-            if (buttonIdx < maxButton) setButton(buttonIdx + 1)
-        }
-        FocusSection.EPISODES -> if (episodeIdx < uiState.episodes.size - 1) setEpisode(episodeIdx + 1)
-        FocusSection.RATINGS -> {
-            val pageSize = 12
-            val totalPages = (uiState.episodes.size + pageSize - 1) / pageSize
-            if (ratingsIdx < totalPages - 1) setRatings(ratingsIdx + 1)
-        }
-        FocusSection.SEASONS -> if (seasonIdx < uiState.totalSeasons - 1) setSeason(seasonIdx + 1)
-        FocusSection.CAST -> if (castIdx < uiState.cast.size - 1) setCast(castIdx + 1)
-        FocusSection.REVIEWS -> if (reviewIdx < uiState.reviews.size - 1) setReview(reviewIdx + 1)
-        FocusSection.SIMILAR -> if (similarIdx < uiState.similar.size - 1) setSimilar(similarIdx + 1)
-        FocusSection.COLLECTION -> if (collectionIdx < uiState.collectionItems.size - 1) setCollection(collectionIdx + 1)
-    }
-    return true
-}
+// Focus navigation rules live in ui.focus.TvFocusCoordinator (Issue 5 Layer 1);
+// DetailsScreen keeps only the state vars and applies the outcomes below.
 
 
 
