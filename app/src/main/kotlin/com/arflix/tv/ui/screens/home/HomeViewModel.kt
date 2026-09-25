@@ -150,13 +150,7 @@ internal fun orderCategoriesBySavedCatalogs(
     val orderMap = HashMap<String, Int>(savedCatalogs.size)
     var orderIdx = 0
     for (cfg in savedCatalogs) {
-        if (cfg.kind == CatalogKind.COLLECTION) continue
-        val catId = if (cfg.kind == CatalogKind.COLLECTION_RAIL) {
-            val railKey = cfg.collectionRailKeyOrGroup ?: continue
-            "collection_row_${railKey.lowercase(Locale.US)}"
-        } else {
-            cfg.id
-        }
+        val catId = savedCatalogRowId(cfg) ?: continue
         if (!orderMap.containsKey(catId)) {
             orderMap[catId] = orderIdx++
         }
@@ -172,6 +166,42 @@ internal fun orderCategoriesBySavedCatalogs(
                 idxA.compareTo(idxB)
             }
         }
+    }
+}
+
+/** The Home row id a saved catalog renders as, or null for collection tiles (they live inside a rail). */
+private fun savedCatalogRowId(cfg: CatalogConfig): String? = when (cfg.kind) {
+    CatalogKind.COLLECTION -> null
+    CatalogKind.COLLECTION_RAIL -> cfg.collectionRailKeyOrGroup?.let { "collection_row_${it.lowercase(Locale.US)}" }
+    else -> cfg.id
+}
+
+/**
+ * Drops rows whose catalog is no longer in [savedCatalogs], i.e. the user removed it in
+ * Settings > Catalogs.
+ *
+ * Mobile Home keeps the rows it already shows and only replaces the ones it reloads, and
+ * [orderCategoriesBySavedCatalogs] merely pushes unknown ids to the end — so without this a
+ * removed catalog stayed on Home, and via the categories cache even across restarts.
+ *
+ * Rows that are on Home without being a catalog of their own are always kept: Continue
+ * Watching, Favorite TV (loaded on its own, independent of the saved list) and the sports
+ * rows (managed by [HomeViewModel.withSportsHomeRows]). A null [savedCatalogs] means the
+ * list could not be read, so nothing is dropped. An empty list is authoritative and
+ * removes all catalog rows.
+ */
+internal fun dropCategoriesMissingFromSavedCatalogs(
+    categories: List<Category>,
+    savedCatalogs: List<CatalogConfig>?
+): List<Category> {
+    if (categories.isEmpty() || savedCatalogs == null) return categories
+    val savedRowIds = savedCatalogs.mapNotNullTo(HashSet(savedCatalogs.size)) { savedCatalogRowId(it) }
+    return categories.filter { category ->
+        category.id in savedRowIds ||
+            category.id == "continue_watching" ||
+            category.id == HomeViewModel.FAVORITE_TV_CATEGORY_ID ||
+            category.id == SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID ||
+            category.id == SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID
     }
 }
 
@@ -1895,7 +1925,16 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 applyContentLanguageFromPrefs()
-                val cachedCategories = loadCategoriesCache()
+                // Mobile Home keeps these rows when the network load starts, so a catalog removed
+                // after the cache was written must not come back from it. TV rebuilds its rows
+                // from the saved catalogs on every load and is left as it was.
+                val cachedCategories = loadCategoriesCache().let { cached ->
+                    if (isTvDevice || cached.isEmpty()) cached
+                    else dropCategoriesMissingFromSavedCatalogs(
+                        cached,
+                        runCatching { catalogRepository.getCatalogs() }.getOrNull()
+                    )
+                }
                 // Gate on "no real BASE rows yet", not "no categories at all": Continue Watching
                 // is restored from its own cache by a coroutine launched alongside this one, and
                 // whichever finishes first used to decide the outcome. When CW won, it put a row
@@ -3321,7 +3360,14 @@ class HomeViewModel @Inject constructor(
                 isMobileSlowLoading = false
             )
         } else {
-            _uiState.value = _uiState.value.copy(isLoading = false, error = null, isMobileSlowLoading = false)
+            // Rows are refreshed in place below, so a catalog removed since the last load has
+            // to be dropped here or it stays on Home (and in the categories cache).
+            _uiState.value = _uiState.value.copy(
+                categories = dropCategoriesMissingFromSavedCatalogs(_uiState.value.categories, savedCatalogs),
+                isLoading = false,
+                error = null,
+                isMobileSlowLoading = false
+            )
         }
 
         // 2. Resolve Collection Rails immediately (Services, Franchises, Genres)

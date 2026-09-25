@@ -126,6 +126,21 @@ open class StalkerApi(
         } catch (_: Exception) { false }
     }
 
+    /**
+     * The raw `account_info/get_main_info` answer, which carries the
+     * subscription end date (see [com.arflix.tv.data.repository.IptvAccountInfoParser.parseStalker]).
+     * Null when the request itself failed.
+     */
+    suspend fun getAccountInfoBody(): String? {
+        return try {
+            coroutineContext.ensureActive()
+            doGet("$apiBase/server/load.php?type=account_info&action=get_main_info&JsHttpRequest=1-xml")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
+    }
+
     /** Step 3: Get all channels */
     suspend fun getChannels(): List<IptvChannel> {
         val channels = mutableListOf<IptvChannel>()

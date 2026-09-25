@@ -10,7 +10,9 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.arflix.tv.R
 import com.arflix.tv.data.api.*
 import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.AddonBehaviorHints
 import com.arflix.tv.data.model.AddonInstallSource
+import com.arflix.tv.data.model.AddonSetup
 import com.arflix.tv.data.model.AddonCatalog
 import com.arflix.tv.data.model.AddonManifest
 import com.arflix.tv.data.model.AddonResource
@@ -712,7 +714,11 @@ class StreamRepository @Inject constructor(
         }
     }
 
-    private suspend fun hydrateCustomAddon(url: String, customName: String? = null): Addon {
+    private suspend fun hydrateCustomAddon(
+        url: String,
+        customName: String? = null,
+        probeParentConfigurePage: Boolean = true
+    ): Addon {
         val normalizedUrl = resolveAddonInstallUrl(url)
         if (normalizedUrl.isBlank()) {
             throw IllegalArgumentException(context.getString(R.string.addon_error_url_empty))
@@ -767,6 +773,8 @@ class StreamRepository @Inject constructor(
         val addonManifest = convertToAddonManifest(manifest)
         val resolvedName = customName?.trim()?.takeIf { it.isNotBlank() } ?: manifest.name
         val addonId = buildAddonInstanceId(manifest.id, normalizedUrl)
+        val configureUrl = AddonSetup.advertisedConfigureUrl(transportUrl, addonManifest.behaviorHints)
+            ?: if (probeParentConfigurePage) findParentConfigureUrl(transportUrl, manifest.id) else null
 
         val resourceNames = addonManifest.resources.map { it.name }.toSet()
         val hasSubtitles = "subtitles" in resourceNames
@@ -782,13 +790,38 @@ class StreamRepository @Inject constructor(
             version = manifest.version,
             description = manifest.description ?: "",
             isInstalled = true,
-            isEnabled = true,
+            // An addon that cannot work before it is set up starts switched off.
+            isEnabled = addonManifest.behaviorHints?.configurationRequired != true,
             type = addonType,
             url = normalizedUrl,
             logo = manifest.logo,
             manifest = addonManifest,
-            transportUrl = transportUrl
+            transportUrl = transportUrl,
+            configureUrl = configureUrl
         )
+    }
+
+    /**
+     * A configured addon built with the Stremio SDK no longer advertises its settings page.
+     * Its unconfigured manifest one path segment up still does, so look there once.
+     */
+    private suspend fun findParentConfigureUrl(transportUrl: String, manifestId: String): String? {
+        val parent = AddonSetup.parentTransportUrl(transportUrl) ?: return null
+        return try {
+            val parentManifest = streamApi.getAddonManifest("$parent/manifest.json")
+            if (parentManifest.id != manifestId) return null
+            val hints = parentManifest.behaviorHints
+            AddonSetup.advertisedConfigureUrl(
+                parent,
+                AddonBehaviorHints(
+                    configurable = hints?.configurable ?: false,
+                    configurationRequired = hints?.configurationRequired ?: false
+                )
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     /**
@@ -802,7 +835,7 @@ class StreamRepository @Inject constructor(
             // Remove existing addon with same ID if present
             addons.removeAll { it.id == newAddon.id }
             addons.add(newAddon)
-            saveAddons(addons)
+            saveAddons(addons, addedIds = setOf(newAddon.id))
 
             Result.success(newAddon)
         } catch (e: Exception) {
@@ -811,6 +844,32 @@ class StreamRepository @Inject constructor(
             Result.failure(e)
         }
     }
+
+    /**
+     * Fetch an addon's manifest without installing it, so the caller can ask the user first.
+     */
+    suspend fun prepareCustomAddon(url: String): Result<Addon> = withContext(Dispatchers.IO) {
+        try {
+            Result.success(hydrateCustomAddon(url))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Install an addon returned by [prepareCustomAddon]. [replaceAddonIds] are removed in the
+     * same write, used when the user replaces an older setup of the same addon.
+     */
+    suspend fun installPreparedAddon(addon: Addon, replaceAddonIds: Set<String> = emptySet()) =
+        withContext(Dispatchers.IO) {
+            val addons = installedAddons.first().toMutableList()
+            val replacedIndex = addons.indexOfFirst { it.id in replaceAddonIds }
+            addons.removeAll { it.id == addon.id || it.id in replaceAddonIds }
+            // A replacement keeps the old addon's place in the list.
+            if (replacedIndex in 0..addons.size) addons.add(replacedIndex, addon) else addons.add(addon)
+            saveAddons(addons, addedIds = setOf(addon.id), removedIds = replaceAddonIds - addon.id)
+        }
 
     /**
      * Refresh all installed custom addons by re-fetching manifests, invalidating stream caches,
@@ -830,10 +889,15 @@ class StreamRepository @Inject constructor(
                 oldAddon
             } else {
                 try {
-                    val hydrated = hydrateCustomAddon(url = addonUrl, customName = oldAddon.name)
+                    val hydrated = hydrateCustomAddon(
+                        url = addonUrl,
+                        customName = oldAddon.name,
+                        probeParentConfigurePage = oldAddon.configureUrl == null
+                    )
                     refreshedCount++
                     hydrated.copy(
                         id = oldAddon.id,
+                        configureUrl = hydrated.configureUrl ?: oldAddon.configureUrl,
                         isEnabled = oldAddon.isEnabled,
                         isInstalled = oldAddon.isInstalled,
                         runtimeKind = oldAddon.runtimeKind,
@@ -889,7 +953,7 @@ class StreamRepository @Inject constructor(
         val addons = installedAddons.first().toMutableList()
         addons.removeAll { it.id == addonId }
         addons.add(newAddon)
-        saveAddons(addons)
+        saveAddons(addons, addedIds = setOf(newAddon.id))
         return newAddon
     }
 
@@ -939,7 +1003,7 @@ class StreamRepository @Inject constructor(
         if (removableIds.isEmpty()) return@withContext false
 
         val retained = current.filterNot { it.id in removableIds }
-        saveAddons(retained)
+        saveAddons(retained, removedIds = removableIds)
         true
     }
 
@@ -1038,7 +1102,7 @@ class StreamRepository @Inject constructor(
         if (addonId == "opensubtitles") return
         val current = installedAddons.first()
         val addons = current.filter { it.id != addonId }
-        saveAddons(addons)
+        saveAddons(addons, removedIds = setOf(addonId))
     }
 
     @Deprecated(
@@ -1103,6 +1167,40 @@ class StreamRepository @Inject constructor(
     // intentional empty state can propagate (see reconcileAddonsWithCloud). Not bumped when applying
     // the cloud's addons, which would create false "local change" churn.
     private val addonsUpdatedAtKey = androidx.datastore.preferences.core.longPreferencesKey("addons_updated_at")
+    private val addonChangesKey = stringPreferencesKey("addon_changes_v1")
+
+    private fun readAddonChanges(prefs: Preferences): Map<String, AddonChange> = runCatching {
+        val type = object : TypeToken<Map<String, AddonChange>>() {}.type
+        val parsed: Map<String, AddonChange> = gson.fromJson(prefs[addonChangesKey], type) ?: emptyMap()
+        mergeAddonChanges(emptyMap(), parsed)
+    }.getOrDefault(emptyMap())
+
+    private fun addonCloudState(prefs: Preferences) = AddonCloudState(
+        enforceOpenSubtitles(readSharedOrLegacyAddons(prefs) ?: getDefaultAddonList()),
+        prefs[addonsUpdatedAtKey] ?: 0L,
+        readAddonChanges(prefs)
+    )
+
+    suspend fun exportAddonCloudState(): AddonCloudState = addonCloudState(context.streamDataStore.data.first())
+
+    suspend fun applyAddonCloudState(addons: List<Addon>, updatedAt: Long, changes: Map<String, AddonChange>?) {
+        context.streamDataStore.edit { prefs ->
+            val local = addonCloudState(prefs)
+            val resolved = if (changes != null) {
+                reconcileExplicitAddonState(local, AddonCloudState(addons, updatedAt, changes))
+            } else {
+                val legacy = reconcileAddonsWithCloud(addons, local.addons, updatedAt, local.updatedAt).first
+                local.copy(addons = legacy.filterNot { local.changes[it.id]?.removed == true },
+                    updatedAt = maxOf(local.updatedAt, updatedAt))
+            }
+            prefs[sharedAddonsKey] = gson.toJson(enforceOpenSubtitles(resolved.addons).filterNot(::isIncompleteExternalAddon))
+            prefs.remove(sharedPendingAddonsKey)
+            prefs[addonChangesKey] = gson.toJson(resolved.changes)
+            prefs[addonsUpdatedAtKey] = resolved.updatedAt
+        }
+        synchronized(streamResultCache) { streamResultCache.clear() }
+        invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "apply addon cloud state")
+    }
 
     suspend fun getAddonsUpdatedAt(): Long = context.streamDataStore.data.first()[addonsUpdatedAtKey] ?: 0L
 
@@ -1110,17 +1208,24 @@ class StreamRepository @Inject constructor(
         context.streamDataStore.edit { prefs -> prefs[addonsUpdatedAtKey] = value }
     }
 
-    private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true) {
-        val json = gson.toJson(addons.map { sanitizeAddonDisplayName(it) })
-
+    private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true,
+        removedIds: Set<String> = emptySet(), addedIds: Set<String> = emptySet()) {
         // Save locally to the shared account-level addon list. Mirror to the
         // active profile key so older builds/cloud payloads can still recover it.
         context.streamDataStore.edit { prefs ->
+            if (stampChange) {
+                val previous = addonCloudState(prefs)
+                val timestamp = maxOf(System.currentTimeMillis(), previous.updatedAt + 1)
+                val changes = recordAddonChanges(previous.changes, addedIds, removedIds, timestamp)
+                prefs[addonChangesKey] = gson.toJson(changes)
+                prefs[addonsUpdatedAtKey] = timestamp
+            }
+            val changes = readAddonChanges(prefs)
+            val json = gson.toJson(addons.filterNot { changes[it.id]?.removed == true }.map { sanitizeAddonDisplayName(it) })
             prefs[sharedAddonsKey] = json
             prefs.remove(sharedPendingAddonsKey)
             prefs[addonsKey()] = json
             prefs.remove(pendingAddonsKey())
-            if (stampChange) prefs[addonsUpdatedAtKey] = System.currentTimeMillis()
         }
         synchronized(streamResultCache) { streamResultCache.clear() }
         invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "save addons")
