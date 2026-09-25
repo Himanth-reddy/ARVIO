@@ -788,13 +788,14 @@ export function AppProvider({
     })();
   }, []);
 
-  const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[] } = {}) => {
+  const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[]; onLocalSave?: () => void } = {}) => {
     const normalized = normalizeAddons(next);
     queueAddons(authClient, normalized, activeProfileId, options.removedIds);
     saveLocalAddons(normalized);
     if (!authClient.session && JSON.stringify(loadLocalAddons()) !== JSON.stringify(normalized)) throw new Error("Device storage is full. Keep this page open and retry saving.");
     addonsRef.current = normalized;
     setAddons(normalized);
+    options.onLocalSave?.();
     // Cloud writes are union-based; a removal must be an explicit id list so the
     // shared library can never be shrunk by a stale/partial in-memory view.
     try { await flushAddonOutbox(authClient); }
@@ -1998,12 +1999,10 @@ export function AppProvider({
   }, [persistAddons]);
 
   const setAddonsState = useCallback(async (next: InstalledAddon[]) => {
-    await persistAddons(next);
-    setSettings((prev) => ({
-      ...prev,
+    await persistAddons(next, { onLocalSave: () => updateSettings({
       disabledAddonIds: next.filter((addon) => addon.enabled === false).map((addon) => addon.id)
-    }));
-  }, [persistAddons]);
+    }) });
+  }, [persistAddons, updateSettings]);
 
   const signIn = useCallback(async (email: string, password: string, mode: "sign-in" | "sign-up") => {
     const trimmedEmail = email.trim();

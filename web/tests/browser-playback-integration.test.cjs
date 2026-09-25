@@ -1272,3 +1272,14 @@ test('autoplay waits for a late progressive source before declaring exhaustion',
  rows.current.push(good);busy.current='';for(const fn of [...h.state.timers.values()])fn();await flush();
  assert.equal(h.state.active.url,good.url);
 });
+
+
+test('addon visibility is queued locally even when its cloud save fails',async()=>{
+  const settings=[];
+  const toggle=extracted('lib/store.tsx',node=>ts.isVariableDeclaration(node)&&node.name.getText()==='setAddonsState'&&ts.isCallExpression(node.initializer)?node.initializer.arguments[0]:undefined,{
+    persistAddons:async(_next,options)=>{options.onLocalSave();throw Error('Cloud sync pending');},
+    updateSettings:patch=>settings.push(patch)
+  });
+  await assert.rejects(toggle([{id:'enabled-again',enabled:true},{id:'still-disabled',enabled:false}]),/Cloud sync pending/);
+  assert.equal(settings.length,1);assert.equal(Array.from(settings[0].disabledAddonIds).join(','),'still-disabled');
+});
