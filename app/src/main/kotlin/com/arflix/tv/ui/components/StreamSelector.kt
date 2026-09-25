@@ -1140,7 +1140,9 @@ private fun isDebridLikeSource(stream: StreamSource, blob: String? = null): Bool
         append(' ')
         append(stream.addonTitle.orEmpty())
         append(' ')
-        append(stream.behaviorHints?.provider.orEmpty())
+        if (!IptvVodSourceIds.isIptvVodAddonId(stream.addonId)) {
+            append(stream.behaviorHints?.provider.orEmpty())
+        }
         append(' ')
         append(stream.behaviorHints?.sourceLabel.orEmpty())
         append(' ')
@@ -1261,7 +1263,10 @@ private fun presentSource(stream: StreamSource, unknownSourceLabel: String): Sou
         append(' ')
         append(stream.addonTitle.orEmpty())
         append(' ')
-        append(stream.behaviorHints?.provider.orEmpty())
+        // IPTV provider names are user-entered labels, not file metadata.
+        if (!IptvVodSourceIds.isIptvVodAddonId(stream.addonId)) {
+            append(stream.behaviorHints?.provider.orEmpty())
+        }
         append(' ')
         append(stream.behaviorHints?.sourceLabel.orEmpty())
         append(' ')
