@@ -639,13 +639,17 @@ class IptvRepository @Inject constructor(
     internal fun portalIdFromChannelId(channelId: String): String? =
         StalkerPortalSupport.portalIdFromChannelId(channelId)
 
-    private suspend fun getOrCreateStalkerApi(portal: StalkerPortalEntry): com.arflix.tv.data.api.StalkerApi? {
+    private suspend fun getOrCreateStalkerApi(
+        portal: StalkerPortalEntry,
+        initializeProfile: Boolean = false,
+    ): com.arflix.tv.data.api.StalkerApi? {
         cachedStalkerApis[portal.id]?.let { return it }
         return stalkerApiMutex.withLock {
             cachedStalkerApis[portal.id]?.let { return it }
             com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
                 .takeIf { it.handshake() }
                 ?.also { api ->
+                    if (initializeProfile) api.getProfile()
                     cachedStalkerApis = cachedStalkerApis + (portal.id to api)
                 }
         }
@@ -1108,6 +1112,89 @@ class IptvRepository @Inject constructor(
         profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
             decodeHiddenGroups(prefs)
         }
+
+    /**
+     * Subscription end date and stream limit per source id, as last asked.
+     * Local to this device and profile on purpose: it is not part of the
+     * cloud snapshot, so a stale date never travels to another device.
+     */
+    fun observeAccountInfo(): Flow<Map<String, IptvAccountInfo>> =
+        profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
+            decodeAccountInfo(prefs[accountInfoKey()])
+        }
+
+    /**
+     * Asks the provider behind [playlist] for its account details. Plain M3U
+     * files have none and cost no request. Null means the provider did not
+     * answer (offline, HTML page, or the request guard deferred it) - which is
+     * not the same as "answered without details".
+     */
+    suspend fun fetchAccountInfo(playlist: IptvPlaylistEntry): IptvAccountInfo? {
+        val fingerprint = IptvAccountInfoParser.fingerprint(playlist)
+        val now = System.currentTimeMillis()
+        // An independently configured EPG feed can belong to a different account.
+        val creds = resolveXtreamCredentials(playlist.m3uUrl)
+            ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
+        val url = "${creds.baseUrl}/player_api.php".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("username", creds.username)
+            ?.addQueryParameter("password", creds.password)
+            ?.build()
+            ?.toString()
+            ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
+        val body: JsonObject? = requestJson(url, JsonObject::class.java, client = xtreamLookupHttpClient)
+        return IptvAccountInfoParser.parseXtream(body?.toString(), fingerprint, System.currentTimeMillis())
+    }
+
+    /**
+     * Asks a Stalker portal for its account details. The session the channel
+     * download opened is reused: a second handshake for the same MAC can
+     * invalidate its playback token. A missing session is created through the
+     * shared cache; a failed account request never triggers a replacement login.
+     * Null means the portal did not answer.
+     */
+    suspend fun fetchAccountInfo(portal: StalkerPortalEntry): IptvAccountInfo? = withContext(Dispatchers.IO) {
+        val fingerprint = IptvAccountInfoParser.fingerprint(portal)
+        fun parse(body: String?) =
+            IptvAccountInfoParser.parseStalker(body, fingerprint, System.currentTimeMillis())
+        val body = runCatching {
+            val api = getOrCreateStalkerApi(portal, initializeProfile = true)
+                ?: return@runCatching null
+            api.getAccountInfoBody()
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        parse(body)
+    }
+
+    suspend fun saveAccountInfo(sourceId: String, info: IptvAccountInfo) {
+        context.settingsDataStore.edit { prefs ->
+            val current = decodeAccountInfo(prefs[accountInfoKey()])
+            prefs[accountInfoKey()] = gson.toJson(current + (sourceId to info))
+        }
+    }
+
+    /** Drops entries whose source no longer exists. */
+    suspend fun retainAccountInfo(sourceIds: Set<String>) {
+        context.settingsDataStore.edit { prefs ->
+            val current = decodeAccountInfo(prefs[accountInfoKey()])
+            val retained = current.filterKeys { it in sourceIds }
+            if (retained.size == current.size) return@edit
+            if (retained.isEmpty()) prefs.remove(accountInfoKey())
+            else prefs[accountInfoKey()] = gson.toJson(retained)
+        }
+    }
+
+    private fun accountInfoKey(): Preferences.Key<String> =
+        profileManager.profileStringKey("iptv_account_info")
+
+    private fun decodeAccountInfo(raw: String?): Map<String, IptvAccountInfo> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val type = TypeToken.getParameterized(
+                Map::class.java, String::class.java, IptvAccountInfo::class.java
+            ).type
+            gson.fromJson<Map<String, IptvAccountInfo>>(raw, type)
+        }.getOrNull().orEmpty()
+    }
 
     /**
      * The `portalId|categoryId` keys the user switched off for [kind].

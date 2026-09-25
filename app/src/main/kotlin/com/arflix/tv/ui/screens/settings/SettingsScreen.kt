@@ -2203,6 +2203,7 @@ fun SettingsScreen(
                             onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                             onManageStalkerCategories = { id -> openIptvCategories(id) },
                             onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                            accountInfo = uiState.iptvAccountInfo,
                             onEditPlaylist = { idx -> editingIptvIndex = idx; showIptvInput = true },
                             onTogglePlaylist = { idx ->
                                 val updated = uiState.iptvPlaylists.toMutableList()
@@ -2231,7 +2232,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -2266,6 +2267,7 @@ fun SettingsScreen(
                             onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                             onManageStalkerCategories = { id -> openIptvCategories(id) },
                             onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                            accountInfo = uiState.iptvAccountInfo,
                             onEditPlaylist = { idx -> editingIptvIndex = idx; showIptvInput = true },
                             onTogglePlaylist = { idx ->
                                 val updated = uiState.iptvPlaylists.toMutableList()
@@ -2294,7 +2296,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -2610,6 +2612,21 @@ fun SettingsScreen(
                 editingPlaylist?.importSeries ?: true
             }
             val playlistEnabled = editingPlaylist?.enabled ?: true
+            // Account details belong to the saved source, so only an existing one offers "Refresh now".
+            val accountSourceId = when {
+                isEditingStalker -> editingStalkerPortal?.id
+                isEditingIptv -> editingPlaylist?.id
+                else -> null
+            }
+            val accountFingerprint = when {
+                isEditingStalker -> editingStalkerPortal?.let { com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(it) }
+                isEditingIptv -> editingPlaylist?.let { com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(it) }
+                else -> null
+            }
+            val accountInfo = accountSourceId
+                ?.let { uiState.iptvAccountInfo[it] }
+                ?.takeIf { it.sourceFingerprint == accountFingerprint }
+            val accountCheckedAtLabel = iptvAccountCheckedAtLabel(accountInfo?.checkedAtMs)
 
             key(
                 if (showStalkerInput) "stalker_${stalkerEditId ?: "new"}"
@@ -2696,7 +2713,10 @@ fun SettingsScreen(
                         showStalkerInput = false
                         editingIptvIndex = -1
                         stalkerEditId = null
-                    }
+                    },
+                    accountCheckedAtLabel = accountCheckedAtLabel,
+                    isAccountRefreshing = accountSourceId != null && accountSourceId in uiState.iptvAccountInfoRefreshing,
+                    onRefreshAccount = accountSourceId?.let { id -> { viewModel.refreshIptvAccountInfo(id) } }
                 )
             }
         }
@@ -5717,6 +5737,7 @@ private fun MobileSettingsSubPage(
                     onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                     onManageStalkerCategories = { id -> viewModel.setIptvSelectedPlaylistId(id); onNavigate("IPTV_CATEGORIES") },
                     onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                    accountInfo = uiState.iptvAccountInfo,
                     onEditPlaylist = onEditIptvClick,
                     onTogglePlaylist = { idx ->
                         val updated = uiState.iptvPlaylists.toMutableList()
@@ -5745,7 +5766,7 @@ private fun MobileSettingsSubPage(
                             viewModel.saveIptvPlaylists(updated)
                         }
                     },
-                    onRefresh = { viewModel.refreshIptv() },
+                    onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                     onDelete = { viewModel.clearIptvConfig() },
                     onManageCategories = { playlistId ->
                         viewModel.setIptvSelectedPlaylistId(playlistId)
@@ -8019,6 +8040,7 @@ private fun IptvSettings(
     onRemoveStalkerPortal: (String) -> Unit = {},
     onManageStalkerCategories: (String) -> Unit = {},
     onRenameStalkerPortal: (StalkerPortalEntry) -> Unit = {},
+    accountInfo: Map<String, com.arflix.tv.data.repository.IptvAccountInfo> = emptyMap(),
     vodSearchEnabled: Boolean = true,
     onVodSearchToggle: (Boolean) -> Unit = {},
     epgVodActionsEnabled: Boolean = true,
@@ -8096,7 +8118,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(buildString { append(playlist.m3uUrl.take(56)); when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
@@ -8150,7 +8172,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
@@ -8262,7 +8284,7 @@ private fun IptvSettings(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(buildString { append(playlist.m3uUrl.take(56)); when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary.copy(alpha = 0.72f))
                     }
                     CatalogActionChip(
                         icon = Icons.Default.List,
@@ -8316,7 +8338,7 @@ private fun IptvSettings(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary.copy(alpha = 0.72f))
                         }
                         CatalogActionChip(
                             icon = Icons.Default.List,

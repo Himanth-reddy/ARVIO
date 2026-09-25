@@ -889,6 +889,21 @@
     <string name="settings_stalker_not_configured">Not configured</string>
     <string name="settings_stalker_remove">Remove portal</string>
     <string name="settings_cd_manage_stalker_categories">Manage Stalker categories</string>
+    <!-- IPTV account details: subscription end and stream limit -->
+    <string name="iptv_account_days_left">%1$d days left</string>
+    <string name="iptv_account_one_day_left">1 day left</string>
+    <string name="iptv_account_ends_today">Ends today</string>
+    <string name="iptv_account_unlimited">Unlimited</string>
+    <string name="iptv_account_expired">Expired</string>
+    <string name="iptv_account_until">until %1$s</string>
+    <string name="iptv_account_since">since %1$s</string>
+    <string name="iptv_account_no_info">No account info</string>
+    <string name="iptv_account_streams">%1$d streams</string>
+    <string name="iptv_account_one_stream">1 stream</string>
+    <string name="iptv_account_checked_at">Last checked: %1$s</string>
+    <string name="iptv_account_refresh">Refresh now</string>
+    <string name="iptv_account_refreshing">Checking…</string>
+    <string name="iptv_account_refresh_failed">The provider did not answer. Please try again in a minute.</string>
     <string name="settings_cd_edit_stalker_config">Edit Stalker portal</string>
     <string name="settings_section_stalker_portals">STALKER PORTALS</string>
     <string name="settings_add_stalker_portal_button">Add Stalker portal</string>
