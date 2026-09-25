@@ -4935,6 +4935,8 @@ class IptvRepository @Inject constructor(
         private val resolvedTtlMs = 24 * 60 * 60_000L
         private val seriesInfoTtlMs = 24 * 60 * 60_000L
         private val catalogMemory = ConcurrentHashMap<String, ResolverCatalogIndex>()
+        private val persistedSeriesNames = mutableMapOf<String, Map<Int, String>>()
+        private val seriesNamesLock = Any()
         private val resolvedMemory = object : LinkedHashMap<String, ResolverCachedResolvedEpisode>(512, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ResolverCachedResolvedEpisode>?): Boolean {
                 return size > 512
@@ -5480,16 +5482,24 @@ class IptvRepository @Inject constructor(
         }
 
         /**
-         * Catalog name of a series, from whatever is already in memory. Used by
+         * Catalog name of a series, from memory or the saved catalog. Used by
          * the episode paths that resolve from a stored binding and therefore
          * never hold the catalog entry itself.
          *
-         * Memory only, no disk and no network: this sits in the source-list hot
-         * path, and a missing name costs nothing but a fallback to the episode
-         * title. The catalog is in memory after the start-up pre-warm.
+         * These resolver paths run on IO. Read the saved names at most once per
+         * provider after a restart, without fetching or rebuilding the search index.
          */
-        fun cachedSeriesName(providerKey: String, seriesId: Int): String? =
-            catalogMemory[providerKey]?.idNameMap?.get(seriesId)?.takeIf { it.isNotBlank() }
+        fun cachedSeriesName(providerKey: String, seriesId: Int): String? {
+            catalogMemory[providerKey]?.let { return it.idNameMap[seriesId] }
+            return synchronized(seriesNamesLock) {
+                val names = persistedSeriesNames.getOrPut(providerKey) {
+                    readPersistedCatalog(providerKey)?.entries.orEmpty()
+                        .filter { it.name.isNotBlank() }
+                        .associate { it.seriesId to it.name }
+                }
+                names[seriesId]
+            }
+        }
 
         private fun buildCandidates(
             catalog: ResolverCatalogIndex,
@@ -5797,6 +5807,7 @@ class IptvRepository @Inject constructor(
          */
         fun clearAll() {
             catalogMemory.clear()
+            synchronized(seriesNamesLock) { persistedSeriesNames.clear() }
             synchronized(resolvedLock) { resolvedMemory.clear() }
             synchronized(seriesBindingLock) { seriesBindingMemory.clear() }
             synchronized(seriesInfoLock) { seriesInfoMemory.clear() }
@@ -8086,6 +8097,7 @@ class IptvRepository @Inject constructor(
             VOD_QUALITY_1080_REGEX.containsMatchIn(upper) -> "1080p"
             VOD_QUALITY_720_REGEX.containsMatchIn(upper) -> "720p"
             VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> "HD"
+            VOD_QUALITY_576_REGEX.containsMatchIn(upper) -> "576p"
             VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> "480p"
             else -> ""
         }
@@ -8116,6 +8128,7 @@ class IptvRepository @Inject constructor(
             VOD_QUALITY_720_REGEX.containsMatchIn(upper) -> 300
             // Between 720p and 480p: better than SD, and never claimed to be more.
             VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> 250
+            VOD_QUALITY_576_REGEX.containsMatchIn(upper) -> 225
             VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> 200
             VOD_QUALITY_360_REGEX.containsMatchIn(upper) -> 100
             else -> 0
@@ -12267,7 +12280,8 @@ class IptvRepository @Inject constructor(
         private val VOD_QUALITY_1080_REGEX = Regex("""(?<![A-Z0-9])FHD(?![0-9])|(?<!\d)1080(?!\d)""")
         private val VOD_QUALITY_720_REGEX = Regex("""(?<!\d)720(?!\d)""")
         private val VOD_QUALITY_HD_REGEX = Regex("""(?<![A-Z0-9])HD(?![A-Z0-9])""")
-        private val VOD_QUALITY_480_REGEX = Regex("""(?<!\d)(?:576|480)(?!\d)""")
+        private val VOD_QUALITY_576_REGEX = Regex("""(?<!\d)576(?!\d)""")
+        private val VOD_QUALITY_480_REGEX = Regex("""(?<!\d)480(?!\d)""")
         private val VOD_QUALITY_360_REGEX = Regex("""(?<!\d)360(?!\d)""")
         private val BRACKET_PAREN_REGEX = Regex("""\[[^\]]*]|\([^)]*\)""")
 
