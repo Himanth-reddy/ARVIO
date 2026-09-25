@@ -184,12 +184,42 @@ class HomeMobileCategoryOrderingTest {
     }
 
     @Test
-    fun `dropCategoriesMissingFromSavedCatalogs keeps everything when the saved list is empty`() {
+    fun `dropCategoriesMissingFromSavedCatalogs removes the last catalog when the saved list is empty`() {
         val categories = listOf(
             Category(id = "trending_movies", title = "Trending in Movies", items = listOf(MediaItem(1, "Top Movie", mediaType = MediaType.MOVIE)))
         )
 
         val result = dropCategoriesMissingFromSavedCatalogs(categories, emptyList())
+
+        assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `dropCategoriesMissingFromSavedCatalogs keeps only independent rows when every catalog is removed`() {
+        val categories = listOf(
+            Category(id = "continue_watching", title = "Continue Watching", items = emptyList()),
+            Category(id = "collection_row_service", title = "Services", items = emptyList()),
+            Category(id = "favorite_tv", title = "Favorite TV", items = emptyList()),
+            Category(id = "sports", title = "Sports", items = emptyList()),
+            Category(id = "trending_movies", title = "Trending in Movies", items = emptyList()),
+            Category(id = "popular_live_tv", title = "Popular Live", items = emptyList())
+        )
+
+        val result = dropCategoriesMissingFromSavedCatalogs(categories, emptyList())
+
+        assertThat(result.map { it.id }).containsExactly(
+            "continue_watching", "favorite_tv", "sports", "popular_live_tv"
+        ).inOrder()
+    }
+
+    @Test
+    fun `dropCategoriesMissingFromSavedCatalogs keeps everything when the saved list could not be read`() {
+        val categories = listOf(
+            Category(id = "trending_movies", title = "Trending in Movies", items = emptyList()),
+            Category(id = "collection_row_service", title = "Services", items = emptyList())
+        )
+
+        val result = dropCategoriesMissingFromSavedCatalogs(categories, null)
 
         assertThat(result).isEqualTo(categories)
     }

@@ -186,14 +186,15 @@ private fun savedCatalogRowId(cfg: CatalogConfig): String? = when (cfg.kind) {
  *
  * Rows that are on Home without being a catalog of their own are always kept: Continue
  * Watching, Favorite TV (loaded on its own, independent of the saved list) and the sports
- * rows (managed by [HomeViewModel.withSportsHomeRows]). An empty [savedCatalogs] means the
- * list could not be read, not that everything was removed, so nothing is dropped then.
+ * rows (managed by [HomeViewModel.withSportsHomeRows]). A null [savedCatalogs] means the
+ * list could not be read, so nothing is dropped. An empty list is authoritative and
+ * removes all catalog rows.
  */
 internal fun dropCategoriesMissingFromSavedCatalogs(
     categories: List<Category>,
-    savedCatalogs: List<CatalogConfig>
+    savedCatalogs: List<CatalogConfig>?
 ): List<Category> {
-    if (categories.isEmpty() || savedCatalogs.isEmpty()) return categories
+    if (categories.isEmpty() || savedCatalogs == null) return categories
     val savedRowIds = savedCatalogs.mapNotNullTo(HashSet(savedCatalogs.size)) { savedCatalogRowId(it) }
     return categories.filter { category ->
         category.id in savedRowIds ||
@@ -1931,7 +1932,7 @@ class HomeViewModel @Inject constructor(
                     if (isTvDevice || cached.isEmpty()) cached
                     else dropCategoriesMissingFromSavedCatalogs(
                         cached,
-                        runCatching { catalogRepository.getCatalogs() }.getOrDefault(emptyList())
+                        runCatching { catalogRepository.getCatalogs() }.getOrNull()
                     )
                 }
                 // Gate on "no real BASE rows yet", not "no categories at all": Continue Watching
