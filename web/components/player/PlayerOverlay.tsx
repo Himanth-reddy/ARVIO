@@ -34,6 +34,7 @@ import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer 
 import { proxiedUrl } from "@/lib/http";
 import { attachPlayback, type PlaybackHandle, type PlaybackTracks, type PlaybackError } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
+import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
 import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure } from "@/lib/streamCompatibility";
 import { reportHomeServerPlayback, updateHomeServerPlaybackPosition } from "@/lib/homeServerPlayback";
@@ -674,7 +675,7 @@ function VideoPlayer({
     autoSourceHopsRef.current = 0;
   }, [item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
   const tryNextSource = useCallback(() => {
-    if (liveTv || !currentStreamRef.current.autoSelect || autoSourceHopsRef.current >= 6) return false;
+    if (liveTv || !currentStreamRef.current.autoSelect || autoSourceHopsRef.current >= sourceListRef.current.length) return false;
     // Carry the watched position across the switch — the replacement source is
     // the same title, so restarting at 0 loses the user's place.
     const playhead = videoRef.current?.currentTime ?? 0;
@@ -687,7 +688,8 @@ function VideoPlayer({
     // skip the rest of that addon and jump to the next provider.
     const addonKey = current.addonId || current.addonName || "";
     if (addonKey) failedAddonStrikesRef.current.set(addonKey, (failedAddonStrikesRef.current.get(addonKey) ?? 0) + 1);
-    const pick = (skipStruckAddons: boolean) => sourceListRef.current.find((candidate) => {
+    recordBrowserPlaybackFailure(current, "This source failed during browser playback", true);
+    const pick = (skipStruckAddons: boolean) => browserAutoplayCandidates(sourceListRef.current, failedSourceUrlsRef.current).find((candidate) => {
       if (!candidate.url || failedSourceUrlsRef.current.has(candidate.url)) return false;
       // Uncached debrid torrents would stall on a server-side download.
       if (isUncachedDebridStream(candidate)) return false;
@@ -705,7 +707,7 @@ function VideoPlayer({
     if (!next) return false;
     autoSourceHopsRef.current += 1;
     onToast(`Source failed — trying ${next.source || next.addonName || "the next source"}`);
-    onSelectStream({ ...next, autoSelect: true }, { forceBrowser: true });
+    onSelectStream({ ...next, autoSelect: true, resumePositionSeconds: resumeAtRef.current }, { forceBrowser: true });
     return true;
   }, [liveTv, onSelectStream, onToast]);
   const badges = useMemo(() => {

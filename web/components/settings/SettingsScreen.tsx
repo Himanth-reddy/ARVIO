@@ -60,6 +60,7 @@ import {
 } from "@/lib/externalPlayers";
 import { buildHomeServerCatalogConfigs } from "@/lib/homeserver";
 import { defaultSettings, useApp } from "@/lib/store";
+import { DownloadsPanel } from "./DownloadsPanel";
 import { PremiumAccount } from "@/components/shell/PremiumAccount";
 import { IptvGroupSettings } from "./IptvGroupSettings";
 import { iptvPlaylistSignature } from "@/lib/iptv";
@@ -109,11 +110,13 @@ const SECTIONS = [
   { id: "accounts", label: "Accounts", icon: Cloud },
   { id: "profiles", label: "Profiles", icon: User },
   { id: "playback", label: "Playback", icon: Play },
+  { id: "downloads", label: "Downloads", icon: Download },
   { id: "vlc", label: "VLC Integration", icon: VlcIcon },
   { id: "language", label: "Language & Audio", icon: Languages },
   { id: "subtitles", label: "Subtitles", icon: Subtitles },
   { id: "ai", label: "AI Subtitles", icon: Captions },
   { id: "appearance", label: "Appearance", icon: LayoutGrid },
+  { id: "android", label: "Android / TV settings", icon: Tv },
   { id: "network", label: "Network", icon: Network },
   { id: "tv", label: "TV (IPTV)", icon: Tv },
   { id: "homeserver", label: "Home Server", icon: Server },
@@ -585,6 +588,7 @@ function SectionBody({ section }: { section: SectionId }) {
   };
 
   switch (section) {
+    case "downloads": return <DownloadsPanel />;
     case "credits":
       return (
         <Panel title={translateUi("About ARVIO")}>
@@ -622,11 +626,8 @@ function SectionBody({ section }: { section: SectionId }) {
       return (
         <Panel title={translateUi("Playback")}>
           <Row
-            label={translateUi("Play Live TV in")}
-            // Movies and series always open in an external player now, so this
-            // choice only routes Live TV. Saying otherwise here would be the
-            // same broken promise we removed from the source list.
-            hint={translateUi("Movies and series always open in an external player like VLC. This picks where Live TV channels play; ARVIO still syncs Trakt when you return")}
+            label={translateUi("Preferred player for manual sources")}
+            hint={translateUi("Autoplay always plays in this browser. Choose external players manually from Sources.")}
           >
             <Select
               value={settings.defaultPlayer}
@@ -704,33 +705,6 @@ function SectionBody({ section }: { section: SectionId }) {
                 ["fhd", "FHD"],
                 ["4k", "4K"],
               ]}
-            />
-          </Row>
-          <Row
-            label={translateUi("Frame rate matching")}
-            hint={translateUi("Applies on TV devices; synced from here")}
-          >
-            <Select
-              value={settings.frameRateMatchingMode}
-              onChange={(v) => set({ frameRateMatchingMode: v })}
-              options={[
-                ["off", "Off"],
-                ["seamless", "Seamless only"],
-                ["always", "Always"],
-              ]}
-            />
-          </Row>
-          <Row
-            label={translateUi("Volume boost")}
-            hint={translateUi("Applies on TV devices; synced from here")}
-          >
-            <Select
-              value={String(settings.volumeBoostDb)}
-              onChange={(v) => set({ volumeBoostDb: Number(v) })}
-              options={["0", "3", "6", "9", "12", "15"].map((value) => [
-                value,
-                `${value} dB`,
-              ])}
             />
           </Row>
           <Row label={translateUi("Include specials")}>
@@ -1072,9 +1046,35 @@ function SectionBody({ section }: { section: SectionId }) {
           </Row>
         </Panel>
       );
-    case "network":
-      return (
-        <Panel title={translateUi("Network")}>
+    case "android":
+      return <Panel title={translateUi("Android / TV settings")}><p>{translateUi("These settings sync to your Android and TV app. They do not change playback in this browser.")}</p>
+          <Row
+            label={translateUi("Frame rate matching")}
+            hint={translateUi("Applies on TV devices; synced from here")}
+          >
+            <Select
+              value={settings.frameRateMatchingMode}
+              onChange={(v) => set({ frameRateMatchingMode: v })}
+              options={[
+                ["off", "Off"],
+                ["seamless", "Seamless only"],
+                ["always", "Always"],
+              ]}
+            />
+          </Row>
+          <Row
+            label={translateUi("Volume boost")}
+            hint={translateUi("Applies on TV devices; synced from here")}
+          >
+            <Select
+              value={String(settings.volumeBoostDb)}
+              onChange={(v) => set({ volumeBoostDb: Number(v) })}
+              options={["0", "3", "6", "9", "12", "15"].map((value) => [
+                value,
+                `${value} dB`,
+              ])}
+            />
+          </Row>
           <Row label={translateUi("DNS provider")}>
             <Select
               value={settings.dnsProvider}
@@ -1088,6 +1088,16 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
+          <Row label={translateUi("TorrServer base URL")} hint={translateUi("Cloud-saved for Android")}>
+            <input
+              value={settings.torrServerBaseUrl}
+              onChange={(e) => set({ torrServerBaseUrl: e.target.value })}
+              placeholder={translateUi("http://127.0.0.1:8090")}
+            />
+          </Row></Panel>;
+    case "network":
+      return (
+        <Panel title={translateUi("Network")}>
           <Row label={translateUi("Show loading statistics")}>
             <Toggle
               value={settings.showLoadingStats}
@@ -1104,13 +1114,7 @@ function SectionBody({ section }: { section: SectionId }) {
               placeholder={translateUi("Default")}
             />
           </Row>
-          <Row label={translateUi("TorrServer base URL")} hint={translateUi("Cloud-saved for Android")}>
-            <input
-              value={settings.torrServerBaseUrl}
-              onChange={(e) => set({ torrServerBaseUrl: e.target.value })}
-              placeholder={translateUi("http://127.0.0.1:8090")}
-            />
-          </Row>
+
         </Panel>
       );
     case "tv":
@@ -2040,10 +2044,10 @@ function TvSettingsSection() {
   const { settings, updateSettings, refreshIptv, setToast, busy, iptvSnapshot, activeProfile, auth } = useApp();
   const activeProfileId = activeProfile?.id;
   const groupScope = `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`;
-  const playlistSignature = iptvPlaylistSignature(settings.iptvPlaylists);
+  const playlistSignature = iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "");
   const groupsLoaded = iptvSnapshot.scopeKey === groupScope && iptvSnapshot.signature === playlistSignature;
   useEffect(() => {
-    if (!groupsLoaded && settings.iptvPlaylists.length) void refreshIptv();
+    if (!groupsLoaded && (settings.iptvPlaylists.length || settings.iptvStalkerUrl)) void refreshIptv();
   }, [groupScope, playlistSignature, groupsLoaded, refreshIptv, settings.iptvPlaylists.length]);
   const [name, setName] = useState("");
   const [m3uUrl, setM3uUrl] = useState("");
@@ -2517,7 +2521,7 @@ function AddonsSection() {
                         ? { ...a, enabled: a.enabled === false }
                         : a,
                     ),
-                  )
+                  ).catch(error => setToast(error instanceof Error ? error.message : "Could not save addons."))
                 }
               >
                 {addon.enabled === false ? (
@@ -2535,7 +2539,7 @@ function AddonsSection() {
               <button
                 type="button"
                 className="icon-button danger"
-                onClick={() => void removeAddon(addon)}
+                onClick={() => void removeAddon(addon).catch(error => setToast(error instanceof Error ? error.message : "Could not remove addon."))}
                 aria-label={translateUi("Remove {value0}", {value0: addon.name || "addon"})}
               >
                 <Trash2 size={18} />
