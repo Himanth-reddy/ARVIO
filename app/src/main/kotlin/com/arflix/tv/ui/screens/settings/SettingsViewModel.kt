@@ -109,6 +109,14 @@ enum class ToastType {
     SUCCESS, ERROR, INFO
 }
 
+/**
+ * Terminal state of a device-code activation, shown inside the dialog instead of letting it
+ * disappear behind a toast.
+ */
+enum class TraktAuthOutcome {
+    CONNECTED, EXPIRED
+}
+
 internal data class SettingsIptvRefreshPolicy(
     val forcePlaylistReload: Boolean,
     val forceEpgReload: Boolean,
@@ -233,6 +241,10 @@ data class SettingsUiState(
     // Trakt
     val isTraktAuthenticated: Boolean = false,
     val traktCode: TraktDeviceCode? = null,
+    /** Wall clock time the current activation code dies, so the dialog can count down. */
+    val traktCodeExpiresAtMillis: Long? = null,
+    /** Set once the activation finished, so the dialog can report it before closing. */
+    val traktAuthOutcome: TraktAuthOutcome? = null,
     val isTraktAuthStarting: Boolean = false,
     val isTraktPolling: Boolean = false,
     val traktExpiration: String? = null,
@@ -4468,6 +4480,8 @@ class SettingsViewModel @Inject constructor(
         traktStartupJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
+                traktCodeExpiresAtMillis = null,
+                traktAuthOutcome = null,
                 isTraktAuthStarting = true,
                 isTraktPolling = false,
                 traktUsername = null,
@@ -4481,6 +4495,8 @@ class SettingsViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(
                     traktCode = deviceCode,
+                    traktCodeExpiresAtMillis = System.currentTimeMillis() +
+                        (deviceCode.expiresIn * 1000L),
                     isTraktAuthStarting = false,
                     isTraktAuthenticated = false,
                     traktUsername = null,
@@ -4506,6 +4522,8 @@ class SettingsViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(
                     traktCode = null,
+                    traktCodeExpiresAtMillis = null,
+                    traktAuthOutcome = null,
                     isTraktAuthStarting = false,
                     isTraktPolling = false,
                     traktUsername = null,
@@ -4561,7 +4579,7 @@ class SettingsViewModel @Inject constructor(
                         isSimklPolling = false,
                         simklUserCode = null,
                         simklVerificationUrl = null,
-                        traktCode = null,
+                        traktAuthOutcome = TraktAuthOutcome.CONNECTED,
                         isTraktAuthStarting = false,
                         isTraktPolling = false,
                         traktExpiration = expirationDate,
@@ -4573,6 +4591,14 @@ class SettingsViewModel @Inject constructor(
                         toastMessage = SettingsMessage.Res(R.string.settings_trakt_connected_toast),
                         toastType = ToastType.SUCCESS
                     )
+                    // Let the dialog report the success for a moment instead of vanishing the
+                    // instant the token arrives; the toast below it stays untouched. This runs in
+                    // its own coroutine on purpose: the sync work below belongs to the polling
+                    // job, and waiting here would put it at the mercy of a dismiss.
+                    viewModelScope.launch {
+                        delay(2_000L)
+                        _uiState.value = _uiState.value.dismissTraktSuccess(deviceCode.deviceCode)
+                    }
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
                         isTraktConnected = true,
@@ -4623,23 +4649,23 @@ class SettingsViewModel @Inject constructor(
                 }
             }
 
-            // Expired or failed
-            _uiState.value = _uiState.value.copy(
-                traktCode = null,
-                isTraktAuthStarting = false,
-                isTraktPolling = false,
-                traktUsername = null,
-                toastMessage = lastFailure ?: SettingsMessage.Res(R.string.settings_trakt_code_expired),
-                toastType = ToastType.ERROR
-            )
+            // Local timeout and server-reported expiry both offer Retry; other failures keep
+            // their error toast and dismiss the dialog.
+            _uiState.value = _uiState.value.finishTraktActivationPolling(lastFailure)
         }
     }
 
     fun cancelTraktAuth() {
-        traktPollingJob?.cancel()
-        traktStartupJob?.cancel()
+        // Once the activation succeeded the dialog only lingers to show the result, while the
+        // polling job finishes the first sync. Dismissing that must not cancel the sync.
+        if (_uiState.value.traktAuthOutcome != TraktAuthOutcome.CONNECTED) {
+            traktPollingJob?.cancel()
+            traktStartupJob?.cancel()
+        }
         _uiState.value = _uiState.value.copy(
             traktCode = null,
+            traktCodeExpiresAtMillis = null,
+            traktAuthOutcome = null,
             isTraktAuthStarting = false,
             isTraktPolling = false,
             traktUsername = null
