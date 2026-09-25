@@ -14,7 +14,10 @@ class IptvVodQualityCacheTest {
         val repository = newRepository(mockk(relaxed = true))
         assertEquals("576p", repository.inferQuality("Example Movie 576p"))
         assertEquals("576p", repository.inferQuality("Example Movie 720x576"))
+        assertEquals("480p", repository.inferQuality("Example Movie 720x480"))
+        assertEquals("1080p", repository.inferQuality("Example Movie 2160x1080"))
         assertEquals("480p", repository.inferQuality("Example Movie 480p"))
+        assertEquals(repository.vodQualityRank("576p"), repository.vodQualityRank("720x576"))
         val ranked = listOf("480p", "HD", "576p", "720p")
             .sortedByDescending { repository.vodQualityRank(it) }
         assertEquals(listOf("720p", "HD", "576p", "480p"), ranked)
@@ -101,7 +104,7 @@ class IptvVodQualityCacheTest {
 
     private fun resolver(repository: IptvRepository): Any =
         IptvRepository::class.java.getDeclaredMethod("getSeriesResolver")
-            .apply { isAccessible = true }.invoke(repository)
+            .apply { isAccessible = true }.invoke(repository)!!
 
     private fun savedName(resolver: Any, provider: String, seriesId: Int): String? =
         resolver.javaClass.getDeclaredMethod("cachedSeriesName", String::class.java, Int::class.javaPrimitiveType)

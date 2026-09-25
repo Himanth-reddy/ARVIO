@@ -12265,8 +12265,8 @@ class IptvRepository @Inject constructor(
         // Three different guards, each for a reason that cost a regression once:
         //  - Every token refuses a letter or digit IN FRONT of it, so "UHD" does
         //    not fire inside a word like "NEUHDORF".
-        //  - Numbers only refuse a digit AFTER them, never a letter: "1920x1080"
-        //    and "1080p" are how providers actually spell a resolution.
+        //  - Numbers refuse a trailing digit or X + digit (the width in a pixel
+        //    pair). "1920x1080" and "1080p" still identify the vertical resolution.
         //  - 4K/UHD/FHD also allow a letter after them ("UHDRemux", "4KHDR") -
         //    they are unambiguous, so a run-together name still resolves. HD does
         //    NOT get that freedom: "HDR" is a colour range, not a resolution, and
@@ -12276,13 +12276,13 @@ class IptvRepository @Inject constructor(
         // and portals that prefix a title with the language ("AL - ", "AR - ",
         // "SD - ") are common - there is no way to tell the two apart, so the
         // badge stays empty rather than claim the worst quality for a language.
-        private val VOD_QUALITY_4K_REGEX = Regex("""(?<![A-Z0-9])(?:4K|UHD)(?![0-9])|(?<!\d)2160(?!\d)""")
-        private val VOD_QUALITY_1080_REGEX = Regex("""(?<![A-Z0-9])FHD(?![0-9])|(?<!\d)1080(?!\d)""")
-        private val VOD_QUALITY_720_REGEX = Regex("""(?<!\d)720(?!\d)""")
+        private val VOD_QUALITY_4K_REGEX = Regex("""(?<![A-Z0-9])(?:4K|UHD)(?![0-9])|(?<!\d)2160(?!\d|X\d)""")
+        private val VOD_QUALITY_1080_REGEX = Regex("""(?<![A-Z0-9])FHD(?![0-9])|(?<!\d)1080(?!\d|X\d)""")
+        private val VOD_QUALITY_720_REGEX = Regex("""(?<!\d)720(?!\d|X\d)""")
         private val VOD_QUALITY_HD_REGEX = Regex("""(?<![A-Z0-9])HD(?![A-Z0-9])""")
-        private val VOD_QUALITY_576_REGEX = Regex("""(?<!\d)576(?!\d)""")
-        private val VOD_QUALITY_480_REGEX = Regex("""(?<!\d)480(?!\d)""")
-        private val VOD_QUALITY_360_REGEX = Regex("""(?<!\d)360(?!\d)""")
+        private val VOD_QUALITY_576_REGEX = Regex("""(?<!\d)576(?!\d|X\d)""")
+        private val VOD_QUALITY_480_REGEX = Regex("""(?<!\d)480(?!\d|X\d)""")
+        private val VOD_QUALITY_360_REGEX = Regex("""(?<!\d)360(?!\d|X\d)""")
         private val BRACKET_PAREN_REGEX = Regex("""\[[^\]]*]|\([^)]*\)""")
 
         const val ENC_PREFIX = "encv1:"
