@@ -222,6 +222,16 @@ class MediaRepository @Inject constructor(
      */
     private data class CollectionRefs(val refs: List<Pair<MediaType, Int>>, val complete: Boolean)
 
+    private data class CollectionSourceRefs(
+        val refs: List<Pair<MediaType, Int>>,
+        val failed: Boolean = false
+    )
+
+    private class CollectionSourceLoadException(
+        val partialRefs: List<Pair<MediaType, Int>>,
+        cause: Exception
+    ) : Exception(cause)
+
     private fun getCollectionRefsCache(key: String): CollectionRefs? {
         val entry = collectionRefsCache[key] ?: return null
         return if (System.currentTimeMillis() - entry.timestamp < CACHE_TTL_MS) {
@@ -284,14 +294,14 @@ class MediaRepository @Inject constructor(
         requiredCount: Int,
         mediaType: MediaType? = null
     ): CollectionRefs {
-        // With [mediaType], [requiredCount] counts refs of that type only; the sources still
-        // deliver mixed lists, so the fetch window is measured against the filtered count.
+        // Each source applies the tab filter before its limit. Keep tab caches separate so a
+        // movie-only window cannot be mistaken for the complete contents of a mixed list.
         fun countOf(refs: List<Pair<MediaType, Int>>): Int =
             if (mediaType == null) refs.size else refs.count { it.first == mediaType }
 
-        val cacheKey = collectionRefsCacheKey(catalog)
+        val cacheKey = "${collectionRefsCacheKey(catalog)}|${catalog.collectionGroup}|${catalog.collectionRailKey}|${mediaType?.name ?: "ALL"}"
         val cached = getCollectionRefsCache(cacheKey)
-        if (cached != null && countOf(cached.refs) >= requiredCount.coerceAtLeast(1)) {
+        if (cached != null && (cached.complete || countOf(cached.refs) >= requiredCount.coerceAtLeast(1))) {
             return cached
         }
 
@@ -321,55 +331,23 @@ class MediaRepository @Inject constructor(
                 CollectionSourceKind.MDBLIST_PUBLIC -> (targetCount + 8).coerceAtLeast(24)
                 else -> (targetCount + 8).coerceAtLeast(24)
             }.coerceAtMost(budgetCeilings[index] ?: Int.MAX_VALUE)
-        }.toMutableList()
+        }
 
         // Resolve all sources in parallel so a slow/failed source never blocks the
         // others — this alone fixes "empty" genre collections where one source 404s.
-        suspend fun fetchSources(indices: List<Int>): List<List<Pair<MediaType, Int>>> = coroutineScope {
-            indices.map { index ->
+        val sourceResults = coroutineScope {
+            catalog.collectionSources.indices.map { index ->
                 async {
-                    try {
-                        resolveCollectionSourceRefs(
-                            catalog.collectionSources[index],
-                            offset = 0,
-                            limit = sourceBudgets[index]
-                        )
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
+                    resolveCollectionSourceRefs(
+                        catalog.collectionSources[index],
+                        offset = 0,
+                        limit = sourceBudgets[index],
+                        mediaType = mediaType
+                    )
                 }
             }.map { it.await() }
         }
-        val perSourceRefs = fetchSources(catalog.collectionSources.indices.toList()).toMutableList()
-
-        // A tab of one type can run dry inside a window that is full of the other type. Widen
-        // once, straight to the ceiling (or 3x for open-ended rails), and only for sources that
-        // filled their window — a stepwise loop would re-download whole lists each round.
-        if (mediaType != null && countOf(perSourceRefs.flatten()) < targetCount) {
-            val widen = perSourceRefs.indices.filter { index ->
-                val ceiling = budgetCeilings[index]
-                perSourceRefs[index].size >= sourceBudgets[index] &&
-                    (ceiling == null || sourceBudgets[index] < ceiling)
-            }
-            if (widen.isNotEmpty()) {
-                val firstBudgets = sourceBudgets.toList()
-                widen.forEach { index ->
-                    sourceBudgets[index] = budgetCeilings[index] ?: (sourceBudgets[index] * 3)
-                }
-                fetchSources(widen).forEachIndexed { i, wider ->
-                    val index = widen[i]
-                    // A failed retry must neither erase what the first pass delivered nor mark
-                    // the source as exhausted.
-                    if (wider.size >= perSourceRefs[index].size) {
-                        perSourceRefs[index] = wider
-                    } else {
-                        sourceBudgets[index] = firstBudgets[index]
-                    }
-                }
-            }
-        }
+        val perSourceRefs = sourceResults.map { it.refs }
 
         val refs = LinkedHashSet<Pair<MediaType, Int>>()
         cached?.refs?.forEach { refs.add(it) }
@@ -397,16 +375,15 @@ class MediaRepository @Inject constructor(
 
         val complete = perSourceRefs.indices.all { index ->
             val ceiling = budgetCeilings[index]
-            perSourceRefs[index].size < sourceBudgets[index] ||
-                (ceiling != null && sourceBudgets[index] >= ceiling)
+            !sourceResults[index].failed && (perSourceRefs[index].size < sourceBudgets[index] ||
+                (ceiling != null && sourceBudgets[index] >= ceiling))
         }
         val resolved = CollectionRefs(refs.toList(), complete)
-        // Source failures are swallowed into empty lists above, so an empty source may just be a
-        // transient error. Caching the partial result would hide that source's titles for the
-        // whole TTL, even when the collection is reopened; only cache when every source delivered.
-        val everySourceDelivered = perSourceRefs.none { it.isEmpty() }
-        if (resolved.refs.isNotEmpty() && everySourceDelivered) {
+        // Empty is a valid result. A failed page is not, even if earlier pages delivered items.
+        if (sourceResults.none { it.failed }) {
             collectionRefsCache[cacheKey] = CacheEntry(resolved, System.currentTimeMillis())
+        } else {
+            collectionRefsCache.remove(cacheKey)
         }
         return resolved
     }
@@ -2263,8 +2240,9 @@ class MediaRepository @Inject constructor(
     private suspend fun resolveCollectionSourceRefs(
         source: CollectionSourceConfig,
         offset: Int,
-        limit: Int
-    ): List<Pair<MediaType, Int>> {
+        limit: Int,
+        mediaType: MediaType?
+    ): CollectionSourceRefs {
         // Defense in depth: every source-kind resolver must be wrapped so a
         // transient TMDB 404 / network error never propagates out of a
         // collection detail load and crashes the app. Collections from
@@ -2272,27 +2250,34 @@ class MediaRepository @Inject constructor(
         // watch-provider calls all return HTTP errors sometimes — the right
         // UX is an empty row, not a force-close.
         return try {
-            when (source.kind) {
+            val refs = when (source.kind) {
                 CollectionSourceKind.ADDON_CATALOG -> loadCollectionAddonRefs(source, offset, limit)
                 CollectionSourceKind.TMDB_GENRE -> loadCollectionGenreRefs(source, limit)
                 CollectionSourceKind.TMDB_PERSON -> loadCollectionPersonRefs(source, limit)
                 CollectionSourceKind.TMDB_COLLECTION -> loadCollectionTmdbCollectionRefs(source, limit)
-                CollectionSourceKind.TMDB_KEYWORD -> loadCollectionKeywordRefs(source, limit)
+                CollectionSourceKind.TMDB_KEYWORD -> loadCollectionKeywordRefs(
+                    if (mediaType != null && source.mediaType.isNullOrBlank()) {
+                        source.copy(mediaType = if (mediaType == MediaType.TV) "tv" else "movie")
+                    } else source,
+                    limit
+                )
                 CollectionSourceKind.TMDB_WATCH_PROVIDER -> loadCollectionWatchProviderRefs(source, limit)
-                CollectionSourceKind.CURATED_IDS -> loadCollectionCuratedRefs(source, limit)
-                CollectionSourceKind.MDBLIST_PUBLIC -> loadCollectionMdblistPublicRefs(source, limit)
+                CollectionSourceKind.CURATED_IDS -> loadCollectionCuratedRefs(source, limit, mediaType)
+                CollectionSourceKind.MDBLIST_PUBLIC -> loadCollectionMdblistPublicRefs(source, limit, mediaType)
                 CollectionSourceKind.TMDB_DISCOVER -> loadCollectionDiscoverRefs(source, limit)
-                CollectionSourceKind.TMDB_LIST -> loadCollectionTmdbListRefs(source, limit)
+                CollectionSourceKind.TMDB_LIST -> loadCollectionTmdbListRefs(source, limit, mediaType)
                 CollectionSourceKind.TRAKT_LIST -> source.traktListId?.takeIf { it.isNotBlank() }?.let { listId ->
-                    loadTraktCatalogRefs(sourceUrl = "https://trakt.tv/lists/$listId").take(limit)
+                    loadTraktCatalogRefs(sourceUrl = "https://trakt.tv/lists/$listId")
+                        .filter { mediaType == null || it.first == mediaType }.take(limit)
                 }.orEmpty()
             }
+            CollectionSourceRefs(refs.filter { mediaType == null || it.first == mediaType })
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
+        } catch (e: CollectionSourceLoadException) {
+            CollectionSourceRefs(e.partialRefs.filter { mediaType == null || it.first == mediaType }, failed = true)
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            emptyList()
+            CollectionSourceRefs(emptyList(), failed = true)
         }
     }
 
@@ -2305,14 +2290,15 @@ class MediaRepository @Inject constructor(
      */
     private suspend fun loadCollectionMdblistPublicRefs(
         source: CollectionSourceConfig,
-        limit: Int
+        limit: Int,
+        mediaType: MediaType?
     ): List<Pair<MediaType, Int>> {
         val slug = source.mdblistSlug?.trim()?.trim('/').orEmpty()
         if (slug.isBlank()) return emptyList()
         val body = withContext(Dispatchers.IO) {
             fetchUrl("https://mdblist.com/lists/$slug/json")
-        } ?: return emptyList()
-        val array = try { org.json.JSONArray(body) } catch (e: org.json.JSONException) { null } ?: return emptyList()
+        } ?: throw java.io.IOException("Collection list could not be loaded")
+        val array = org.json.JSONArray(body)
         val refs = mutableListOf<Pair<MediaType, Int>>()
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
@@ -2322,6 +2308,7 @@ class MediaRepository @Inject constructor(
                 "show", "series", "tv" -> MediaType.TV
                 else -> continue
             }
+            if (mediaType != null && type != mediaType) continue
             refs.add(type to id)
             if (refs.size >= limit) break
         }
@@ -2336,7 +2323,8 @@ class MediaRepository @Inject constructor(
      */
     private fun loadCollectionCuratedRefs(
         source: CollectionSourceConfig,
-        limit: Int
+        limit: Int,
+        mediaType: MediaType?
     ): List<Pair<MediaType, Int>> {
         val raw = source.curatedRefs ?: return emptyList()
         return raw.mapNotNull { entry ->
@@ -2349,7 +2337,7 @@ class MediaRepository @Inject constructor(
             }
             val id = parts[1].toIntOrNull() ?: return@mapNotNull null
             type to id
-        }.take(limit)
+        }.filter { mediaType == null || it.first == mediaType }.take(limit)
     }
 
     /**
@@ -2393,24 +2381,25 @@ class MediaRepository @Inject constructor(
     /** Public TMDB list, kept in list order; mixed movie/TV entries. */
     private suspend fun loadCollectionTmdbListRefs(
         source: CollectionSourceConfig,
-        limit: Int
+        limit: Int,
+        mediaType: MediaType?
     ): List<Pair<MediaType, Int>> {
         val listId = source.tmdbListId ?: return emptyList()
         val refs = LinkedHashSet<Pair<MediaType, Int>>()
         var page = 1
         var totalPages = 1
-        while (refs.size < limit && page <= totalPages && page <= 20) {
+        while (refs.size < limit && page <= totalPages) {
             val response = try {
                 tmdbApi.getPublicList(listId, apiKey, language = contentLanguage, page = page)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                break
+            } catch (e: Exception) {
+                throw CollectionSourceLoadException(refs.toList(), e)
             }
             response.items.forEach { item ->
                 if (item.id <= 0) return@forEach
                 val type = if (item.mediaType.equals("tv", ignoreCase = true)) MediaType.TV else MediaType.MOVIE
-                refs.add(type to item.id)
+                if (mediaType == null || type == mediaType) refs.add(type to item.id)
             }
             totalPages = response.totalPages.coerceAtLeast(1)
             if (response.items.isEmpty()) break
@@ -2424,15 +2413,7 @@ class MediaRepository @Inject constructor(
         limit: Int
     ): List<Pair<MediaType, Int>> {
         val id = source.tmdbCollectionId ?: return emptyList()
-        val response = try {
-            tmdbApi.getTmdbCollection(id, apiKey, language = contentLanguage)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: retrofit2.HttpException) {
-            null
-        } catch (e: java.io.IOException) {
-            null
-        } ?: return emptyList()
+        val response = tmdbApi.getTmdbCollection(id, apiKey, language = contentLanguage)
         return response.parts
             .sortedBy { it.releaseDate.orEmpty() }
             .map { MediaType.MOVIE to it.id }
@@ -2567,22 +2548,18 @@ class MediaRepository @Inject constructor(
             catalogType = catalogType,
             catalogId = catalogId,
             preferredAddonId = source.addonId
-        ) ?: return@coroutineScope emptyList()
+        ) ?: throw java.io.IOException("Collection add-on is unavailable")
 
-        val response = runCatching {
-            loadPagedAddonCollectionRefs(
-                descriptor = AddonCatalogDescriptor(
-                    addonId = addonId,
-                    catalogType = catalogType,
-                    catalogId = catalogId
-                ),
-                offset = offset,
-                limit = limit,
-                genre = source.addonGenre
-            )
-        }.getOrNull() ?: emptyList()
-
-        response
+        loadPagedAddonCollectionRefs(
+            descriptor = AddonCatalogDescriptor(
+                addonId = addonId,
+                catalogType = catalogType,
+                catalogId = catalogId
+            ),
+            offset = offset,
+            limit = limit,
+            genre = source.addonGenre
+        )
     }
 
     private suspend fun loadCollectionGenreRefs(
@@ -2680,7 +2657,13 @@ class MediaRepository @Inject constructor(
         var page = 1
         var totalPages = 1
         while (refs.size < limit && page <= totalPages) {
-            val response = runCatching { fetchPage(page) }.getOrNull() ?: break
+            val response = try {
+                fetchPage(page)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw CollectionSourceLoadException(refs.toList(), e)
+            }
             response.results.forEach { refs.add(mediaType to it.id) }
             totalPages = response.totalPages.coerceAtLeast(1)
             if (response.results.isEmpty()) break
@@ -2701,7 +2684,7 @@ class MediaRepository @Inject constructor(
         var probes = 0
         val maxProbes = 12
         while (probes < maxProbes && accumulated.size < limit) {
-            val response = runCatching {
+            val response = try {
                 streamRepository.getAddonCatalogPage(
                     addonId = descriptor.addonId,
                     catalogType = descriptor.catalogType,
@@ -2709,7 +2692,11 @@ class MediaRepository @Inject constructor(
                     skip = probeOffset,
                     genre = genre
                 )
-            }.getOrNull() ?: break
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw CollectionSourceLoadException(accumulated.toList(), e)
+            }
             val metas = response.metas ?: response.items ?: emptyList()
             if (metas.isEmpty()) break
             parseAddonPageRefs(metas = metas, descriptor = descriptor)

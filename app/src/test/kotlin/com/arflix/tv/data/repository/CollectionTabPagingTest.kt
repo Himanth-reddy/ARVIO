@@ -93,9 +93,7 @@ class CollectionTabPagingTest {
         assertEquals((1..5).toList() + (501..503).toList(), online.items.map { it.id })
     }
 
-    @Test fun `genuinely empty source keeps the collection uncached but loading`() = runBlocking {
-        // An empty source cannot be told apart from a failed one, so nothing is cached and each
-        // open asks the sources again; the other source's titles still show every time.
+    @Test fun `genuinely empty source permits caching healthy collection results`() = runBlocking {
         coEvery { streams.findInstalledAddonIdForCatalog(any(), any(), any()) } returns "addon"
         coEvery { streams.getAddonCatalogPage(any(), any(), any(), any(), any()) } returns
             StremioCatalogResponse(metas = emptyList())
@@ -106,6 +104,6 @@ class CollectionTabPagingTest {
             assertEquals((1..5).toList(), page.items.map { it.id })
             assertFalse(page.hasMore)
         }
-        coVerify(exactly = 2) { streams.getAddonCatalogPage(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { streams.getAddonCatalogPage(any(), any(), any(), any(), any()) }
     }
 }
