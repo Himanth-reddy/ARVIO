@@ -88,6 +88,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -241,8 +242,13 @@ class CollectionDetailsViewModel @Inject constructor(
         val missingAddons = if (page != null && pageItems.isEmpty() &&
             !SportsAddonCapabilities.isSportsCollectionCatalogId(catalog.id)
         ) {
-            runCatching { mediaRepository.missingCollectionAddons(catalogForTab(catalog, tab)) }
-                .getOrDefault(emptyList())
+            try {
+                mediaRepository.missingCollectionAddons(catalogForTab(catalog, tab))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
         } else {
             emptyList()
         }

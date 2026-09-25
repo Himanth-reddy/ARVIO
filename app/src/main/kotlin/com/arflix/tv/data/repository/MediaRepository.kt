@@ -171,7 +171,7 @@ class MediaRepository @Inject constructor(
     private val addonImdbToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val addonTitleToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val homeServerLogoRefCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
-    private val collectionRefsCache = ConcurrentHashMap<String, CacheEntry<List<Pair<MediaType, Int>>>>()
+    private val collectionRefsCache = ConcurrentHashMap<String, CacheEntry<CollectionRefs>>()
     private val _episodeRatingsUpdated = MutableSharedFlow<Pair<Int, Int>>(extraBufferCapacity = 64)
     val episodeRatingsUpdated = _episodeRatingsUpdated.asSharedFlow()
 
@@ -216,7 +216,13 @@ class MediaRepository @Inject constructor(
         addonTitleToTmdbCache[key] = CacheEntry(value, System.currentTimeMillis())
     }
 
-    private fun getCollectionRefsCache(key: String): List<Pair<MediaType, Int>>? {
+    /**
+     * Resolved refs of a collection. [complete] is true when no source would return more for a
+     * larger request (it ran out, or hit its budget ceiling).
+     */
+    private data class CollectionRefs(val refs: List<Pair<MediaType, Int>>, val complete: Boolean)
+
+    private fun getCollectionRefsCache(key: String): CollectionRefs? {
         val entry = collectionRefsCache[key] ?: return null
         return if (System.currentTimeMillis() - entry.timestamp < CACHE_TTL_MS) {
             entry.data
@@ -275,11 +281,17 @@ class MediaRepository @Inject constructor(
 
     private suspend fun resolveCollectionCatalogRefs(
         catalog: CatalogConfig,
-        requiredCount: Int
-    ): List<Pair<MediaType, Int>> {
+        requiredCount: Int,
+        mediaType: MediaType? = null
+    ): CollectionRefs {
+        // With [mediaType], [requiredCount] counts refs of that type only; the sources still
+        // deliver mixed lists, so the fetch window is measured against the filtered count.
+        fun countOf(refs: List<Pair<MediaType, Int>>): Int =
+            if (mediaType == null) refs.size else refs.count { it.first == mediaType }
+
         val cacheKey = collectionRefsCacheKey(catalog)
         val cached = getCollectionRefsCache(cacheKey)
-        if (cached != null && cached.size >= requiredCount.coerceAtLeast(1)) {
+        if (cached != null && countOf(cached.refs) >= requiredCount.coerceAtLeast(1)) {
             return cached
         }
 
@@ -292,33 +304,75 @@ class MediaRepository @Inject constructor(
             catalog.collectionGroup == CollectionGroupKind.GENRE ||
             catalog.collectionRailKey != null
 
-        // Resolve all sources in parallel so a slow/failed source never blocks the
-        // others — this alone fixes "empty" genre collections where one source 404s.
-        val sourceBudgets = catalog.collectionSources.map { source ->
+        val budgetCeilings: List<Int?> = catalog.collectionSources.map { source ->
+            if (unlimitedGroup) {
+                null
+            } else when (source.kind) {
+                CollectionSourceKind.ADDON_CATALOG -> 120
+                CollectionSourceKind.MDBLIST_PUBLIC -> 96
+                else -> 72
+            }
+        }
+        val sourceBudgets = catalog.collectionSources.mapIndexed { index, source ->
             if (unlimitedGroup) {
                 (targetCount + 20).coerceAtLeast(40)
             } else when (source.kind) {
-                CollectionSourceKind.ADDON_CATALOG -> (targetCount + 12).coerceAtLeast(24).coerceAtMost(120)
-                CollectionSourceKind.MDBLIST_PUBLIC -> (targetCount + 8).coerceAtLeast(24).coerceAtMost(96)
-                else -> (targetCount + 8).coerceAtLeast(24).coerceAtMost(72)
-            }
-        }
-        val perSourceRefs: List<List<Pair<MediaType, Int>>> = coroutineScope {
-            catalog.collectionSources.mapIndexed { index, source ->
+                CollectionSourceKind.ADDON_CATALOG -> (targetCount + 12).coerceAtLeast(24)
+                CollectionSourceKind.MDBLIST_PUBLIC -> (targetCount + 8).coerceAtLeast(24)
+                else -> (targetCount + 8).coerceAtLeast(24)
+            }.coerceAtMost(budgetCeilings[index] ?: Int.MAX_VALUE)
+        }.toMutableList()
+
+        // Resolve all sources in parallel so a slow/failed source never blocks the
+        // others — this alone fixes "empty" genre collections where one source 404s.
+        suspend fun fetchSources(indices: List<Int>): List<List<Pair<MediaType, Int>>> = coroutineScope {
+            indices.map { index ->
                 async {
-                    runCatching {
+                    try {
                         resolveCollectionSourceRefs(
-                            source,
+                            catalog.collectionSources[index],
                             offset = 0,
                             limit = sourceBudgets[index]
                         )
-                    }.getOrDefault(emptyList())
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
                 }
             }.map { it.await() }
         }
+        val perSourceRefs = fetchSources(catalog.collectionSources.indices.toList()).toMutableList()
+
+        // A tab of one type can run dry inside a window that is full of the other type. Widen
+        // once, straight to the ceiling (or 3x for open-ended rails), and only for sources that
+        // filled their window — a stepwise loop would re-download whole lists each round.
+        if (mediaType != null && countOf(perSourceRefs.flatten()) < targetCount) {
+            val widen = perSourceRefs.indices.filter { index ->
+                val ceiling = budgetCeilings[index]
+                perSourceRefs[index].size >= sourceBudgets[index] &&
+                    (ceiling == null || sourceBudgets[index] < ceiling)
+            }
+            if (widen.isNotEmpty()) {
+                val firstBudgets = sourceBudgets.toList()
+                widen.forEach { index ->
+                    sourceBudgets[index] = budgetCeilings[index] ?: (sourceBudgets[index] * 3)
+                }
+                fetchSources(widen).forEachIndexed { i, wider ->
+                    val index = widen[i]
+                    // A failed retry must neither erase what the first pass delivered nor mark
+                    // the source as exhausted.
+                    if (wider.size >= perSourceRefs[index].size) {
+                        perSourceRefs[index] = wider
+                    } else {
+                        sourceBudgets[index] = firstBudgets[index]
+                    }
+                }
+            }
+        }
 
         val refs = LinkedHashSet<Pair<MediaType, Int>>()
-        cached?.forEach { refs.add(it) }
+        cached?.refs?.forEach { refs.add(it) }
 
         // For GENRE collections, interleave movie and series refs so the
         // first page always shows a mix rather than "all movies, then TV".
@@ -341,12 +395,17 @@ class MediaRepository @Inject constructor(
             }
         }
 
-        val resolved = refs.toList()
+        val complete = perSourceRefs.indices.all { index ->
+            val ceiling = budgetCeilings[index]
+            perSourceRefs[index].size < sourceBudgets[index] ||
+                (ceiling != null && sourceBudgets[index] >= ceiling)
+        }
+        val resolved = CollectionRefs(refs.toList(), complete)
         // Source failures are swallowed into empty lists above, so an empty source may just be a
         // transient error. Caching the partial result would hide that source's titles for the
         // whole TTL, even when the collection is reopened; only cache when every source delivered.
         val everySourceDelivered = perSourceRefs.none { it.isEmpty() }
-        if (resolved.isNotEmpty() && everySourceDelivered) {
+        if (resolved.refs.isNotEmpty() && everySourceDelivered) {
             collectionRefsCache[cacheKey] = CacheEntry(resolved, System.currentTimeMillis())
         }
         return resolved
@@ -2126,10 +2185,12 @@ class MediaRepository @Inject constructor(
             return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
         }
 
-        val refs = resolveCollectionCatalogRefs(
+        val resolved = resolveCollectionCatalogRefs(
             catalog = catalog,
-            requiredCount = (offset + limit).coerceAtLeast(limit)
-        ).let { all -> if (mediaType == null) all else all.filter { it.first == mediaType } }
+            requiredCount = (offset + limit).coerceAtLeast(limit),
+            mediaType = mediaType
+        )
+        val refs = if (mediaType == null) resolved.refs else resolved.refs.filter { it.first == mediaType }
         if (refs.isEmpty()) return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
 
         val pageRefs = refs.drop(offset).take(limit)
@@ -2164,9 +2225,13 @@ class MediaRepository @Inject constructor(
         if (items.isNotEmpty()) cacheItems(items)
         // nextOffset counts consumed refs, not returned items: a failed lookup drops an item, and
         // counting items would make the next page start inside this one.
+        // A filtered tab can have run out of its type inside the fetched window while the sources
+        // still hold more; stop only once they are exhausted or a page comes back empty.
+        val hasMore = offset + pageRefs.size < refs.size ||
+            (mediaType != null && !resolved.complete && pageRefs.isNotEmpty())
         CategoryPageResult(
             items = items,
-            hasMore = offset + pageRefs.size < refs.size,
+            hasMore = hasMore,
             nextOffset = offset + pageRefs.size
         )
     }
