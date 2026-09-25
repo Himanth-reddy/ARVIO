@@ -17,9 +17,14 @@ object AddonSetup {
 
     /** Settings page advertised by the manifest at [transportUrl], or null if it has none. */
     fun advertisedConfigureUrl(transportUrl: String?, hints: AddonBehaviorHints?): String? {
-        val base = transportUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return null
         if (hints?.configurable != true && hints?.configurationRequired != true) return null
-        return "$base/configure"
+        val url = transportUrl?.trim()?.toHttpUrlOrNull() ?: return null
+        val path = url.encodedPath.trimEnd('/').removeSuffix("/manifest.json")
+        return url.newBuilder()
+            .encodedPath("$path/configure")
+            .fragment(null)
+            .build()
+            .toString()
     }
 
     /**

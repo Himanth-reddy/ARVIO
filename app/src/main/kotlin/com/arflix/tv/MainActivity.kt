@@ -62,6 +62,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -130,6 +131,7 @@ import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.data.repository.toLauncherContinueWatchingRequest
 import com.arflix.tv.navigation.AppNavigation
 import com.arflix.tv.navigation.Screen
+import com.arflix.tv.navigation.ProfileSessionGate
 import com.arflix.tv.ui.screens.login.LoginScreen
 import com.arflix.tv.ui.startup.StartupViewModel
 import com.arflix.tv.ui.theme.ArflixTvTheme
@@ -681,11 +683,13 @@ fun ArflixApp(
         }
     }
 
-    val startDestination = if (skipProfileSelection == true && activeProfile != null) {
-        Screen.Home.route
-    } else {
-        Screen.ProfileSelection.route
+    var selectedSessionProfileId by rememberSaveable {
+        mutableStateOf(ProfileSessionGate.initialProfileId(skipProfileSelection == true, activeProfile))
     }
+    val startDestination = rememberSaveable {
+        if (selectedSessionProfileId != null) Screen.Home.route else Screen.ProfileSelection.route
+    }
+    val canOpenPendingLink = ProfileSessionGate.canOpenLink(activeProfile?.id, selectedSessionProfileId)
 
     val deviceType = LocalDeviceType.current
     val isMobile = deviceType.isTouchDevice()
@@ -914,7 +918,9 @@ fun ArflixApp(
                     preloadedLogoCache = preloadedLogoCache,
                     currentProfile = activeProfile,
                     isCloudConnected = authState is AuthState.Authenticated,
+                    onProfileSelected = { profileId -> selectedSessionProfileId = profileId },
                     onSwitchProfile = {
+                        selectedSessionProfileId = null
                         appCoroutineScope.launch {
                             traktRepository.clearAllProfileCaches()
                             watchHistoryRepository.clearProfileCaches()
@@ -983,9 +989,9 @@ fun ArflixApp(
         }
     }
 
-    LaunchedEffect(activeProfile?.id, pendingLauncherRequest) {
+    LaunchedEffect(activeProfile?.id, canOpenPendingLink, pendingLauncherRequest) {
         val request = pendingLauncherRequest ?: return@LaunchedEffect
-        if (activeProfile == null) return@LaunchedEffect
+        if (!canOpenPendingLink) return@LaunchedEffect
 
         val route = Screen.Details.createRoute(
             mediaType = request.mediaType,
@@ -1000,9 +1006,9 @@ fun ArflixApp(
         onConsumeLauncherRequest()
     }
 
-    LaunchedEffect(activeProfile?.id, pendingInstallPackUrl) {
+    LaunchedEffect(activeProfile?.id, canOpenPendingLink, pendingInstallPackUrl) {
         val packUrl = pendingInstallPackUrl ?: return@LaunchedEffect
-        if (activeProfile == null) return@LaunchedEffect
+        if (!canOpenPendingLink) return@LaunchedEffect
 
         val encodedUrl = java.net.URLEncoder.encode(packUrl, "UTF-8")
         val route = "settings?initialSection=catalogs&installPackUrl=$encodedUrl"
@@ -1013,9 +1019,9 @@ fun ArflixApp(
         onConsumeInstallPackUrl()
     }
 
-    LaunchedEffect(activeProfile?.id, pendingInstallAddonUrl) {
+    LaunchedEffect(activeProfile?.id, canOpenPendingLink, pendingInstallAddonUrl) {
         val addonUrl = pendingInstallAddonUrl ?: return@LaunchedEffect
-        if (activeProfile == null) return@LaunchedEffect
+        if (!canOpenPendingLink) return@LaunchedEffect
 
         val encodedUrl = java.net.URLEncoder.encode(addonUrl, "UTF-8")
         val route = "settings?initialSection=stremio&installAddonUrl=$encodedUrl"

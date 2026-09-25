@@ -8,6 +8,32 @@ import org.junit.Test
 
 class AddonSetupTest {
 
+    @Test
+    fun `configure path is inserted before query and preserves encoded config`() {
+        for (input in listOf(
+            "https://addon.example?token=test",
+            "https://addon.example/manifest.json?token=test",
+            "https://addon.example/manifest.json/?token=test"
+        )) {
+            assertEquals("https://addon.example/configure?token=test",
+                AddonSetup.advertisedConfigureUrl(input, AddonBehaviorHints(configurable = true)))
+        }
+        assertEquals(
+            "https://addon.example/stremio/a%2Fb/configure?token=a%2Fb%2B&lang=en",
+            AddonSetup.advertisedConfigureUrl(
+                "https://addon.example/stremio/a%2Fb/manifest.json?token=a%2Fb%2B&lang=en#ignored",
+                AddonBehaviorHints(configurationRequired = true)
+            )
+        )
+    }
+
+    @Test
+    fun `invalid configure transports are rejected`() {
+        for (input in listOf("", "not a url", "javascript:alert(1)", "file:///manifest.json")) {
+            assertNull(AddonSetup.advertisedConfigureUrl(input, AddonBehaviorHints(configurable = true)))
+        }
+    }
+
     private fun addon(
         id: String = "addon",
         type: AddonType = AddonType.CUSTOM,

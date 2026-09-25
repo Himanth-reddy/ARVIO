@@ -149,6 +149,7 @@ fun AppNavigation(
     currentProfile: Profile? = null,
     isCloudConnected: Boolean = false,
     onSwitchProfile: () -> Unit = {},
+    onProfileSelected: (String) -> Unit = {},
     onTvFullscreenChanged: (Boolean) -> Unit = {},
     onOverlayFullscreenChanged: (Boolean) -> Unit = {},
     onSettingsSubPageChanged: (Boolean) -> Unit = {},
@@ -384,7 +385,8 @@ fun AppNavigation(
         // Profile selection screen
         composable(Screen.ProfileSelection.route) {
             ProfileSelectionScreen(
-                onProfileSelected = {
+                onProfileSelected = { profileId ->
+                    onProfileSelected(profileId)
                     navController.navigate(Screen.Home.route) {
                         popUpTo(Screen.ProfileSelection.route) { inclusive = true }
                     }
