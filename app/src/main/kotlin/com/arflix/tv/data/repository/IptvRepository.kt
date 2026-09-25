@@ -639,13 +639,17 @@ class IptvRepository @Inject constructor(
     internal fun portalIdFromChannelId(channelId: String): String? =
         StalkerPortalSupport.portalIdFromChannelId(channelId)
 
-    private suspend fun getOrCreateStalkerApi(portal: StalkerPortalEntry): com.arflix.tv.data.api.StalkerApi? {
+    private suspend fun getOrCreateStalkerApi(
+        portal: StalkerPortalEntry,
+        initializeProfile: Boolean = false,
+    ): com.arflix.tv.data.api.StalkerApi? {
         cachedStalkerApis[portal.id]?.let { return it }
         return stalkerApiMutex.withLock {
             cachedStalkerApis[portal.id]?.let { return it }
             com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
                 .takeIf { it.handshake() }
                 ?.also { api ->
+                    if (initializeProfile) api.getProfile()
                     cachedStalkerApis = cachedStalkerApis + (portal.id to api)
                 }
         }
@@ -1128,7 +1132,8 @@ class IptvRepository @Inject constructor(
     suspend fun fetchAccountInfo(playlist: IptvPlaylistEntry): IptvAccountInfo? {
         val fingerprint = IptvAccountInfoParser.fingerprint(playlist)
         val now = System.currentTimeMillis()
-        val creds = resolveXtreamCredentials(playlist)
+        // An independently configured EPG feed can belong to a different account.
+        val creds = resolveXtreamCredentials(playlist.m3uUrl)
             ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
         val url = "${creds.baseUrl}/player_api.php".toHttpUrlOrNull()
             ?.newBuilder()
@@ -1143,23 +1148,18 @@ class IptvRepository @Inject constructor(
 
     /**
      * Asks a Stalker portal for its account details. The session the channel
-     * download opened is asked first: a second handshake for the same MAC can
-     * replace the token that session plays with. Only when that session is
-     * gone or does not answer is a fresh one opened, in the handshake →
-     * profile → request order the channel download uses. Null means the portal
-     * did not answer.
+     * download opened is reused: a second handshake for the same MAC can
+     * invalidate its playback token. A missing session is created through the
+     * shared cache; a failed account request never triggers a replacement login.
+     * Null means the portal did not answer.
      */
     suspend fun fetchAccountInfo(portal: StalkerPortalEntry): IptvAccountInfo? = withContext(Dispatchers.IO) {
         val fingerprint = IptvAccountInfoParser.fingerprint(portal)
         fun parse(body: String?) =
             IptvAccountInfoParser.parseStalker(body, fingerprint, System.currentTimeMillis())
-        cachedStalkerApis[portal.id]?.let { api ->
-            parse(api.getAccountInfoBody())?.let { return@withContext it }
-        }
         val body = runCatching {
-            val api = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
-            if (!api.handshake()) return@runCatching null
-            api.getProfile()
+            val api = getOrCreateStalkerApi(portal, initializeProfile = true)
+                ?: return@runCatching null
             api.getAccountInfoBody()
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
         parse(body)
