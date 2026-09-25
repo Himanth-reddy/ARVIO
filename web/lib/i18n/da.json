@@ -5,5 +5,6 @@
   "Completed": "Afsluttet",
   "Dropped": "Droppet",
   "ARVIO navigation": "ARVIO-navigation",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: brug den Jellyfin-kompatible adresse. Valgfri profil: username#ProfileName. Beskyttet profil: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: brug den Jellyfin-kompatible adresse. Valgfri profil: username#ProfileName. Beskyttet profil: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Ingen af dine aktiverede tilføjelser leverer afspilningskilder."
 }

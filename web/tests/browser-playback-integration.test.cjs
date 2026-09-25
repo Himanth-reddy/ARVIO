@@ -8,6 +8,27 @@ const { load } = require('./load.cjs');
 
 const flush = () => new Promise(setImmediate);
 
+test('IPTV VOD tries the subscriber URL before the header relay and never invents a live HLS twin', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../components/player/PlayerOverlay.tsx'), 'utf8');
+  const start = source.indexOf('const attempts: string[] = [stream.url];');
+  const end = source.indexOf('let attemptIndex = 0;', start);
+  assert.ok(start >= 0 && end > start);
+  const code = ts.transpileModule(`(() => { ${source.slice(start, end)} return uniqueAttempts; })()`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  let forwarded;
+  const attempts = vm.runInNewContext(code, {
+    stream: { url: 'https://provider.example/series/fixture/test-only/123.mp4', addonId: 'iptv_xtream_vod' },
+    liveTv: false, headers: { 'User-Agent': 'Configured player' }, config: { allowNetlifyMediaProxy: false },
+    xtreamHlsVariant: () => { throw new Error('VOD is not a live channel'); },
+    liveTvProxyHeaders: () => ({ 'User-Agent': 'Default player' }),
+    needsBrowserHeaderRelay: () => true,
+    resolverMediaUrl: (_url, headers) => { forwarded = headers; return 'https://relay.example/media'; },
+    isLikelyHlsUrl: () => false, Set
+  });
+  assert.deepEqual(Array.from(attempts), ['https://provider.example/series/fixture/test-only/123.mp4', 'https://relay.example/media']);
+  assert.equal(forwarded['User-Agent'], 'Configured player');
+});
+
 test('live sources needing browser-controlled headers use the relay first', () => {
   const needsRelay = extracted('components/player/PlayerOverlay.tsx', node =>
     ts.isFunctionDeclaration(node) && node.name?.text === 'needsBrowserHeaderRelay' ? node : undefined, {});
@@ -16,7 +37,7 @@ test('live sources needing browser-controlled headers use the relay first', () =
   assert.equal(needsRelay({ Authorization: 'token' }), false);
   assert.equal(needsRelay(), false);
   const source = fs.readFileSync(path.join(__dirname, '../components/player/PlayerOverlay.tsx'), 'utf8');
-  assert.match(source, /if \(needsBrowserHeaderRelay\(headers\)\) attempts\.unshift\(workerUrl\)/);
+  assert.match(source, /if \(!iptvVod && needsBrowserHeaderRelay\(headers\)\) attempts\.unshift\(workerUrl\)/);
 });
 
 test('live manifest fallbacks preserve add-on authentication and referer headers', () => {
@@ -65,6 +86,7 @@ function preparation(overrides = {}) {
     ...load('lib/prepareBrowserStream.ts', {
       './debrid': debrid,
       './streamCompatibility': compatibility,
+      './resolver': load('lib/resolver.ts', { './config': { config: { resolverUrl: overrides.resolverUrl ?? '' } } }),
       './homeServerPlayback': { prepareHomeServerPlayback: async (...args) => {
         calls.push(args);
         return overrides.home ? overrides.home(...args) : preparedStream();
@@ -72,6 +94,65 @@ function preparation(overrides = {}) {
     }, { DOMException, Error })
   };
 }
+
+test('declared browser-controlled addon headers use only the configured resolver for MP4, HLS and remux', async () => {
+  for (const container of ['mp4', 'hls', 'mkv']) {
+    const h = preparation({ resolverUrl: 'https://resolver.example' });
+    const headers = { Referer: 'https://addon.example/', 'User-Agent': 'Fixture player', Authorization: 'Bearer fixture-only' };
+    const input = { ...file(), url: `https://media.example/source.${container === 'hls' ? 'm3u8' : container}`,
+      transport: container === 'hls' ? 'hls' : 'file', media: { container, videoCodec: 'h264', audioCodec: 'aac' },
+      behaviorHints: { proxyHeaders: { request: headers, response: { 'Cache-Control': 'no-store' } } } };
+    const result = await h.prepareBrowserStream(input, settings);
+    const relay = new URL(result.url);
+    assert.equal(relay.origin, 'https://resolver.example');
+    assert.equal(relay.pathname, '/media');
+    assert.equal(relay.searchParams.get('url'), input.url);
+    assert.deepEqual(JSON.parse(atob(relay.searchParams.get('h'))), headers, 'permitted Authorization is retained upstream too');
+    assert.equal(result.originalUrl, input.url);
+    assert.equal(result.behaviorHints.proxyHeaders.request, undefined, 'browser requests must not resend forbidden headers');
+    assert.equal(result.behaviorHints.proxyHeaders.response['Cache-Control'], 'no-store');
+    assert.equal(result.remux, container === 'mkv', 'headers alone do not require browser repackaging after relay');
+    assert.equal((await h.prepareBrowserStream(result, settings)).url, result.url, 'prepared streams are not wrapped recursively');
+  }
+});
+
+test('relay is not a blanket CORS fallback and never silently discards unsupported provider headers', async () => {
+  for (const headers of [undefined, { Authorization: 'Bearer fixture-only' }, { Referer: 'https://addon.example/', 'X-Provider-Token': 'fixture-only' }]) {
+    const h = preparation({ resolverUrl: 'https://resolver.example' });
+    const input = { ...file(), behaviorHints: headers ? { proxyHeaders: { request: headers } } : undefined };
+    const result = await h.prepareBrowserStream(input, settings);
+    assert.equal(result.url, input.url);
+    assert.deepEqual(result.behaviorHints?.proxyHeaders?.request, headers);
+  }
+  const input = { ...file(), behaviorHints: { proxyHeaders: { request: { Referer: 'https://addon.example/' } } } };
+  const result = await preparation().prepareBrowserStream(input, settings);
+  assert.equal(result.url, input.url, 'self-hosted installations without a resolver stay direct');
+  assert.equal(result.behaviorHints.proxyHeaders.request.Referer, 'https://addon.example/');
+});
+
+test('DASH manifests remain direct because the configured relay does not rewrite MPD segment references', async () => {
+  const headers = { Referer: 'https://addon.example/', Authorization: 'Bearer fixture-only' };
+  const h = preparation({ resolverUrl: 'https://resolver.example' });
+  for (const source of [
+    { url: 'https://media.example/playback', transport: 'dash' },
+    { url: 'https://media.example/manifest.mpd?token=fixture', transport: undefined, media: undefined },
+    { url: 'https://media.example/playback', transport: undefined, media: { container: 'dash', videoCodec: 'h264', audioCodec: 'aac' } }
+  ]) {
+    const input = { ...file(), ...source, behaviorHints: { proxyHeaders: { request: headers } } };
+    const result = await h.prepareBrowserStream(input, settings);
+    assert.equal(result.url, input.url);
+    assert.deepEqual(result.behaviorHints.proxyHeaders.request, headers);
+  }
+});
+
+test('an already wrapped resolver URL is not recursively wrapped even if source enrichment restores headers', () => {
+  const { declaredHeaderRelayUrl } = load('lib/resolver.ts', { './config': { config: { resolverUrl: 'https://resolver.example' } } });
+  const headers = { Referer: 'https://addon.example/' };
+  const first = declaredHeaderRelayUrl('https://media.example/file.mp4', headers);
+  assert.ok(first);
+  assert.equal(declaredHeaderRelayUrl(first, headers), null);
+  assert.equal(declaredHeaderRelayUrl('file:///private/movie.mp4', headers), null);
+});
 
 // Execute the actual callback/effect rather than a manually copied version. This
 // intentionally excludes unrelated React rendering and other provider state.
@@ -124,7 +205,7 @@ test('each live playback fallback receives a fresh frame deadline', () => {
 });
 
 function conversionRecoveryHarness(overrides = {}) {
-  const state = { errors: [], details: [], selections: [], hops: 0, destroyed: 0, resolutions: 0 };
+  const state = { errors: [], details: [], selections: [], hops: 0, destroyed: 0, resolutions: 0, reloads: [] };
   const video = Object.assign(new EventTarget(), { readyState: 4, currentTime: 420, duration: 3600, paused: false, ended: false, seeking: false,
     pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); },
     removeAttribute() { this.currentTime = 0; this.readyState = 0; }, load() {} });
@@ -138,9 +219,10 @@ function conversionRecoveryHarness(overrides = {}) {
   const noop = () => {};
   const globals = {
     stream, settings, videoRef: { current: video }, resumeAtRef, transportRef: { current: null },
-    liveTv: false, playbackRate: 1, config: { allowNetlifyMediaProxy: false },
+    liveTv: overrides.liveTv ?? false, playbackRate: 1, config: { allowNetlifyMediaProxy: false },
     setError: (value) => state.errors.push(value), setErrorDetail: (value) => state.details.push(value),
     setBuffering: noop, setShowControls: noop, setActiveSubtitle: noop, setRemuxTracks: noop,
+    setPlayBlocked: value => { state.playBlocked = value; }, DOMException,
     setRemuxAudioIndex: noop, setTransportTracks: noop, defaultSubtitleIndex: () => -1,
     lastSavedRef: { current: 0 }, remuxAudioIndexRef: { current: -1 }, REMUX_STUCK_TICKS: 3,
     onToast: noop, canProviderTranscode: () => overrides.canConvert ?? true,
@@ -149,13 +231,22 @@ function conversionRecoveryHarness(overrides = {}) {
     parseDebridStream: () => ({ provider: 'torbox' }), invalidateDebridDirectUrl: noop,
     resolveDebridDirectUrl: async () => { state.resolutions++; return { url: 'https://cdn.example/original.mkv' }; },
     classifyMediaError: load('lib/playerRecovery.ts').classifyMediaError,
+    playbackFailureKind: load('lib/playerRecovery.ts').playbackFailureKind,
+    failureDiagnosticRef: { current: {} },
+    xtreamHlsVariant: () => null, resolverMediaUrl: () => null, liveTvProxyHeaders: () => ({}), isLikelyHlsUrl: () => false,
     selectStream: (next, opts) => state.selections.push({ next, options: opts }),
-    attachPlayback: (_video, _url, opts) => { transport = opts; return () => { video.removeAttribute('src'); }; },
+    attachPlayback: (_video, _url, opts) => {
+      transport = opts;
+      return Object.assign(() => { video.removeAttribute('src'); }, { reload(position) {
+        state.reloads.push(position); video.removeAttribute('src'); video.paused = true;
+      } });
+    },
     window: { setInterval: (fn) => { timers.set(fn, 'interval'); return fn; }, clearInterval: (fn) => timers.delete(fn),
       setTimeout: (fn) => { timers.set(fn, 'timeout'); return fn; }, clearTimeout: (fn) => timers.delete(fn) },
     require(name) {
       assert.equal(name, '@/lib/remux');
       return { probeAndPrepareRemux: async (...args) => {
+        state.probeArguments = args;
         options = args[3];
         return overrides.probe ? overrides.probe(options, prepared) : prepared;
       } };
@@ -169,9 +260,54 @@ function conversionRecoveryHarness(overrides = {}) {
       && node.arguments[0].getText(source).includes('const remuxFailed') ? node.arguments[0] : undefined, globals);
   return { state, video, prepared, resumeAtRef, setup,
     error: message => options.onError(message), transportError: error => transport.onError(error),
+    diagnostic: () => globals.failureDiagnosticRef.current,
     tick: () => { for (const [fn, kind] of [...timers]) if (kind === 'interval') fn(); },
+    timeouts: () => [...timers.values()].filter(kind => kind === 'timeout').length,
+    fireTimeouts: () => { for (const [fn, kind] of [...timers]) if (kind === 'timeout') { timers.delete(fn); fn(); } },
     emit: event => video.dispatchEvent(new Event(event)) };
 }
+
+test('IPTV MKV repackaging tries the subscriber URL before the prepared relay', async () => {
+  const h = conversionRecoveryHarness({ stream: { addonId: 'iptv_xtream_vod',
+    url: 'https://relay.example/media', originalUrl: 'https://provider.example/episode.mkv' } });
+  const cleanup = h.setup(); await flush();
+  assert.equal(h.state.probeArguments[0], 'https://provider.example/episode.mkv');
+  assert.equal(h.state.probeArguments[1], undefined);
+  assert.equal(h.state.probeArguments[3].fallbackUrl, 'https://relay.example/media');
+  assert.equal(h.state.hops, 0);
+  cleanup();
+});
+
+test('autoplay permission does not mark a direct source dead; a Play tap restarts startup monitoring', async () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false }, canConvert: false });
+  h.video.paused = true;
+  h.video.readyState = 0;
+  h.video.play = async () => { throw new DOMException('Tap required', 'NotAllowedError'); };
+  const cleanup = h.setup();
+  h.emit('loadedmetadata'); await flush();
+  assert.equal(h.state.playBlocked, true);
+  // Only the scheduled initial play request remains; its rejection must not
+  // advance sources, and both network watchdogs have been cancelled.
+  h.fireTimeouts(); await flush();
+  assert.equal(h.timeouts(), 0);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false);
+  h.video.paused = false;
+  h.emit('play');
+  assert.equal(h.state.playBlocked, false);
+  assert.equal(h.timeouts(), 2);
+  cleanup();
+});
+
+test('remux autoplay rejection exposes Play without changing sources', async () => {
+  const h = conversionRecoveryHarness({ canConvert: false });
+  h.video.play = async () => { throw new DOMException('Tap required', 'NotAllowedError'); };
+  const cleanup = h.setup(); await flush();
+  assert.equal(h.state.playBlocked, true);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false);
+  cleanup();
+});
 
 test('remux start rejection requests conversion of the same file before hopping sources', async () => {
   const h = conversionRecoveryHarness({ autoSelect: true, prepared: { start: async () => { throw new Error('Decoder rejected sample'); } } });
@@ -260,7 +396,118 @@ test('a mid-playback network failure is not treated as a codec failure requiring
   h.transportError({ kind: 'network', fatal: true, message: 'Connection interrupted' });
   assert.equal(h.state.selections.length, 0);
   assert.equal(h.state.errors.includes(true), false);
+  assert.deepEqual(h.state.reloads, [420]);
+  assert.equal(h.video.paused, false, 'a failed engine may pause the element; recovery explicitly resumes it');
   cleanup();
+});
+
+test('network recovery uses the captured clock after engine teardown and never retries forever', () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false, transcoded: true } });
+  const cleanup = h.setup(); h.emit('playing');
+  h.video.currentTime = 0; h.video.readyState = 0; h.video.paused = true;
+  h.transportError({ kind: 'network', fatal: true, retryable: true, positionSeconds: 420, message: 'Connection interrupted' });
+  assert.deepEqual(h.state.reloads, [420]);
+  assert.equal(h.resumeAtRef.current, 420);
+  assert.equal(h.video.paused, false);
+  h.video.currentTime = 423; h.video.readyState = 4; h.emit('playing');
+  h.transportError({ kind: 'network', fatal: true, retryable: true, positionSeconds: 423, message: 'Connection interrupted again' });
+  assert.equal(h.state.reloads.length, 1);
+  assert.equal(h.state.errors.at(-1), true);
+  assert.equal(h.diagnostic().phase, 'playback');
+  h.transportError({ kind: 'network', fatal: true, message: 'Duplicate' });
+  assert.equal(h.state.reloads.length, 1);
+  cleanup();
+});
+
+test('a refreshed URL restores the current position after the original ready listeners have fired', async () => {
+  for (const startOffset of [0, 100]) {
+    const h = conversionRecoveryHarness({ canConvert: false, stream: { remux: false, playbackSession: { startOffset } } });
+    const cleanup = h.setup();
+    h.emit('loadedmetadata'); h.emit('canplay'); h.emit('playing');
+    h.transportError({ kind: 'network', fatal: true, retryable: true, positionSeconds: 420, message: 'Interrupted' });
+    h.video.currentTime = 425; h.video.readyState = 4; h.emit('playing');
+    h.transportError({ kind: 'network', fatal: true, retryable: true, positionSeconds: 425, message: 'Link expired' });
+    await flush();
+    assert.equal(h.state.resolutions, 1);
+    assert.equal(h.video.currentTime, 0, 'the refreshed URL starts with an empty timeline');
+    h.video.readyState = 1; h.emit('loadedmetadata');
+    assert.equal(h.video.currentTime, 425, 'resume is restored relative to the current server session');
+    assert.equal(h.resumeAtRef.current, 0);
+    h.emit('canplay');
+    h.video.paused = true;
+    h.emit('canplay');
+    assert.equal(h.video.paused, true, 'later canplay events must not override a user pause');
+    cleanup();
+  }
+});
+
+test('live network interruptions also recover instead of waiting for a VOD-only watchdog', () => {
+  const h = conversionRecoveryHarness({ liveTv: true, stream: { remux: false, originalUrl: undefined } });
+  const cleanup = h.setup(); h.emit('playing');
+  h.video.paused = true;
+  h.transportError({ kind: 'network', fatal: true, retryable: true, message: 'Connection interrupted' });
+  assert.deepEqual(h.state.reloads, [undefined]);
+  assert.equal(h.video.paused, false);
+  assert.equal(h.state.errors.includes(true), false);
+  cleanup();
+});
+
+test('raw video errors do not bypass adaptive engine recovery or walk the fallback twice', () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false, transport: 'hls' } });
+  const cleanup = h.setup();
+  h.emit('error');
+  assert.equal(h.state.errors.includes(true), false);
+  assert.equal(h.state.selections.length, 0);
+  assert.equal(h.state.resolutions, 0);
+  cleanup();
+});
+
+test('silent live stalls use live-edge recovery and never select an unrelated lighter VOD source', () => {
+  const calls = { live: 0, reloads: [], errors: [], selections: 0 };
+  let recovery;
+  const effect = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
+    ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
+      && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(source).includes('monitorPlaybackStall(')
+      ? node.arguments[0] : undefined, {
+    booted: true, liveTv: true, stream: {}, videoRef: { current: {} },
+    transportRef: { current: { goLive: () => calls.live++, reload: position => calls.reloads.push(position) } },
+    currentStreamRef: { current: { autoSelect: true } }, sourceListRef: { current: [file()] },
+    monitorPlaybackStall: (_video, options) => { recovery = options; return () => {}; },
+    streamSizeBytes: () => { throw new Error('Live recovery must not rank VOD replacements'); },
+    failureDiagnosticRef: { current: {} }, setErrorDetail: () => {},
+    setError: value => calls.errors.push(value), setBuffering: () => {}, setShowControls: () => {},
+    onToast: () => {}, onSelectStream: () => calls.selections++
+  });
+  const cleanup = effect();
+  assert.ok(recovery, 'live playback installs the silent-stall monitor');
+  assert.equal(recovery.live, true, 'live reloads may reset the timestamp window');
+  recovery.nudge(123); recovery.reload(123); recovery.onFailure();
+  assert.equal(calls.live, 1);
+  assert.deepEqual(calls.reloads, [undefined]);
+  assert.deepEqual(calls.errors, [true]);
+  assert.equal(calls.selections, 0);
+  cleanup();
+});
+
+test('Retry retains absolute home-server progress and renegotiates a stopped server session', () => {
+  for (const [clock, pending, expected] of [[12, 0, 112], [0, 950, 950]]) {
+    const resumeAtRef = { current: pending };
+    const stream = { ...homeStream(), playbackSession: { startOffset: 100 } };
+    const selections = [];
+    const retry = extracted('components/player/PlayerOverlay.tsx', node =>
+      ts.isVariableDeclaration(node) && node.name.getText() === 'retryPlayback' && ts.isCallExpression(node.initializer)
+        ? node.initializer.arguments[0] : undefined, {
+      stream, videoRef: { current: { currentTime: clock } }, resumeAtRef,
+      setError: () => {}, setErrorDetail: () => {}, setBuffering: () => {},
+      selectStream: (...args) => selections.push(args),
+      setRemuxRestartKey: () => { throw new Error('Do not reopen the stopped server URL'); }
+    });
+    retry();
+    assert.equal(resumeAtRef.current, expected);
+    assert.equal(selections[0][0].url, stream.url);
+    assert.equal(selections[0][0].resumePositionSeconds, expected);
+    assert.equal(selections[0][1].forceBrowser, true);
+  }
 });
 
 test('failed converted HLS never refreshes back to the incompatible original CDN file', () => {
@@ -664,6 +911,7 @@ for (const converted of [false, true]) test(`missing video ${converted ? 'after 
     canProviderTranscode: () => true,
     recordBrowserPlaybackFailure: (...args) => failures.push(args),
     onSelectStream: (...args) => selections.push(args), tryNextSource: () => false,
+    failureDiagnosticRef: { current: {} }, setErrorDetail: () => {},
     setError: (value) => { failure = value; }, setBuffering: () => {}, setShowControls: () => {},
     onToast: (message) => toasts.push(message)
   });

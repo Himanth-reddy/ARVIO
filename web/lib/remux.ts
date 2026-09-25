@@ -8,9 +8,36 @@ export type RemuxHandle = {
   destroy: () => void;
 };
 
+type RemuxOptions = { signal?: AbortSignal; onError?: (message: string) => void; expectDolbyVision?: boolean; fallbackUrl?: string };
+
 export async function probeAndPrepareRemux(
   url: string, requestHeaders?: Record<string, string>, preferredAudioLang?: string,
-  options: { signal?: AbortSignal; onError?: (message: string) => void; expectDolbyVision?: boolean } = {}
+  options: RemuxOptions = {}
+): Promise<RemuxHandle | null> {
+  // Try the subscriber connection before a relay for IPTV. Only a failed
+  // probe advances; an unsupported codec cannot be repaired by another URL.
+  let probing = true;
+  let probeError: string | undefined;
+  const prepared = await prepareRemux(url, requestHeaders, preferredAudioLang, {
+    ...options, onError: (message) => {
+      if (probing) probeError = message;
+      else options.onError?.(message);
+    }
+  });
+  probing = false;
+  if (prepared || options.signal?.aborted) return prepared;
+  if (options.fallbackUrl && options.fallbackUrl !== url) {
+    // The relay already supplies the upstream headers; do not send them to
+    // its public endpoint or trigger an unnecessary browser preflight.
+    return prepareRemux(options.fallbackUrl, undefined, preferredAudioLang, options);
+  }
+  if (probeError) options.onError?.(probeError);
+  return null;
+}
+
+async function prepareRemux(
+  url: string, requestHeaders?: Record<string, string>, preferredAudioLang?: string,
+  options: RemuxOptions = {}
 ): Promise<RemuxHandle | null> {
   const Mse = mediaSourceConstructor();
   if (!Mse || options.signal?.aborted) return null;
@@ -183,7 +210,10 @@ export async function probeAndPrepareRemux(
       }).then(() => send({ type: "ack", id: data.id })).catch(fail);
     };
     clockTimer = setInterval(() => send({ type: "clock", time: positionPending ? target : video.currentTime }), 250);
-    const ready = event(video, "loadeddata", 20000);
+    // iOS can withhold the first decoded frame until play() is requested.
+    // Return once metadata is ready so the caller can request playback (or
+    // show a user-gesture Play button), rather than waiting in a circular dependency.
+    const ready = event(video, "loadedmetadata", 20000);
     begin();
     try { await ready; } catch (error) { fail(error); throw error; }
   };

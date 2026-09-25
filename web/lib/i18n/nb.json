@@ -4,5 +4,6 @@
   "Watching": "Ser på",
   "Completed": "Fullført",
   "Dropped": "Droppet",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: bruk den Jellyfin-kompatible adressen. Valgfri profil: username#ProfileName. Beskyttet profil: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: bruk den Jellyfin-kompatible adressen. Valgfri profil: username#ProfileName. Beskyttet profil: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Ingen av de aktiverte tilleggene dine tilbyr avspillingskilder."
 }

@@ -138,6 +138,7 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
     <PaywallScreen
       state={access}
       accountId={accountId}
+      accountEmail={auth?.email}
       isSignedIn={Boolean(auth)}
       onEntitled={(next) => {
         if (authClient.session?.userId !== accountId) return;
@@ -152,6 +153,7 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
 export function PaywallScreen({
   state,
   accountId,
+  accountEmail,
   isSignedIn,
   onEntitled,
   onConnect,
@@ -159,6 +161,7 @@ export function PaywallScreen({
 }: {
   state: EntitlementState | null;
   accountId: string | null;
+  accountEmail?: string;
   isSignedIn: boolean;
   onEntitled: (next: EntitlementState) => void;
   onConnect: () => void;
@@ -258,13 +261,20 @@ export function PaywallScreen({
           <span><Check size={15} /> {translateUi(" Android and TV app remains completely free")}</span>
         </div>
 
+        {SHOW_TRIAL && trialAvailable && !expired && (
+          <button type="button" className="paywall-primary" onClick={() => void beginTrial()} disabled={busy !== null}>
+            {busy === "trial" ? <Loader2 className="paywall-spinner" size={16} /> : <Sparkles size={16} />}
+            {isSignedIn ? translateUi("Start {value0}-day free trial", {value0: trialDays}) : translateUi("Connect to Cloud for {value0}-day trial", {value0: trialDays})}
+          </button>
+        )}
+
         <div className="paywall-price">
           <span className="paywall-amount">$2.99</span>
           <span className="paywall-period">{translateUi("/ month")}</span>
         </div>
 
         <a
-          className="paywall-primary"
+          className={SHOW_TRIAL && trialAvailable && !expired ? "paywall-trial" : "paywall-primary"}
           href={kofiSubscribeUrl()}
           target="_blank"
           rel="noopener noreferrer"
@@ -272,14 +282,8 @@ export function PaywallScreen({
         >
           <BadgeCheck size={18} /> {translateUi(" Subscribe on Ko-fi ")}<ExternalLink size={15} />
         </a>
+        {isSignedIn && accountEmail && <p className="paywall-account-email">{translateUi("ARVIO Cloud account")}<strong>{accountEmail}</strong></p>}
         <p className="paywall-disclaimer">{translateUi("Use the email on your ARVIO Cloud account at checkout, or link your billing email below. Membership does not include media or subscriptions to other services.")}</p>
-
-        {SHOW_TRIAL && trialAvailable && !expired && (
-          <button type="button" className="paywall-trial" onClick={() => void beginTrial()} disabled={busy !== null}>
-            {busy === "trial" ? <Loader2 className="paywall-spinner" size={16} /> : <Sparkles size={16} />}
-            {isSignedIn ? translateUi("Start {value0}-day free trial", {value0: trialDays}) : translateUi("Connect to Cloud for {value0}-day trial", {value0: trialDays})}
-          </button>
-        )}
 
         <button type="button" className="paywall-trial" onClick={() => void checkAccess()} disabled={busy !== null}>
           {busy === "check" ? <Loader2 className="paywall-spinner" size={16} /> : <RefreshCw size={16} />} {translateUi(" I have paid, check access")}</button>

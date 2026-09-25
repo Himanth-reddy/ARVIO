@@ -3,10 +3,11 @@
 import { useEffect } from "react";
 import { authClient, useApp } from "@/lib/store";
 import { trackPremiumDaily } from "@/lib/premiumAnalytics";
+import { sourceSetupState } from "@/lib/sourceSetup";
 
 export function PremiumUsage() {
   const { auth, activeProfile, addons, addonsReady, settings } = useApp();
-  const configured = addons.length > 0 || settings.homeServers.some(server => server.enabled) || settings.iptvPlaylists.some(playlist => playlist.enabled);
+  const configured = sourceSetupState(addons, settings).hasAny;
   useEffect(() => {
     if (!auth || !activeProfile) return;
     void trackPremiumDaily(authClient, "web_opened");

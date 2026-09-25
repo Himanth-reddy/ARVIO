@@ -5,7 +5,7 @@ import com.arflix.tv.data.model.Category
 // A slow initial refresh must not replace pages appended while enrichment was running.
 internal fun preserveExtendedCatalogRows(incoming: List<Category>, current: List<Category>): List<Category> {
     val currentById = current.associateBy { it.id }
-    return incoming.map { row ->
+    val merged = incoming.map { row ->
         val visible = currentById[row.id]
         if (row.id != "continue_watching" &&
             visible != null && visible.items.size > row.items.size &&
@@ -16,4 +16,17 @@ internal fun preserveExtendedCatalogRows(incoming: List<Category>, current: List
             }
         ) visible else row
     }
+
+    // Continue Watching is published by its own coroutine rather than by the
+    // catalogue load, so it is simply absent from `incoming`. Mapping over
+    // `incoming` alone therefore deleted the row whenever a catalogue refresh
+    // landed after it — reliably so on trackers that resolve the row in one
+    // fast call, where it won the race almost every time and Home came up with
+    // no Continue Watching at all.
+    val carriedContinueWatching = currentById[CONTINUE_WATCHING_ROW_ID]
+        ?.takeIf { it.items.isNotEmpty() && incoming.none { row -> row.id == CONTINUE_WATCHING_ROW_ID } }
+        ?: return merged
+    return listOf(carriedContinueWatching) + merged
 }
+
+private const val CONTINUE_WATCHING_ROW_ID = "continue_watching"

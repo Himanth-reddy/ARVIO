@@ -30,14 +30,27 @@ internal object ContinueWatchingMerge {
 
         val mergedRemote = remoteItems.map { remote ->
             val local = freshestLocal[remote.exactKey()]
-            if (local == null) remote else mergeVisuals(
-                preferred = remote.copy(
-                    resumePositionSeconds = maxOf(remote.resumePositionSeconds, local.resumePositionSeconds),
-                    durationSeconds = maxOf(remote.durationSeconds, local.durationSeconds),
-                    progress = maxOf(remote.progress, local.progress)
-                ),
-                fallback = local
-            )
+            when {
+                local == null -> remote
+                // The tracker has moved this episode on well after anything was
+                // saved here, which means another client watched it and wrote no
+                // position — only a percentage. Taking the fields apart with
+                // maxOf would pair that new percentage with the old position and
+                // resume from the stale one, minutes behind what every other
+                // client shows. Let the tracker's record stand whole instead.
+                isLocalPositionStale(remote, local) -> mergeVisuals(
+                    preferred = remote,
+                    fallback = local
+                )
+                else -> mergeVisuals(
+                    preferred = remote.copy(
+                        resumePositionSeconds = maxOf(remote.resumePositionSeconds, local.resumePositionSeconds),
+                        durationSeconds = maxOf(remote.durationSeconds, local.durationSeconds),
+                        progress = maxOf(remote.progress, local.progress)
+                    ),
+                    fallback = local
+                )
+            }
         }
 
         // Trackers can omit IPTV VOD playback entirely. Keep these saved sessions,
@@ -59,6 +72,19 @@ internal object ContinueWatchingMerge {
             }
         return (mergedRemote + localVod).sortedByDescending { it.updatedAtMs }
     }
+
+    /**
+     * True when [local] holds a position the tracker has since overtaken, so it
+     * describes an older session than [remote] and must not override it.
+     *
+     * Both timestamps have to be real for this to mean anything: an entry with
+     * no timestamp sorts as epoch and would look stale against everything.
+     */
+    fun isLocalPositionStale(remote: ContinueWatchingItem, local: ContinueWatchingItem): Boolean =
+        local.resumePositionSeconds > 0L &&
+            local.updatedAtMs > 0L &&
+            remote.updatedAtMs > 0L &&
+            remote.updatedAtMs - local.updatedAtMs > Constants.TRACKER_OVERRIDES_LOCAL_POSITION_AFTER_MS
 
     fun fromHistory(entry: WatchHistoryEntry): ContinueWatchingItem {
         val storedPct = (entry.progress * 100f).toInt()

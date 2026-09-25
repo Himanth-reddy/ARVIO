@@ -6,5 +6,6 @@
   "Dropped": "Gestopt",
   "Watchlists": "Kijklijsten",
   "My watchlist": "Mijn kijklijst",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gebruik het Jellyfin-compatibele adres. Optioneel profiel: username#ProfileName. Beveiligd profiel: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gebruik het Jellyfin-compatibele adres. Optioneel profiel: username#ProfileName. Beveiligd profiel: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Geen van je ingeschakelde addons biedt afspeelbronnen."
 }

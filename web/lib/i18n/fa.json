@@ -7,5 +7,6 @@
   "Completed": "تکمیل‌شده",
   "Dropped": "رهاشده",
   "Mark Season Unwatched": "علامت‌گذاری فصل به‌عنوان تماشانشده",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: از نشانی سازگار با Jellyfin استفاده کنید. نمایهٔ اختیاری: username#ProfileName. نمایهٔ محافظت‌شده: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: از نشانی سازگار با Jellyfin استفاده کنید. نمایهٔ اختیاری: username#ProfileName. نمایهٔ محافظت‌شده: password#PIN.",
+  "None of your enabled addons provide playback sources.": "هیچ‌یک از افزونه‌های فعال شما منبع پخش ارائه نمی‌کنند."
 }

@@ -120,6 +120,10 @@ exports.handler = async (event) => {
       }
     }
 
+    if (state.entitled && state.reason === "subscription") {
+      await recordPremiumEvent(event, { email, eventName: "paid_access_observed", metadata: { source: state.source || "unknown" } })
+        .catch(() => console.error("Paid access analytics temporarily unavailable"));
+    }
     return json(200, state);
   } catch (error) {
     console.error("entitlement-status failed", error);

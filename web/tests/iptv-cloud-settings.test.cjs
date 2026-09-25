@@ -64,3 +64,42 @@ test('favorite edits retain remote additions and removals while stamping local c
   assert.deepEqual(pushed.iptvByProfile.p1.lockedGroups, ['private']);
   assert.equal(pushed.fieldUpdatedAt['i:p1:favoriteChannels'], 300);
 });
+
+test('unrelated web save cannot resurrect catalogs removed on TV', async () => {
+  const stale = [{ id: 'removed' }, { id: 'kept' }];
+  const baseline = { ...settings([]), catalogs: stale };
+  const payload = {
+    catalogsByProfile: { p1: [{ id: 'kept' }] },
+    hiddenPreinstalledByProfile: { p1: ['removed'] },
+    hiddenAddonByProfile: { p1: ['addon-removed'] },
+    fieldUpdatedAt: { 'c:p1:catalogsByProfile': 200 },
+  };
+  const pushed = await save(payload, { ...baseline, accentColor: '#ff0000' }, baseline);
+  assert.deepEqual(pushed.catalogsByProfile, payload.catalogsByProfile);
+  assert.deepEqual(pushed.hiddenPreinstalledByProfile, payload.hiddenPreinstalledByProfile);
+  assert.deepEqual(pushed.hiddenAddonByProfile, payload.hiddenAddonByProfile);
+  assert.deepEqual(pushed.catalogs, [{ id: 'kept' }]);
+  assert.deepEqual(pushed.settings.catalogs, [{ id: 'kept' }]);
+  assert.equal(pushed.fieldUpdatedAt['c:p1:catalogsByProfile'], 200);
+});
+
+test('explicit web deletion stamps an empty catalog list without changing another profile', async () => {
+  const baseline = { ...settings([]), catalogs: [{ id: 'removed' }] };
+  const payload = { catalogsByProfile: { p1: baseline.catalogs, p2: [{ id: 'other' }] } };
+  const pushed = await save(payload, { ...baseline, catalogs: [] }, baseline);
+  assert.deepEqual(pushed.catalogsByProfile.p1, []);
+  assert.deepEqual(pushed.catalogsByProfile.p2, payload.catalogsByProfile.p2);
+  assert.equal(pushed.fieldUpdatedAt['c:p1:catalogsByProfile'], 300);
+});
+
+test('editing another catalog retains remote deletions, additions and hidden IDs', async () => {
+  const baseline = { ...settings([]), catalogs: [{ id: 'removed' }, { id: 'kept', title: 'Old' }] };
+  const payload = {
+    catalogsByProfile: { p1: [{ id: 'kept', title: 'Old' }, { id: 'remote-new' }] },
+    hiddenPreinstalledByProfile: { p1: ['removed'] },
+  };
+  const next = { ...baseline, catalogs: [{ id: 'kept', title: 'Renamed' }, { id: 'removed' }], hiddenCatalogIds: ['another'] };
+  const pushed = await save(payload, next, baseline);
+  assert.deepEqual(pushed.catalogsByProfile.p1, [{ id: 'kept', title: 'Renamed' }, { id: 'remote-new' }]);
+  assert.deepEqual(pushed.hiddenPreinstalledByProfile.p1, ['another', 'removed']);
+});

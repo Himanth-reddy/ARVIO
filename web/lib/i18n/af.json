@@ -4,5 +4,6 @@
   "Watching": "Besig om te kyk",
   "Completed": "Voltooi",
   "Dropped": "Laat vaar",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gebruik die Jellyfin-versoenbare adres. Opsionele profiel: username#ProfileName. Beskermde profiel: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gebruik die Jellyfin-versoenbare adres. Opsionele profiel: username#ProfileName. Beskermde profiel: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Geen van jou geaktiveerde byvoegings verskaf afspeelbronne nie."
 }

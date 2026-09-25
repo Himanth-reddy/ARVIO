@@ -1,6 +1,7 @@
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
-import { playbackPlan, canProviderTranscode, canTryRemux, videoDecodableForDevice, recordBrowserPlaybackFailure } from "./streamCompatibility";
+import { playbackPlan, canProviderTranscode, canTryRemux, videoDecodableForDevice, recordBrowserPlaybackFailure, streamTransport, streamContainer } from "./streamCompatibility";
 import { prepareHomeServerPlayback } from "./homeServerPlayback";
+import { declaredHeaderRelayUrl } from "./resolver";
 import type { AppSettings, StreamSource } from "./types";
 
 export type PreparePlaybackOptions = { forceRemux?: boolean; forceTranscode?: boolean; signal?: AbortSignal };
@@ -42,8 +43,9 @@ export async function prepareBrowserStream(stream: StreamSource, settings: AppSe
   }
   // Remux can extract a verified HDR10 base, but cannot convert profile 5 colours.
   if (plan.route !== "here" && (!options.forceRemux || !videoDecodableForDevice(stream))) throw new Error(plan.detail || "This format requires an external player");
-  const remux = !!options.forceRemux || plan.method === "remux"
-    || (Object.keys(stream.behaviorHints?.proxyHeaders?.request ?? {}).length > 0 && canTryRemux(stream));
+  const iptvVod = stream.addonId === "iptv_xtream_vod";
+  let remux = !!options.forceRemux || plan.method === "remux"
+    || (!iptvVod && Object.keys(stream.behaviorHints?.proxyHeaders?.request ?? {}).length > 0 && canTryRemux(stream));
   const cached = cachedDebridDirectUrl(stream.originalUrl ?? stream.url);
   let url = cached ?? stream.url;
   if (debrid && remux && !cached) {
@@ -51,6 +53,25 @@ export async function prepareBrowserStream(stream: StreamSource, settings: AppSe
     check();
     if (!result.url) throw new Error(result.error ?? "The provider could not resolve this source");
     url = result.url;
+  }
+  const selected = { ...stream, url };
+  // The resolver rewrites HLS playlists, not MPD BaseURL/segment references.
+  // Wrapping a DASH manifest would redirect its relative requests to /media's
+  // origin and can also lose the source headers on its segments.
+  const dash = streamTransport(selected) === "dash" || /^(dash|mpd|mpeg-dash|application\/dash\+xml)$/i.test(streamContainer(selected));
+  // IPTV panels may accept the subscriber's IP while rejecting relay egress.
+  // Native playback tries their URL first; PlayerOverlay retains the relay as
+  // a fallback. Browser repackaging still needs a fetch-compatible endpoint.
+  const relay = dash || (iptvVod && !remux) ? null : declaredHeaderRelayUrl(url, stream.behaviorHints?.proxyHeaders?.request);
+  if (relay) {
+    // The selected addon's declared headers are forwarded by the configured
+    // resolver, not by browser fetch/XHR. Headerless native MP4/HLS can now play
+    // normally; sources requiring repackaging still use the remux worker.
+    remux = !!options.forceRemux || plan.method === "remux";
+    return {
+      ...stream, url: relay, originalUrl: stream.originalUrl ?? stream.url, remux,
+      behaviorHints: { ...stream.behaviorHints, proxyHeaders: { ...stream.behaviorHints?.proxyHeaders, request: undefined } }
+    };
   }
   return { ...stream, url, originalUrl: stream.originalUrl ?? (url !== stream.url ? stream.url : undefined), remux };
 }

@@ -4,5 +4,6 @@
   "Watching": "قيد المشاهدة",
   "Completed": "مكتمل",
   "Dropped": "متروك",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: استخدم العنوان المتوافق مع Jellyfin. ملف شخصي اختياري: username#ProfileName. ملف شخصي محمي: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: استخدم العنوان المتوافق مع Jellyfin. ملف شخصي اختياري: username#ProfileName. ملف شخصي محمي: password#PIN.",
+  "None of your enabled addons provide playback sources.": "لا توفر أي من الإضافات المفعّلة لديك مصادر للتشغيل."
 }

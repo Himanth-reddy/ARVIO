@@ -5,5 +5,6 @@
   "Watching": "בצפייה",
   "Completed": "הושלמו",
   "Dropped": "ננטשו",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: יש להשתמש בכתובת התואמת ל-Jellyfin. פרופיל אופציונלי: username#ProfileName. פרופיל מוגן: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: יש להשתמש בכתובת התואמת ל-Jellyfin. פרופיל אופציונלי: username#ProfileName. פרופיל מוגן: password#PIN.",
+  "None of your enabled addons provide playback sources.": "אף אחת מההרחבות הפעילות שלך אינה מספקת מקורות לניגון."
 }

@@ -6,5 +6,6 @@
   "Dropped": "視聴中止",
   "Library": "ライブラリ",
   "Libraries": "ライブラリ",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin互換のアドレスを使用してください. 任意のプロフィール: username#ProfileName. 保護されたプロフィール: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin互換のアドレスを使用してください. 任意のプロフィール: username#ProfileName. 保護されたプロフィール: password#PIN.",
+  "None of your enabled addons provide playback sources.": "有効なアドオンには再生ソースを提供するものがありません。"
 }

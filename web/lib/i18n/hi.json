@@ -4,5 +4,6 @@
   "Watching": "देख रहे हैं",
   "Completed": "पूर्ण",
   "Dropped": "छोड़े गए",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-संगत पता इस्तेमाल करें. वैकल्पिक प्रोफ़ाइल: username#ProfileName. सुरक्षित प्रोफ़ाइल: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-संगत पता इस्तेमाल करें. वैकल्पिक प्रोफ़ाइल: username#ProfileName. सुरक्षित प्रोफ़ाइल: password#PIN.",
+  "None of your enabled addons provide playback sources.": "आपके किसी भी सक्रिय ऐडऑन में प्लेबैक स्रोत उपलब्ध नहीं हैं।"
 }

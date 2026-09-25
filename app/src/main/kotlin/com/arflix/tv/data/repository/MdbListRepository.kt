@@ -252,7 +252,13 @@ class MdbListRepository @Inject constructor(
         episode: Int?
     ) = withContext(Dispatchers.IO) {
         val k = key() ?: return@withContext
-        val prog = progress.roundToInt().coerceIn(0, 100)
+        // Two decimals: a whole percent is 13 seconds of a 22-minute episode and
+        // over a minute of a feature film, and this is the only precision the
+        // resume point ever has, since no tracker stores a position. More than
+        // two is rejected outright — the API answers 400 to 26.735 while taking
+        // 26.73 — and a rejected scrobble is silently swallowed, which would
+        // stop progress reaching MDBList at all.
+        val prog = (progress.coerceIn(0f, 100f) * 100f).roundToInt() / 100f
         val body = if (mediaType == MediaType.MOVIE) {
             MdbScrobbleBody(progress = prog, movie = MdbScrobbleMovie(MdbIds(tmdb = tmdbId)))
         } else {
@@ -483,12 +489,18 @@ class MdbListRepository @Inject constructor(
 
     // ===== Continue Watching (paused sessions) =====
 
-    suspend fun getContinueWatching(): List<ContinueWatchingItem> = withContext(Dispatchers.IO) {
+    suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = withContext(Dispatchers.IO) {
         val k = key() ?: return@withContext emptyList()
         try {
-            api.getPlayback(k)
+            api.getPlayback(k, cacheControl = if (forceRefresh) "no-cache" else null)
                 .mapNotNull { mapPlaybackItem(it) }
                 .sortedByDescending { it.updatedAtMs }
+                // One card per title. A paused session is kept for every episode
+                // ever abandoned, so without this a single show can take a large
+                // share of MAX_CONTINUE_WATCHING and push other shows off the row
+                // entirely. Newest-first ordering makes the survivor the one to
+                // resume.
+                .distinctBy { it.mediaType to it.id }
                 .take(Constants.MAX_CONTINUE_WATCHING)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -499,8 +511,11 @@ class MdbListRepository @Inject constructor(
 
     private fun mapPlaybackItem(item: MdbPlaybackItem): ContinueWatchingItem? {
         val progress = item.progress?.toFloatOrNull()?.roundToInt() ?: return null
-        // Same window Trakt uses: skip barely-started and effectively-finished items.
-        if (progress < Constants.MIN_PROGRESS_THRESHOLD || progress >= Constants.WATCHED_THRESHOLD) return null
+        // Only a genuinely unstarted session is dropped. The old
+        // MIN_PROGRESS_THRESHOLD floor hid a show's newest episode whenever the
+        // user had watched under three percent of it, leaving the row pointing
+        // at an older episode they had already moved on from.
+        if (progress <= 0 || progress >= Constants.WATCHED_THRESHOLD) return null
         val durationSeconds = (item.runtime ?: 0).toLong() * 60L
         val updatedMs = item.updatedAtTs?.let { it * 1000L } ?: parseIsoMillis(item.updatedAt)
 

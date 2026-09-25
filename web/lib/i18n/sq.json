@@ -4,5 +4,6 @@
   "Watching": "Duke parë",
   "Completed": "Përfunduar",
   "Dropped": "Braktisur",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: përdorni adresën e përputhshme me Jellyfin. Profil opsional: username#ProfileName. Profil i mbrojtur: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: përdorni adresën e përputhshme me Jellyfin. Profil opsional: username#ProfileName. Profil i mbrojtur: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Asnjë nga shtesat tuaja të aktivizuara nuk ofron burime riprodhimi."
 }

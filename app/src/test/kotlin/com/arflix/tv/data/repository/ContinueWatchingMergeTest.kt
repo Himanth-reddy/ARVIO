@@ -138,4 +138,44 @@ class ContinueWatchingMergeTest {
         assertEquals(vod.streamAddonId, merged.streamAddonId)
         assertEquals(300L, merged.updatedAtMs)
     }
+
+    // ── A tracker advanced by a client that writes no position ──
+
+    private val episodeRemote = ContinueWatchingItem(
+        id = 30, title = "Show", mediaType = MediaType.TV, progress = 60,
+        season = 6, episode = 4, durationSeconds = 2_700, updatedAtMs = 10_000_000
+    )
+    private val episodeLocal = episodeRemote.copy(
+        progress = 2, resumePositionSeconds = 63, durationSeconds = 2_700
+    )
+
+    @Test
+    fun trackerWellAheadOfSavedPositionDropsTheStalePosition() {
+        val staleLocal = episodeLocal.copy(updatedAtMs = episodeRemote.updatedAtMs - 10 * 60_000L)
+        val merged = ContinueWatchingMerge.merge(listOf(episodeRemote), listOf(staleLocal)).first()
+        assertEquals(0L, merged.resumePositionSeconds)
+        assertEquals(60, merged.progress)
+    }
+
+    @Test
+    fun savedPositionWinsWhenTheTrackerIsNotMeaningfullyNewer() {
+        // Same device writing a heartbeat and its local save seconds apart.
+        val freshLocal = episodeLocal.copy(updatedAtMs = episodeRemote.updatedAtMs - 5_000L)
+        val merged = ContinueWatchingMerge.merge(listOf(episodeRemote), listOf(freshLocal)).first()
+        assertEquals(63L, merged.resumePositionSeconds)
+    }
+
+    @Test
+    fun savedPositionWinsWhenItIsTheNewerOfTheTwo() {
+        val newerLocal = episodeLocal.copy(updatedAtMs = episodeRemote.updatedAtMs + 60_000L)
+        val merged = ContinueWatchingMerge.merge(listOf(episodeRemote), listOf(newerLocal)).first()
+        assertEquals(63L, merged.resumePositionSeconds)
+    }
+
+    @Test
+    fun entryWithoutTimestampsIsNeverJudgedStale() {
+        val undated = episodeLocal.copy(updatedAtMs = 0)
+        assertFalse(ContinueWatchingMerge.isLocalPositionStale(episodeRemote, undated))
+        assertFalse(ContinueWatchingMerge.isLocalPositionStale(episodeRemote.copy(updatedAtMs = 0), episodeLocal))
+    }
 }

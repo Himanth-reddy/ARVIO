@@ -3,6 +3,7 @@ import { config } from "./config";
 import { jsonRequest } from "./http";
 
 export type PremiumFunnelEvent =
+  | "journey_connected"
   | "web_opened"
   | "sources_configured"
   | "sources_missing"
@@ -23,10 +24,20 @@ export type PremiumFunnelEvent =
   | "download_handoff"
   | "download_failed";
 
-const ATTRIBUTION_KEY = "arvio.premium.attribution.v1";
+const ATTRIBUTION_KEY = "arvio.premium.attribution.v2";
+const JOURNEY_KEY = "arvio.premium.journey.v1";
+const ATTRIBUTION_OWNER_KEY = "arvio.premium.attribution-owner.v1";
+const ATTRIBUTION_TTL = 24 * 60 * 60 * 1000;
+const JOURNEY_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+let capturedQuery = "";
+let memoryAttribution: Record<string, string> = {};
+let memoryJourney = "";
+let attributionExpiresAt = 0;
+let attributionOwner = "";
 export const TRIAL_INTENT_KEY = "arvio.premium.trial-intent.v1";
 const inFlight = new Set<string>();
 const dailyRecorded = new Map<string, string>();
+const linkedJourneys = new Set<string>();
 
 function browserStorage(kind: "sessionStorage" | "localStorage") {
   try { return typeof window === "undefined" ? undefined : window[kind]; } catch { return undefined; }
@@ -40,27 +51,82 @@ function storageSet(storage: Storage | undefined, key: string, value: string) {
   try { storage?.setItem(key, value); } catch { /* storage is optional */ }
 }
 
-function clean(value: string | null, max = 80) {
-  return String(value || "").replace(/[^a-z0-9._-]/gi, "").slice(0, max);
+function analyticsAllowed() {
+  if (config.selfHosted) return false;
+  if (typeof navigator === "undefined") return true;
+  return navigator.doNotTrack !== "1" && !("globalPrivacyControl" in navigator && navigator.globalPrivacyControl === true);
 }
 
+function clean(value: string | null, max = 80) {
+  const text = String(value || "");
+  return /^[a-z0-9._-]+$/i.test(text) ? text.slice(0, max).toLowerCase() : "";
+}
+
+// A page-navigation ID links the public Premium page to this signed-in session.
+// It is never a cookie, persistent browser ID, URL sent to Ko-fi, or an identity
+// proof. Attribution expires after a day and resets when the account changes.
 export function capturePremiumAttribution() {
-  if (config.selfHosted || typeof window === "undefined") return {};
-  const params = new URLSearchParams(window.location.search);
-  const existing = (() => {
-    try { return JSON.parse(storageGet(browserStorage("localStorage"), ATTRIBUTION_KEY) || "{}"); } catch { return {}; }
-  })() as Record<string, string>;
-  let referrer = existing.referrer || "";
-  try { referrer = document.referrer ? new URL(document.referrer).hostname : referrer; } catch { /* ignore invalid referrers */ }
-  const next = {
-    source: clean(params.get("utm_source") || existing.source || "direct"),
-    medium: clean(params.get("utm_medium") || existing.medium || "web"),
-    campaign: clean(params.get("utm_campaign") || existing.campaign || "premium"),
-    content: clean(params.get("utm_content") || existing.content || "unspecified"),
+  if (!analyticsAllowed() || typeof window === "undefined") return {};
+  const disk = browserStorage("sessionStorage");
+  const query = window.location.search;
+  const params = new URLSearchParams(query);
+  const now = Date.now();
+  if (!attributionExpiresAt) {
+    try {
+      const saved = JSON.parse(storageGet(disk, ATTRIBUTION_KEY) || "{}");
+      if (saved.expiresAt > now && saved.expiresAt <= now + ATTRIBUTION_TTL) {
+        memoryAttribution = saved.metadata || {};
+        memoryJourney = storageGet(disk, JOURNEY_KEY) || "";
+        attributionExpiresAt = saved.expiresAt;
+      }
+      attributionOwner = storageGet(disk, ATTRIBUTION_OWNER_KEY) || "";
+    } catch { /* storage is optional */ }
+  }
+  if (attributionExpiresAt <= now) { memoryAttribution = {}; memoryJourney = ""; }
+  const freshQuery = query !== capturedQuery;
+  const incomingJourney = params.get("arvio_journey") || "";
+  const incoming = freshQuery && JOURNEY_ID.test(incomingJourney) ? incomingJourney.toLowerCase() : "";
+  if (incoming) {
+    memoryJourney = incoming;
+    memoryAttribution = {};
+    attributionExpiresAt = now + ATTRIBUTION_TTL;
+    // Avoid a random navigation ID leaking in outbound referrers or copied URLs.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("arvio_journey");
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch { /* optional in embedded/restricted browsers */ }
+  }
+  let referrer = memoryAttribution.referrer || "";
+  if (!referrer) {
+    try { referrer = document.referrer ? new URL(document.referrer).hostname : ""; } catch { /* invalid referrer */ }
+  }
+  const tag = (name: string, fallback: string) => clean((freshQuery ? params.get(`utm_${name}`) : null) || memoryAttribution[name] || fallback);
+  memoryAttribution = {
+    source: tag("source", "direct"), medium: tag("medium", "web"),
+    campaign: tag("campaign", "premium"), content: tag("content", "unspecified"),
     referrer: clean(referrer)
   };
-  storageSet(browserStorage("localStorage"), ATTRIBUTION_KEY, JSON.stringify(next));
-  return next;
+  if (!attributionExpiresAt || attributionExpiresAt <= now) attributionExpiresAt = now + ATTRIBUTION_TTL;
+  capturedQuery = window.location.search;
+  storageSet(disk, ATTRIBUTION_KEY, JSON.stringify({ expiresAt: attributionExpiresAt, metadata: memoryAttribution }));
+  storageSet(disk, JOURNEY_KEY, memoryJourney);
+  return memoryAttribution;
+}
+
+function attributionForAccount(accountId: string) {
+  capturePremiumAttribution();
+  if (attributionOwner && attributionOwner !== accountId) {
+    memoryAttribution = {};
+    memoryJourney = "";
+    attributionExpiresAt = 0;
+    const disk = browserStorage("sessionStorage");
+    storageSet(disk, ATTRIBUTION_KEY, "{}");
+    storageSet(disk, JOURNEY_KEY, "");
+  }
+  attributionOwner = accountId;
+  storageSet(browserStorage("sessionStorage"), ATTRIBUTION_OWNER_KEY, accountId);
+  return { metadata: capturePremiumAttribution(), journeyId: JOURNEY_ID.test(memoryJourney) ? memoryJourney : undefined };
 }
 
 export async function trackPremiumEvent(
@@ -69,20 +135,24 @@ export async function trackPremiumEvent(
   metadata: Record<string, string | number | boolean> = {},
   oncePerSession = false
 ) {
-  if (config.selfHosted || !auth.session) return false;
+  if (!analyticsAllowed() || !auth.session) return false;
   const sessionKey = `arvio.premium.session.${auth.session.userId}.${eventName}`;
   const sessionStore = browserStorage("sessionStorage");
   if (oncePerSession && storageGet(sessionStore, sessionKey)) return true;
   if (oncePerSession && inFlight.has(sessionKey)) return false;
   if (oncePerSession) inFlight.add(sessionKey);
   try {
+    const accountId = auth.session.userId;
+    const attribution = attributionForAccount(accountId);
     const token = await auth.accessToken();
+    if (auth.session?.userId !== accountId) return false;
     await jsonRequest(`${config.netlifyBackendUrl.replace(/\/+$/, "")}/premium-funnel-event`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({
         event_name: eventName,
-        metadata: { ...capturePremiumAttribution(), ...metadata }
+        journey_id: attribution.journeyId,
+        metadata: { ...attribution.metadata, ...metadata }
       })
     });
     if (oncePerSession) storageSet(sessionStore, sessionKey, "1");
@@ -116,8 +186,16 @@ export async function trackPremiumDaily(
   metadata: Record<string, string | number | boolean> = {},
   now = new Date()
 ) {
-  if (!config.paywallEnabled || !auth.session) return false;
+  if (!analyticsAllowed() || !config.paywallEnabled || !auth.session) return false;
   const accountId = auth.session.userId;
+  const attribution = attributionForAccount(accountId);
+  if (attribution.journeyId) {
+    const journeyKey = `${accountId}.${attribution.journeyId}`;
+    if (!linkedJourneys.has(journeyKey)) {
+      linkedJourneys.add(journeyKey);
+      void trackPremiumEvent(auth, "journey_connected").then(recorded => { if (!recorded) linkedJourneys.delete(journeyKey); });
+    }
+  }
   const date = now.toISOString().slice(0, 10);
   const key = `arvio.premium.daily.${accountId}.${eventName}`;
   const disk = browserStorage("localStorage");

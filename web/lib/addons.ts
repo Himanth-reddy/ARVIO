@@ -3,6 +3,7 @@ import { hasResolverConfig } from "./config";
 import { getResolverStreamsProgressive } from "./resolver";
 import { loadStored, saveStored } from "./storage";
 import { isBrowserPlayableStream, isIosPlayableStream } from "./streamCompatibility";
+import { isInformationalAddonStream } from "./addonStreamInfo";
 import type { AddonCatalog, InstalledAddon, MediaItem, StreamSource, SubtitleTrack } from "./types";
 
 const ADDON_KEY = "arvio.web.installed.addons";
@@ -245,20 +246,22 @@ export async function getStreamsProgressive(
   episode?: number,
   onUpdate?: (streams: StreamSource[], batch: StreamSource[]) => void
 ) {
+  const update = onUpdate ? (streams: StreamSource[], batch: StreamSource[]) =>
+    onUpdate(streams.filter(stream => !isInformationalAddonStream(stream)), batch.filter(stream => !isInformationalAddonStream(stream))) : undefined;
   if (hasResolverConfig()) {
-    const browserPromise = getBrowserStreamsProgressive(addons, item, season, episode, onUpdate)
+    const browserPromise = getBrowserStreamsProgressive(addons, item, season, episode, update)
       .catch((error) => {
         console.warn("ARVIO browser addon lookup failed.", error);
         return [] as StreamSource[];
       });
-    const resolverPromise = getResolverStreamsProgressive(addons, item, season, episode, onUpdate)
+    const resolverPromise = getResolverStreamsProgressive(addons, item, season, episode, update)
       .catch((error) => {
         console.warn("ARVIO resolver unavailable, using browser addon lookup.", error);
         return [] as StreamSource[];
       });
     const [browserResolved, resolved] = await Promise.all([browserPromise, resolverPromise]);
     const merged = sortStreams(dedupeStreams([...browserResolved, ...resolved])
-      .filter((stream) => stream.url || stream.infoHash || stream.description || stream.source));
+      .filter((stream) => !isInformationalAddonStream(stream) && (stream.url || stream.infoHash || stream.description || stream.source)));
     if (merged.length) onUpdate?.(merged, browserResolved);
     return merged;
   }
@@ -318,7 +321,8 @@ async function queryAddonStreams(addon: InstalledAddon, type: "movie" | "series"
       const url = `${base}/stream/${requestType}/${encodeURIComponent(id)}.json${query ? `?${query}` : ""}`;
       try {
         const payload = await addonJsonRequest<{ streams?: RawStream[] }>(url);
-        const streams = (payload.streams ?? []).map((stream) => normalizeStream(stream, addon));
+        const streams = (payload.streams ?? []).map((stream) => normalizeStream(stream, addon))
+          .filter(stream => !isInformationalAddonStream(stream));
         if (streams.length > 0) return streams;
       } catch {
         // Try the next compatible type/ID form. Torrentio and similar addons often

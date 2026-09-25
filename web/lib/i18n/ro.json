@@ -4,5 +4,6 @@
   "Watching": "În curs de vizionare",
   "Completed": "Finalizate",
   "Dropped": "Abandonate",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: folosește adresa compatibilă cu Jellyfin. Profil opțional: username#ProfileName. Profil protejat: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: folosește adresa compatibilă cu Jellyfin. Profil opțional: username#ProfileName. Profil protejat: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Niciunul dintre suplimentele activate nu oferă surse de redare."
 }

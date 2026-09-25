@@ -158,6 +158,12 @@ private sealed interface ActiveProfileLoadState {
 class MainActivity : ComponentActivity() {
 
     @Inject
+    lateinit var appForegroundSignals: com.arflix.tv.data.repository.AppForegroundSignals
+
+    /** True until the first onResume after onCreate has been handled. */
+    private var hasHandledFirstResume = false
+
+    @Inject
     lateinit var authRepository: Lazy<AuthRepository>
 
     @Inject
@@ -430,6 +436,20 @@ class MainActivity : ComponentActivity() {
                     AppLogger.recordException(e)
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Signalled from here, not from a screen: the app can return to the
+        // foreground on any destination — a TV woken in the morning resumes onto
+        // whatever was left on display — and a Home-scoped observer would never
+        // run in that case. The first resume is skipped because startup already
+        // fetches.
+        if (hasHandledFirstResume) {
+            appForegroundSignals.notifyReturnedToForeground()
+        } else {
+            hasHandledFirstResume = true
         }
     }
 
@@ -731,12 +751,6 @@ fun ArflixApp(
         }
     }
 
-    // Keep the active main screen's bottom bar state updated as the user scrolls
-    LaunchedEffect(bottomBarOffsetPx) {
-        if (showBottomBar && currentMainRoute != null) {
-            mainScreenBottomBarOffsets[currentMainRoute] = bottomBarOffsetPx
-        }
-    }
 
     // Restore the bottom bar's state when returning to a main screen from a subpage or subscreen
     LaunchedEffect(currentRoute, isSettingsSubPage, isTvSubScreen, showBottomBar) {
@@ -755,7 +769,7 @@ fun ArflixApp(
         maxOf(measuredBarHeight, (barSpec.itemHeightDp ?: 52).dp + navigationInset)
     } else 0.dp
 
-    val nestedScrollConnection = remember(measuredBarHeightPx) {
+    val nestedScrollConnection = remember(measuredBarHeightPx, currentMainRoute, showBottomBar) {
         object : NestedScrollConnection {
             private fun animateToOffset(target: Float, durationMs: Int = 220) {
                 settleJob?.cancel()
@@ -769,6 +783,9 @@ fun ArflixApp(
                         )
                     ) { value, _ ->
                         bottomBarOffsetPx = value
+                        if (showBottomBar && currentMainRoute != null) {
+                            mainScreenBottomBarOffsets[currentMainRoute] = value
+                        }
                     }
                 }
             }
@@ -784,6 +801,9 @@ fun ArflixApp(
                     settleJob = null
                     val newOffset = (bottomBarOffsetPx - available.y).coerceIn(0f, maxOffset)
                     bottomBarOffsetPx = newOffset
+                    if (showBottomBar && currentMainRoute != null) {
+                        mainScreenBottomBarOffsets[currentMainRoute] = newOffset
+                    }
                 }
 
                 return Offset.Zero
@@ -805,6 +825,9 @@ fun ArflixApp(
                     settleJob = null
                     val newOffset = (bottomBarOffsetPx - consumed.y).coerceIn(0f, maxOffset)
                     bottomBarOffsetPx = newOffset
+                    if (showBottomBar && currentMainRoute != null) {
+                        mainScreenBottomBarOffsets[currentMainRoute] = newOffset
+                    }
                 }
 
                 return Offset.Zero
@@ -920,11 +943,17 @@ fun ArflixApp(
             AppBottomBar(
                 currentRoute = currentRoute,
                 onNavigate = { route ->
+                    if (route == currentRoute) {
+                        return@AppBottomBar
+                    }
                     mainScreenBottomBarOffsets[route] = 0f
                     bottomBarOffsetPx = 0f
                     navController.navigate(route) {
-                        popUpTo("home") { inclusive = false }
+                        popUpTo("home") {
+                            saveState = true
+                        }
                         launchSingleTop = true
+                        restoreState = true
                     }
                 },
                 hazeState = hazeState,

@@ -12975,3 +12975,5 @@ html { background: #000; }
 .custom-collection-dialog .rail-strip { grid-auto-columns: 280px; padding-right: 0; }
 .custom-collection-dialog .is-poster .rail-strip { grid-auto-columns: 160px; }
 @media (max-width: 600px) { .custom-collection-dialog { padding: 12px; } .custom-collection-tile { flex-basis: 180px; width: 180px; } .custom-collection-tile.is-poster { flex-basis: 132px; width: 132px; } }
+.player-start-prompt{position:absolute;inset:0;z-index:15;display:grid;place-items:center;background:#0006;pointer-events:none}
+.player-start-prompt button{pointer-events:auto;min-width:140px;min-height:64px;font-size:20px;background:var(--accent,#fff);color:#000;border:0;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:12px}

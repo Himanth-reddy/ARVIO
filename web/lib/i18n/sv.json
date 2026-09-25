@@ -7,5 +7,6 @@
   "TVDB v4 API Key": "API-nyckel för TVDB v4",
   "VLC Integration": "VLC-integrering",
   "VLC One-Click Setup": "VLC-installation med ett klick",
-  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: använd den Jellyfin-kompatibla adressen. Valfri profil: username#ProfileName. Skyddad profil: password#PIN."
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: använd den Jellyfin-kompatibla adressen. Valfri profil: username#ProfileName. Skyddad profil: password#PIN.",
+  "None of your enabled addons provide playback sources.": "Inget av dina aktiverade tillägg tillhandahåller uppspelningskällor."
 }

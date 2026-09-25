@@ -849,6 +849,17 @@ function mergeFavoriteEdits(remote: string[], local: string[], baseline: string[
   ])];
 }
 
+function mergeCatalogEdits(remote: AppSettings["catalogs"], local: AppSettings["catalogs"], baseline: AppSettings["catalogs"]): AppSettings["catalogs"] {
+  const baseById = new Map(baseline.map((item) => [item.id, item]));
+  const remoteById = new Map(remote.map((item) => [item.id, item]));
+  const localIds = new Set(local.map((item) => item.id));
+  return [
+    ...local.filter((item) => !baseById.has(item.id) || remoteById.has(item.id)).map((item) =>
+      sameFieldValue(item, baseById.get(item.id)) ? (remoteById.get(item.id) ?? item) : item),
+    ...remote.filter((item) => !baseById.has(item.id) && !localIds.has(item.id))
+  ];
+}
+
 export function mergeIptvSettings(existing: Record<string, unknown>, settings: AppSettings, baseline?: AppSettings | null) {
   const incoming = androidIptvSettings(settings);
   const base = baseline ? androidIptvSettings(baseline) : null;
@@ -940,8 +951,29 @@ export async function saveCloudSettings(
     root.includeSpecials = settings.includeSpecials;
     root.torrServerBaseUrl = settings.torrServerBaseUrl;
     root.qualityFilters = settings.qualityFilters;
-    root.catalogs = settings.catalogs;
-    root.hiddenPreinstalledCatalogs = settings.hiddenCatalogIds;
+    const catalogFields = [
+      ["catalogs", "catalogsByProfile"],
+      ["hiddenCatalogIds", "hiddenPreinstalledByProfile"],
+      ["hiddenHomeServerCatalogIds", "hiddenHomeServerByProfile"]
+    ] as const;
+    const catalogValues = {} as Pick<AppSettings, "catalogs" | "hiddenCatalogIds" | "hiddenHomeServerCatalogIds">;
+    for (const [setting, field] of catalogFields) {
+      const changed = !baseline || !sameFieldValue(settings[setting], baseline[setting]);
+      const existing = scopedValue<unknown[]>(root, field, profileId);
+      let value = changed ? settings[setting] : (existing ?? settings[setting]);
+      if (changed && baseline && existing) {
+        value = setting === "catalogs"
+          ? mergeCatalogEdits(existing as AppSettings["catalogs"], settings.catalogs, baseline.catalogs)
+          : mergeFavoriteEdits(stringArray(existing), settings[setting], baseline[setting]);
+      }
+      Object.assign(catalogValues, { [setting]: value });
+      if (changed && profileId) {
+        setScopedValue(root, field, profileId, value);
+        bumpFieldTs(root, `c:${profileId}:${field}`, changedAt);
+      }
+    }
+    root.catalogs = catalogValues.catalogs;
+    root.hiddenPreinstalledCatalogs = catalogValues.hiddenCatalogIds;
 
     const iptvExisting = objectRecord(scopedValue(root, "iptvByProfile", profileId));
     const iptv = mergeIptvSettings(iptvExisting, settings, baseline);
@@ -951,7 +983,7 @@ export async function saveCloudSettings(
     root.iptvStalkerMac = iptv.stalkerMacAddress;
     root.iptvM3uUrl = iptv.m3uUrl;
     root.iptvEpgUrl = iptv.epgUrl;
-    root.settings = { ...sanitizedSettings, ...iptvFromAndroid(iptv) };
+    root.settings = { ...sanitizedSettings, ...catalogValues, ...iptvFromAndroid(iptv) };
 
     if (profiles.length) root.profiles = profiles;
     if (profileId) {
@@ -981,9 +1013,6 @@ export async function saveCloudSettings(
       // NOTE: settings saves must NOT touch add-ons. Android now reconciles add-ons to the cloud
       // authoritatively, so writing this session's (possibly stale) add-on list here could delete an
       // add-on installed on another device. Add-ons are written exclusively by saveCloudAddons().
-      setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
-      setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
-      setScopedValue(root, "hiddenHomeServerByProfile", profileId, settings.hiddenHomeServerCatalogIds);
       const newIptv = androidIptvSettings(settings);
       const baseIptv = baseline ? androidIptvSettings(baseline) : null;
       for (const [field, value] of Object.entries(newIptv)) {
