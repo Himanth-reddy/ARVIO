@@ -14,6 +14,7 @@ import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.model.StalkerVodLink
+import com.arflix.tv.data.model.StreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.R
 import com.arflix.tv.network.withIptvProviderRequestGuard
@@ -5850,15 +5851,58 @@ class IptvRepository @Inject constructor(
     internal fun activeStalkerSeriesPortals(config: IptvConfig): List<StalkerPortalEntry> =
         activeStalkerPortals(config).filter { it.importSeries ?: true }
 
-    private fun xtreamCredentialsForVodImport(config: IptvConfig): List<XtreamCredentials> =
+    /**
+     * An Xtream provider together with the name the user typed for it in the
+     * settings. [XtreamCredentials] deliberately carries only host and login -
+     * it is a cache key and a request builder - so the playlist name, the only
+     * thing that tells two providers apart on screen, used to be dropped the
+     * moment credentials were resolved. It is kept beside them instead.
+     */
+    private data class XtreamVodProvider(
+        val creds: XtreamCredentials,
+        val name: String
+    )
+
+    private fun xtreamProvidersForVodImport(config: IptvConfig): List<XtreamVodProvider> =
         activeVodPlaylists(config)
-            .mapNotNull(::resolveXtreamCredentials)
-            .distinct()
+            .mapNotNull { playlist ->
+                resolveXtreamCredentials(playlist)?.let { XtreamVodProvider(it, playlist.name.trim()) }
+            }
+            // Dedupe on the credentials alone, exactly as before: two playlist
+            // entries pointing at the same account are one provider, and the
+            // first one's name is the one that shows.
+            .distinctBy { it.creds }
+
+    private fun xtreamProvidersForSeriesImport(config: IptvConfig): List<XtreamVodProvider> =
+        activeSeriesPlaylists(config)
+            .mapNotNull { playlist ->
+                resolveXtreamCredentials(playlist)?.let { XtreamVodProvider(it, playlist.name.trim()) }
+            }
+            .distinctBy { it.creds }
+
+    private fun xtreamCredentialsForVodImport(config: IptvConfig): List<XtreamCredentials> =
+        xtreamProvidersForVodImport(config).map { it.creds }
 
     private fun xtreamCredentialsForSeriesImport(config: IptvConfig): List<XtreamCredentials> =
-        activeSeriesPlaylists(config)
-            .mapNotNull(::resolveXtreamCredentials)
-            .distinct()
+        xtreamProvidersForSeriesImport(config).map { it.creds }
+
+    /**
+     * Stamps the provider a source came from onto it.
+     *
+     * The source menu already renders `behaviorHints.provider` as a second line
+     * next to the add-on name (`sourceAttributionLabels` -> `rowSubtitle`), which
+     * is how Stremio add-ons name their indexer. IPTV never filled it, so a user
+     * with several providers saw several identical rows reading "IPTV Series VOD"
+     * and no way to tell whose stream was whose. Nothing in the UI changes - the
+     * slot was simply empty.
+     */
+    internal fun StreamSource.withIptvProvider(providerName: String): StreamSource {
+        val name = providerName.trim()
+        if (name.isBlank()) return this
+        return copy(
+            behaviorHints = (behaviorHints ?: StreamBehaviorHints()).copy(provider = name)
+        )
+    }
 
     suspend fun findMovieVodSource(
         title: String,
@@ -5911,11 +5955,11 @@ class IptvRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext emptyList()
             val config = streamProviderConfig(observeConfig().first(), allowedProviderIds)
-            val xtreamSources = xtreamCredentialsForVodImport(config)
-                .flatMap { creds ->
+            val xtreamSources = xtreamProvidersForVodImport(config)
+                .flatMap { provider ->
                     runCatching {
                         findMovieVodSourcesForCredentials(
-                            creds = creds,
+                            creds = provider.creds,
                             title = title,
                             year = year,
                             imdbId = imdbId,
@@ -5923,6 +5967,10 @@ class IptvRepository @Inject constructor(
                             allowNetwork = allowNetwork
                         )
                     }.getOrDefault(emptyList())
+                        // Stamped here rather than deeper down on purpose: every
+                        // source in this batch came from this one provider, and
+                        // the disk cache below never has to know about names.
+                        .map { it.withIptvProvider(provider.name) }
                 }
             // Additive second provider: each Stalker portal is searched on its
             // own, and a failing portal never removes Xtream results.
@@ -5939,6 +5987,7 @@ class IptvRepository @Inject constructor(
                             originalTitle = originalTitle
                         )
                     }.getOrDefault(emptyList())
+                        .map { it.withIptvProvider(portal.name) }
                 }
             sortVodSources(xtreamSources + stalkerSources)
         }
@@ -6357,7 +6406,7 @@ class IptvRepository @Inject constructor(
             quality = stalkerVodQuality(hd, sourceName),
             size = "",
             url = marker,
-            description = stalkerVodDescription(portal, time, ratingImdb)
+            description = stalkerVodDescription(time, ratingImdb)
         )
     }
 
@@ -6373,17 +6422,21 @@ class IptvRepository @Inject constructor(
     }
 
     /**
-     * The little the portal knows beyond the title, which is what makes two
-     * entries of the same movie tellable apart: which portal it came from, how
-     * long it runs, and its IMDb rating.
+     * The little the portal knows beyond the title: how long it runs and its
+     * IMDb rating.
+     *
+     * The portal NAME used to lead this line, and the `portal` parameter with
+     * it. Both are gone: the name now travels in `behaviorHints.provider`, where
+     * the source menu prints it next to the add-on name for every IPTV source,
+     * Xtream and Stalker alike. Leaving it here as well showed it twice in one
+     * row - measured on a device on 22.09.2026, "IPTV VOD - Portal 100" sat
+     * directly above "Portal 100 - 192 min - IMDb 7.601".
      */
     private fun stalkerVodDescription(
-        portal: StalkerPortalEntry,
         runtime: String?,
         ratingImdb: String?
     ): String? {
         val parts = mutableListOf<String>()
-        portal.name.trim().takeIf { it.isNotBlank() }?.let(parts::add)
         runtime?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
             val minutes = value.toIntOrNull()
             parts += if (minutes != null && minutes > 0) "$minutes min" else value
@@ -6948,7 +7001,7 @@ class IptvRepository @Inject constructor(
             quality = stalkerVodQuality(hd ?: show.hd, showName, name),
             size = "",
             url = marker,
-            description = stalkerVodDescription(portal, time ?: show.time, ratingImdb ?: show.ratingImdb)
+            description = stalkerVodDescription(time ?: show.time, ratingImdb ?: show.ratingImdb)
         )
     }
 
@@ -6982,11 +7035,11 @@ class IptvRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext emptyList()
             val config = streamProviderConfig(observeConfig().first(), allowedProviderIds)
-            val xtreamSources = xtreamCredentialsForSeriesImport(config)
-                .flatMap { creds ->
+            val xtreamSources = xtreamProvidersForSeriesImport(config)
+                .flatMap { provider ->
                     runCatching {
                         findEpisodeVodSourcesForCredentials(
-                            creds = creds,
+                            creds = provider.creds,
                             title = title,
                             season = season,
                             episode = episode,
@@ -6995,6 +7048,7 @@ class IptvRepository @Inject constructor(
                             allowNetwork = allowNetwork
                         )
                     }.getOrDefault(emptyList())
+                        .map { it.withIptvProvider(provider.name) }
                 }
             // Additive second provider, exactly as on the movie path: each
             // Stalker portal is searched on its own, and a failing portal never
@@ -7016,10 +7070,15 @@ class IptvRepository @Inject constructor(
                         )
                     }.onFailure { error ->
                         if (error is kotlinx.coroutines.CancellationException) throw error
-                    }.getOrDefault(emptyList()).also { found ->
-                        completedSources.addAll(found)
-                        onSources(sortVodSources(completedSources))
-                    }
+                    }.getOrDefault(emptyList())
+                        // Stamped before the partial list is published, not after:
+                        // this path reports each portal's result as it arrives, so
+                        // a later stamp would show the first batch without a name.
+                        .map { it.withIptvProvider(portal.name) }
+                        .also { found ->
+                            completedSources.addAll(found)
+                            onSources(sortVodSources(completedSources))
+                        }
                 }
             sortVodSources(xtreamSources + stalkerSources)
         }
