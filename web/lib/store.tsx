@@ -26,7 +26,7 @@ import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./stor
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
 import { verifyProfilePin } from "./profilePin";
 import { hydratedProfileId } from "./profiles";
-import { flushSettingsOutbox, hasPendingSettings, queueSettings } from "./settingsOutbox";
+import { flushSettingsOutbox, hasPendingSettings, queueSettings, settingsWithPendingEdits } from "./settingsOutbox";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { continueWatchingActivitySignature, createTraktActivityCheck, type TraktActivitySnapshot } from "./traktActivity";
@@ -881,7 +881,7 @@ export function AppProvider({
       // A user can edit favorites while the cloud/tracker requests above are
       // in flight. Do not replace those edits with the earlier cloud response.
       const settingsChangedDuringPull = settingsRef.current !== currentSettings || hasPendingSettings(authClient, profileId);
-      if (cloud?.settings && !settingsChangedDuringPull) {
+      if (cloud?.settings) {
         effectiveSettings = {
           ...defaultSettings,
           ...currentSettings,
@@ -895,10 +895,13 @@ export function AppProvider({
           lockedIptvGroupIds: cloud.settings?.lockedIptvGroupIds ?? currentSettings.lockedIptvGroupIds,
           groupOrder: cloud.settings?.groupOrder ?? currentSettings.groupOrder
         };
-        if (!sameSettings(settingsRef.current, effectiveSettings)) setSettings(effectiveSettings);
-        // Record what we just synced FROM the cloud (same shape the autosave
-        // effect compares against) so it doesn't push it straight back.
+        // Acknowledge only the server snapshot. If the user edited during this
+        // request, retain the live settings and let the queued edit finish saving.
         lastSyncedSettingsRef.current = JSON.stringify({ settings: effectiveSettings, activeProfileId: profileId });
+        if (settingsChangedDuringPull) {
+          effectiveSettings = settingsWithPendingEdits(authClient, profileId, effectiveSettings, currentSettings, settingsRef.current);
+        }
+        if (!sameSettings(settingsRef.current, effectiveSettings)) setSettings(effectiveSettings);
         savePlaylists(effectiveSettings.iptvPlaylists);
       } else if (settingsChangedDuringPull) {
         effectiveSettings = settingsRef.current;
@@ -1363,7 +1366,7 @@ export function AppProvider({
     // genuine change (user toggled a setting, switched profile) differs from the
     // snapshot and still saves.
     const snapshot = JSON.stringify({ settings, activeProfileId });
-    if (lastSyncedSettingsRef.current !== null && snapshot === lastSyncedSettingsRef.current) {
+    if (lastSyncedSettingsRef.current !== null && snapshot === lastSyncedSettingsRef.current && !hasPendingSettings(authClient, activeProfileId)) {
       setSettingsSyncState(hasPendingSettings(authClient) ? "pending" : "saved");
       return;
     }
@@ -1380,11 +1383,11 @@ export function AppProvider({
     }
     // Profile hydration is asynchronous. Until this profile has an acknowledged
     // baseline, settings still belong to the previous profile or browser defaults.
-    if (!baseline) return;
+    if (!baseline && !hasPendingSettings(authClient, activeProfileId)) return;
     const accountId = authClient.session?.userId;
     const submitted = { settings, activeProfileId };
     setSettingsSyncState("pending");
-    try { queueSettings(authClient, activeProfileId, settings, baseline); }
+    try { if (baseline) queueSettings(authClient, activeProfileId, settings, baseline); }
     catch (error) { setSettingsSyncState("error"); setToast(error instanceof Error ? error.message : "Could not save settings"); return; }
     const handle = setTimeout(() => {
       void flushSettingsOutbox(authClient).then(() => {
@@ -1401,7 +1404,7 @@ export function AppProvider({
     const retry = () => {
       if (!hasPendingSettings(authClient)) return;
       setSettingsSyncState("pending");
-      void flushSettingsOutbox(authClient).then(() => setSettingsSyncState("saved")).catch(() => setSettingsSyncState("error"));
+      void flushSettingsOutbox(authClient).then(() => setSettingsSyncState(hasPendingSettings(authClient) ? "pending" : "saved")).catch(() => setSettingsSyncState("error"));
     };
     window.addEventListener("online", retry);
     const timer = window.setInterval(retry, 30_000);
@@ -1477,7 +1480,24 @@ export function AppProvider({
   }, [query, settings.language]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    setSettings((prev) => ({ ...prev, ...patch }));
+    const previous = settingsRef.current;
+    const next = { ...previous, ...patch };
+    const profileId = activeProfileIdRef.current;
+    // Record the explicit user edit immediately, even before the first cloud
+    // pull finishes. The autosave effect cannot queue without a hydrated baseline.
+    // Using the pre-edit values here describes only this action, not browser defaults.
+    if (authClient.session && profileId) {
+      try {
+        queueSettings(authClient, profileId, next, previous);
+        setSettingsSyncState("pending");
+      } catch (error) {
+        setSettingsSyncState("error");
+        setToast(error instanceof Error ? error.message : "Could not save settings");
+      }
+    }
+    settingsRef.current = next;
+    saveStored(settingsKey, next);
+    setSettings(next);
   }, []);
 
   const isWatched = useCallback((item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => (
