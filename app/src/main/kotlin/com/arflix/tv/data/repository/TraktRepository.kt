@@ -113,7 +113,12 @@ class TraktRepository @Inject constructor(
         profileManager.profileStringKey("trakt_continue_watching_cache_v5_${syncProviderCacheTag()}")
 
     private suspend fun syncProviderCacheTag(): String =
-        runCatching { syncProviderStore.getProvider().name.lowercase(Locale.US) }.getOrDefault("none")
+        try {
+            syncProviderStore.getProvider().name.lowercase(Locale.US)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            "none"
+        }
     // Local Continue Watching for profiles without Trakt - stores progress locally per profile
     private fun localContinueWatchingKey() = profileManager.profileStringKey("local_continue_watching_v1")
     private fun localWatchedMoviesKey() = profileManager.profileStringKey("local_watched_movies_v1")
