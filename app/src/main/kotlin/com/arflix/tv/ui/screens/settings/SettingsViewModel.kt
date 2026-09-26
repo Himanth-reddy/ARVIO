@@ -270,6 +270,7 @@ data class SettingsUiState(
     val isSimklPolling: Boolean = false,
     val simklUserCode: String? = null,
     val simklVerificationUrl: String? = null,
+    val simklCodeExpiresAtMillis: Long? = null,
     val simklUsername: String? = null,
     val trackingWatchlistReadMode: com.arflix.tv.data.repository.sync.TrackingReadMode =
         com.arflix.tv.data.repository.sync.TrackingReadMode.AUTO,
@@ -4658,6 +4659,7 @@ class SettingsViewModel @Inject constructor(
                         isSimklConnected = simklStillConnected,
                         isSimklPolling = false,
                         simklUserCode = null,
+                        simklCodeExpiresAtMillis = null,
                         simklVerificationUrl = null,
                         traktAuthOutcome = TraktAuthOutcome.CONNECTED,
                         isTraktAuthStarting = false,
@@ -4856,19 +4858,22 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isSimklAuthStarting = true)
             runCatching {
                 val pinRes = simklAuthManager.startPinAuth()
+                val expiresAt = System.currentTimeMillis() + (pinRes.expiresIn * 1000L)
                 _uiState.value = _uiState.value.copy(
                     isSimklAuthStarting = false,
                     isSimklPolling = true,
                     simklUserCode = pinRes.userCode,
-                    simklVerificationUrl = pinRes.verificationUrl
+                    simklVerificationUrl = pinRes.verificationUrl,
+                    simklCodeExpiresAtMillis = expiresAt
                 )
-                startSimklPolling(pinRes.userCode, pinRes.expiresIn, pinRes.interval)
+                startSimklPolling(pinRes.userCode, expiresAt, pinRes.interval)
             }.onFailure { e ->
                 if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
                     isSimklAuthStarting = false,
                     isSimklPolling = false,
                     simklUserCode = null,
+                    simklCodeExpiresAtMillis = null,
                     simklVerificationUrl = null,
                     toastMessage = SettingsMessage.Res(
                         R.string.settings_simkl_auth_error,
@@ -4880,14 +4885,15 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun startSimklPolling(userCode: String, expiresInSec: Int, intervalSec: Int) {
+    private fun startSimklPolling(userCode: String, expiresAt: Long, intervalSec: Int) {
         simklPollingJob?.cancel()
         simklPollingJob = viewModelScope.launch {
-            val expiresAt = System.currentTimeMillis() + (expiresInSec * 1000L)
+            // Same deadline the dialog counts down to, so the two never disagree.
             val pollDelayMs = intervalSec.coerceAtLeast(3) * 1000L
 
             while (System.currentTimeMillis() < expiresAt) {
-                delay(pollDelayMs)
+                delay(minOf(pollDelayMs, (expiresAt - System.currentTimeMillis()).coerceAtLeast(0L)))
+                if (System.currentTimeMillis() >= expiresAt) break
                 try {
                     val success = simklAuthManager.pollPinAuth(userCode)
                     if (success) {
@@ -4899,6 +4905,7 @@ class SettingsViewModel @Inject constructor(
                             isSimklPolling = false,
                             isSimklConnected = true,
                             simklUserCode = null,
+                            simklCodeExpiresAtMillis = null,
                             simklVerificationUrl = null,
                             isTraktAuthenticated = traktStillConnected,
                             isMdbListConnected = mdbListStillConnected,
@@ -4931,6 +4938,7 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isSimklPolling = false,
                 simklUserCode = null,
+                simklCodeExpiresAtMillis = null,
                 simklVerificationUrl = null,
                 toastMessage = SettingsMessage.Res(R.string.settings_simkl_timed_out),
                 toastType = ToastType.ERROR
@@ -4953,6 +4961,7 @@ class SettingsViewModel @Inject constructor(
                         isSimklPolling = false,
                         isSimklConnected = true,
                         simklUserCode = null,
+                        simklCodeExpiresAtMillis = null,
                         simklVerificationUrl = null,
                         isTraktAuthenticated = traktStillConnected,
                         isMdbListConnected = mdbListStillConnected,
@@ -4988,6 +4997,7 @@ class SettingsViewModel @Inject constructor(
                 isSimklConnected = false,
                 isSimklPolling = false,
                 simklUserCode = null,
+                simklCodeExpiresAtMillis = null,
                 simklVerificationUrl = null,
                 simklUsername = null,
                 trackingWatchlistReadMode = preferences.watchlistReadMode,

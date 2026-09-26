@@ -409,6 +409,8 @@
     <string name="settings_catalog_pack_delete_confirm">Delete Pack</string>
     <string name="settings_cd_unpack_catalog_row">Unpack catalog row</string>
     <string name="settings_simkl_connect_title">Connect Simkl</string>
+    <string name="settings_simkl_copy_and_open">Copy code &amp; open Simkl</string>
+    <string name="settings_simkl_instruction_touch">Tap the button. It copies the code and opens %1$s. Paste the code there (long-press the field) and sign in. This window finishes on its own.</string>
     <string name="settings_activation_visit_instruction">Visit %1$s on your phone or computer and enter this code:</string>
     <string name="settings_input_hint_enter">Enter %1$s...</string>
     <string name="settings_iptv_epg_note">EPG supports multiple sources for this playlist. Add one URL per line; ARVIO will match them in order.</string>
