@@ -2067,21 +2067,27 @@ class MediaRepository @Inject constructor(
     private suspend fun resolveHomeServerCatalogItem(item: HomeServerCatalogItem): MediaItem? {
         val providers = item.providerIds.mapKeys { it.key.lowercase(Locale.US) }
         providers["tmdb"]?.toIntOrNull()?.let { tmdbId ->
-            return runCatching {
+            return try {
                 when (item.mediaType) {
                     MediaType.MOVIE -> getMovieDetails(tmdbId)
                     MediaType.TV -> getTvDetails(tmdbId)
                 }
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }
         }
         providers["imdb"]?.takeIf { it.startsWith("tt", ignoreCase = true) }?.let { imdbId ->
             resolveImdbToTmdbRef(imdbId, item.mediaType)?.let { (type, tmdbId) ->
-                return runCatching {
+                return try {
                     when (type) {
                         MediaType.MOVIE -> getMovieDetails(tmdbId)
                         MediaType.TV -> getTvDetails(tmdbId)
                     }
-                }.getOrNull()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    null
+                }
             }
         }
         return resolveHomeServerCatalogItemByTitle(item)
@@ -2090,7 +2096,7 @@ class MediaRepository @Inject constructor(
     private suspend fun resolveHomeServerCatalogItemByTitle(item: HomeServerCatalogItem): MediaItem? {
         val query = item.title.trim()
         if (query.isBlank()) return null
-        val response = runCatching {
+        val response = try {
             when (item.mediaType) {
                 MediaType.MOVIE -> tmdbApi.searchMovies(
                     apiKey = apiKey,
@@ -2106,7 +2112,10 @@ class MediaRepository @Inject constructor(
                     firstAirDateYear = item.year
                 )
             }
-        }.getOrNull() ?: return null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        } ?: return null
 
         val requestedTitle = HomeServerMatcher.normalizeTitle(query)
         val best = response.results
@@ -2140,12 +2149,15 @@ class MediaRepository @Inject constructor(
             ?.first
             ?: return null
 
-        return runCatching {
+        return try {
             when (item.mediaType) {
                 MediaType.MOVIE -> getMovieDetails(best.id)
                 MediaType.TV -> getTvDetails(best.id)
             }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     /**
@@ -2869,13 +2881,16 @@ class MediaRepository @Inject constructor(
             MediaType.MOVIE -> "movie"
             MediaType.TV -> "series"
         }
-        val meta = runCatching {
+        val meta = try {
             streamRepository.getAddonMeta(
                 addonId = descriptor.addonId,
                 mediaType = requestedType,
                 mediaId = unresolved.id
             )
-        }.getOrNull() ?: return null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        } ?: return null
 
         parseTmdbRefFromAddonMeta(meta, mediaType)?.let { return it }
         val imdbId = extractImdbId(meta) ?: return null
@@ -2893,13 +2908,16 @@ class MediaRepository @Inject constructor(
             return cached.data
         }
 
-        val findResponse = runCatching {
+        val findResponse = try {
             tmdbApi.findByExternalId(
                 externalId = normalizedImdb,
                 apiKey = apiKey,
                 externalSource = "imdb_id"
             )
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
 
         val resolved = findResponse?.let { response ->
             val movies = response.movieResults
@@ -2946,14 +2964,17 @@ class MediaRepository @Inject constructor(
             return cached.data
         }
 
-        val response = runCatching {
+        val response = try {
             tmdbApi.searchMulti(
                 apiKey = apiKey,
                 query = cleanedTitle,
                 language = contentLanguage,
                 page = 1
             )
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
 
         val candidates = response?.results
             ?.mapNotNull { item ->
@@ -3182,16 +3203,22 @@ class MediaRepository @Inject constructor(
      * Lightweight calls for LauncherContinueWatchingRepository to avoid heavy IMDb rating/caching tasks.
      */
     suspend fun getLightweightMovieTitle(movieId: Int, language: String = contentLanguage): String? {
-        return runCatching {
+        return try {
             tmdbApi.getMovieDetails(movieId, apiKey, language = language).title
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     suspend fun getLightweightTvTitle(tvId: Int, language: String = contentLanguage): String? {
-        return runCatching {
+        return try {
             // TMDB uses 'name' for series instead of 'title'
             tmdbApi.getTvDetails(tvId, apiKey, language = language).name
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     suspend fun getLightweightEpisodeTitle(
@@ -3200,14 +3227,17 @@ class MediaRepository @Inject constructor(
         episodeNumber: Int,
         language: String = contentLanguage
     ): String? {
-        return runCatching {
+        return try {
             tmdbApi.getTvSeason(
                 tvId = tvId,
                 seasonNumber = seasonNumber,
                 apiKey = apiKey,
                 language = language
             ).episodes.firstOrNull { it.episodeNumber == episodeNumber }?.name
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     /**
@@ -3463,7 +3493,7 @@ class MediaRepository @Inject constructor(
         val title = item.title.trim()
         if (title.isBlank()) return null
         val year = item.year.take(4).toIntOrNull()
-        val response = runCatching {
+        val response = try {
             when (item.mediaType) {
                 MediaType.MOVIE -> tmdbApi.searchMovies(
                     apiKey = apiKey,
@@ -3479,7 +3509,10 @@ class MediaRepository @Inject constructor(
                     firstAirDateYear = year
                 )
             }
-        }.getOrNull() ?: return null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        } ?: return null
 
         val requestedTitle = HomeServerMatcher.normalizeTitle(title)
         val match = response.results
@@ -3808,12 +3841,15 @@ class MediaRepository @Inject constructor(
             watchProvidersCache.remove(cacheKey)
         }
 
-        val response = runCatching {
+        val response = try {
             when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieWatchProviders(mediaId, apiKey)
                 MediaType.TV -> tmdbApi.getTvWatchProviders(mediaId, apiKey)
             }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
 
         val results = response?.results.orEmpty()
         if (results.isEmpty()) {
