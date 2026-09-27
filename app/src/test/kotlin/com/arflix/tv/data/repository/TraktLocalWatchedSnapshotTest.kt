@@ -167,6 +167,14 @@ class TraktLocalWatchedSnapshotTest {
         assertEquals(setOf(4, 7, 8), storedMovies())
     }
 
+    @Test fun firstRemoteLoadDoesNotUndoALocalUnwatch() = runBlocking {
+        repository.markMovieUnwatched(2)
+        coEvery { syncService.getWatchedMovies() } returns setOf(1, 2, 3)
+        repository.initializeWatchedCache()
+        assertEquals(setOf(1, 3), repository.getWatchedMoviesFromCache())
+        assertEquals(setOf(1, 3), storedMovies())
+    }
+
     @Test fun concurrentMarksPreserveBothChangesAndTheExistingSnapshot() = runBlocking {
         val one = launch { repository.markMovieWatched(4) }
         val two = launch { repository.markMovieUnwatched(2) }

@@ -2872,8 +2872,8 @@ class TraktRepository @Inject constructor(
                 if (currentProfileId() != profileId) throw kotlinx.coroutines.CancellationException("Profile changed during local watched load")
                 if (generation == watchedCacheGeneration) {
                     // Do not undo an unwatch made while DataStore was being read.
-                    watchedMoviesCache.addAll(movies.filter { it !in movieWriteGenerations })
-                    watchedEpisodesCache.addAll(episodes.filter { it !in episodeWriteGenerations })
+                    watchedMoviesCache.addAll(movies.filter { !movieWriteGenerations.containsKey(it) })
+                    watchedEpisodesCache.addAll(episodes.filter { !episodeWriteGenerations.containsKey(it) })
                     return
                 }
             }
@@ -4909,7 +4909,6 @@ class TraktRepository @Inject constructor(
                 ensureProfileCacheScope()
                 if (cacheInitialized) return
                 val generation = watchedCacheGeneration
-                val writeGeneration = watchedWriteGeneration.get()
                 // Assemble privately. Never publish partial or obsolete results to another profile.
                 val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
                 val movies = localSnapshotMovies.toMutableSet()
@@ -4947,11 +4946,12 @@ class TraktRepository @Inject constructor(
                 synchronized(this) {
                     if (currentProfileId() != profileId) throw kotlinx.coroutines.CancellationException("Profile changed during watched load")
                     if (generation == watchedCacheGeneration) {
-                        // A local mark made while the network was busy wins over its older response.
-                        movieWriteGenerations.filterValues { it > writeGeneration }.keys.forEach {
+                        // Local marks, including those made before this first load, win until
+                        // an explicit invalidation starts a fresh reconciliation.
+                        movieWriteGenerations.keys.forEach {
                             if (it in watchedMoviesCache) movies.add(it) else movies.remove(it)
                         }
-                        episodeWriteGenerations.filterValues { it > writeGeneration }.keys.forEach {
+                        episodeWriteGenerations.keys.forEach {
                             if (it in watchedEpisodesCache) episodes.add(it) else episodes.remove(it)
                         }
                         watchedMoviesCache.clear()
