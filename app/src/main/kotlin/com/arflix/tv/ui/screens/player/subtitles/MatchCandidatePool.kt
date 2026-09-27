@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.player.subtitles
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * How the "find best match" scan takes subtitle candidates: which come first, and how many it may
@@ -28,10 +29,8 @@ internal object MatchCandidatePool {
     }
 
     /**
-     * Loads [pool] in order, [batchSize] at a time, and stops before the next batch once
-     * [maxItems] candidates were tried or [budgetMs] has passed since [startedAtMs]. A long addon
-     * list must not turn a scan into a download of every subtitle on a TV box: the concurrency
-     * limit alone bounded neither the total memory nor the time.
+     * Loads [pool] in order, [batchSize] at a time, up to [maxItems]. The deadline includes
+     * in-flight loads; completed results survive a timeout. [now] must use a monotonic clock.
      *
      * Returns what loaded (non-null), in pool order, and how many candidates were tried.
      */
@@ -44,15 +43,22 @@ internal object MatchCandidatePool {
         now: () -> Long,
         load: suspend (T) -> R?
     ): Pair<List<Pair<T, R>>, Int> {
-        val loaded = ArrayList<Pair<T, R>>()
+        val remainingMs = budgetMs - (now() - startedAtMs).coerceAtLeast(0)
+        if (remainingMs <= 0 || maxItems <= 0) return emptyList<Pair<T, R>>() to 0
+        val loaded = java.util.concurrent.ConcurrentHashMap<Int, Pair<T, R>>()
         var tried = 0
-        for (batch in pool.take(maxItems).chunked(batchSize.coerceAtLeast(1))) {
-            if (tried > 0 && now() - startedAtMs >= budgetMs) break
-            val results = coroutineScope { batch.map { item -> async { item to load(item) } }.awaitAll() }
-            tried += batch.size
-            for ((item, result) in results) if (result != null) loaded += item to result
+        withTimeoutOrNull(remainingMs) {
+            for (batch in pool.take(maxItems).withIndex().chunked(batchSize.coerceAtLeast(1))) {
+                if (now() - startedAtMs >= budgetMs) break
+                tried += batch.size
+                coroutineScope {
+                    batch.map { (index, item) ->
+                        async { load(item)?.let { loaded[index] = item to it } }
+                    }.awaitAll()
+                }
+            }
         }
-        return loaded to tried
+        return loaded.toSortedMap().values.toList() to tried
     }
 }
 

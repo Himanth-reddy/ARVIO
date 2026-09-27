@@ -2,8 +2,16 @@ package com.arflix.tv.ui.screens.player.subtitles
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MatchCandidatePoolTest {
 
     private data class Candidate(val id: String, val score: Double, val offsetMs: Long = 0L)
@@ -82,6 +90,69 @@ class MatchCandidatePoolTest {
         assertThat(tried).isEqualTo(30)
         assertThat(loadedIds.max()).isEqualTo(30)
         assertThat(loaded.map { it.first }).isEqualTo((1..30).filter { it % 10 != 0 })
+    }
+
+    @Test
+    fun `expired budget starts no downloads`() = runTest {
+        var calls = 0
+        val (loaded, tried) = MatchCandidatePool.loadBounded(
+            pool = (1..12).toList(), batchSize = 6, maxItems = 30,
+            budgetMs = 100, startedAtMs = -100, now = { testScheduler.currentTime },
+            load = { calls++; it }
+        )
+        assertThat(calls).isEqualTo(0)
+        assertThat(tried).isEqualTo(0)
+        assertThat(loaded).isEmpty()
+    }
+
+    @Test
+    fun `deadline cancels stalled batch and retains completed results in pool order`() = runTest {
+        var stalledCancelled = false
+        val (loaded, tried) = MatchCandidatePool.loadBounded(
+            pool = (1..5).toList(), batchSize = 3, maxItems = 30,
+            budgetMs = 100, startedAtMs = 0, now = { testScheduler.currentTime },
+            load = { id ->
+                if (id == 2) {
+                    try { awaitCancellation() } finally { stalledCancelled = true }
+                } else {
+                    delay(if (id == 1) 30 else 10)
+                    "cues$id"
+                }
+            }
+        )
+        assertThat(testScheduler.currentTime).isEqualTo(100)
+        assertThat(stalledCancelled).isTrue()
+        assertThat(tried).isEqualTo(3)
+        assertThat(loaded).containsExactly(1 to "cues1", 3 to "cues3").inOrder()
+    }
+
+    @Test
+    fun `later batches only get the remaining shared deadline`() = runTest {
+        val (loaded, tried) = MatchCandidatePool.loadBounded(
+            pool = (1..5).toList(), batchSize = 1, maxItems = 30,
+            budgetMs = 100, startedAtMs = 0, now = { testScheduler.currentTime },
+            load = { delay(60); it }
+        )
+        assertThat(testScheduler.currentTime).isEqualTo(100)
+        assertThat(tried).isEqualTo(2)
+        assertThat(loaded).containsExactly(1 to 1)
+    }
+
+    @Test
+    fun `caller cancellation still propagates and cancels active loads`() = runTest {
+        var loadCancelled = false
+        val job = async {
+            MatchCandidatePool.loadBounded<Int, Int>(
+                pool = listOf(1), batchSize = 1, maxItems = 30,
+                budgetMs = 100, startedAtMs = 0, now = { testScheduler.currentTime },
+                load = { try { awaitCancellation() } finally { loadCancelled = true } }
+            )
+        }
+        runCurrent()
+        job.cancelAndJoin()
+        assertThat(job.isCancelled).isTrue()
+        assertThat(loadCancelled).isTrue()
+        assertThat(testScheduler.currentTime).isEqualTo(0)
     }
 
     @Test

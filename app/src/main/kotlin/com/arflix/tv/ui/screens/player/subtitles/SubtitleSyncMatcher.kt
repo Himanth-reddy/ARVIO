@@ -46,11 +46,22 @@ object SubtitleSyncMatcher {
      * abortable, which matters both for the manual-pick timeout and for the preload pass, where a
      * playback teardown should not leave a batch of downloads running.
      */
-    private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
+    private suspend fun <T> Call.awaitBody(read: (Response) -> T): T = suspendCancellableCoroutine { cont ->
         cont.invokeOnCancellation { runCatching { cancel() } }
         enqueue(object : Callback {
             override fun onResponse(call: Call, response: Response) {
-                if (cont.isActive) cont.resume(response) else response.closeQuietly()
+                if (!cont.isActive) {
+                    response.closeQuietly()
+                    return
+                }
+                // Keep the continuation cancellable until the body is consumed, not just
+                // until headers arrive: a provider may stall or trickle its response body.
+                try {
+                    val result = response.use(read)
+                    if (cont.isActive) cont.resume(result)
+                } catch (error: Exception) {
+                    if (cont.isActive) cont.resumeWithException(error)
+                }
             }
 
             override fun onFailure(call: Call, e: IOException) {
@@ -84,9 +95,9 @@ object SubtitleSyncMatcher {
         }
         runCatching {
             val request = Request.Builder().url(url).build()
-            client.newCall(request).await().use { response ->
-                if (!response.isSuccessful) return@use null
-                val body = response.body ?: return@use null
+            client.newCall(request).awaitBody { response ->
+                if (!response.isSuccessful) return@awaitBody null
+                val body = response.body ?: return@awaitBody null
                 val raw = body.bytes()
                 val bytes = if (looksGzipped(url, raw)) {
                     GZIPInputStream(raw.inputStream()).use { it.readBytes() }

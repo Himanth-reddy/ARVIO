@@ -4437,15 +4437,19 @@ class PlayerViewModel @Inject constructor(
             // at exactly the moment the player is filling its own (80 MB) video buffer, on a device
             // whose entire app heap is 224 MB. So load LAZILY: the first candidate is almost always
             // the answer, and the other nine are only ever needed if it fails.
-            val rawBySubKey = HashMap<String, String>()
-            val parsedCues = HashMap<String, List<SubtitleSyncMatcher.TimedCue>>()
+            val rawBySubKey = java.util.concurrent.ConcurrentHashMap<String, String>()
+            val parsedCues = java.util.concurrent.ConcurrentHashMap<String, List<SubtitleSyncMatcher.TimedCue>>()
+            val poolStartedAt = android.os.SystemClock.elapsedRealtime()
             val downloadPermits = kotlinx.coroutines.sync.Semaphore(MATCH_PARALLEL_DOWNLOADS)
             val parsePermits = kotlinx.coroutines.sync.Semaphore(MATCH_PARALLEL_PARSES)
             suspend fun load(sub: Subtitle): List<SubtitleSyncMatcher.TimedCue>? {
                 val key = "${sub.provider}|${sub.id}"
                 parsedCues[key]?.let { return it }
+                val remainingMs = MATCH_POOL_BUDGET_MS - (android.os.SystemClock.elapsedRealtime() - poolStartedAt)
+                if (remainingMs <= 0) return null
                 val url = candidateSources.firstOrNull { it.first === sub }?.second ?: sub.url
-                val raw = downloadPermits.acquire().let {
+                val raw = withTimeoutOrNull(remainingMs) {
+                    downloadPermits.acquire()
                     try { SubtitleSyncMatcher.loadRaw(url, sub.lang) } finally { downloadPermits.release() }
                 } ?: return null
                 val cues = parsePermits.acquire().let {
@@ -4461,24 +4465,29 @@ class PlayerViewModel @Inject constructor(
                 return cues
             }
             val familyMembers = HashMap<String, List<Pair<Subtitle, Long>>>()
-            var poolStartedAt = 0L
+            var loadedPool: List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>>? = null
             /**
              * The candidates, parsed, one per timing family. Bounded (MatchCandidatePool.loadBounded):
-             * batches of MATCH_PARALLEL_DOWNLOADS, at most MATCH_POOL_MAX_CANDIDATES, and no new batch
-             * once MATCH_POOL_BUDGET_MS has passed since the first call of this scan — a long addon
-             * list must not make a scan download every subtitle on a TV box.
+             * batches of MATCH_PARALLEL_DOWNLOADS, at most MATCH_POOL_MAX_CANDIDATES, and a shared
+             * download deadline starting with the first candidate. Reuse the completed pool on
+             * later scoring passes, even after its budget expires.
              */
             suspend fun loadAll(): List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>> {
-                if (poolStartedAt == 0L) poolStartedAt = System.currentTimeMillis()
-                val (all, tried) = com.arflix.tv.ui.screens.player.subtitles.MatchCandidatePool.loadBounded(
+                loadedPool?.let { return it }
+                val (completed, tried) = com.arflix.tv.ui.screens.player.subtitles.MatchCandidatePool.loadBounded(
                     pool = candidates,
                     batchSize = MATCH_PARALLEL_DOWNLOADS,
                     maxItems = MATCH_POOL_MAX_CANDIDATES,
                     budgetMs = MATCH_POOL_BUDGET_MS,
                     startedAtMs = poolStartedAt,
-                    now = System::currentTimeMillis,
+                    now = android.os.SystemClock::elapsedRealtime,
                     load = { sub -> load(sub) }
                 )
+                // Keep the initial pick and any fully parsed candidates when the deadline
+                // expires between a completed load and the pool's result publication.
+                val all = (completed + candidates.mapNotNull { sub ->
+                    parsedCues["${sub.provider}|${sub.id}"]?.let { sub to it }
+                }).distinctBy { (sub, _) -> "${sub.provider}|${sub.id}" }
                 if (tried < candidates.size) {
                     Log.i(
                         "SubMatch",
@@ -4515,6 +4524,7 @@ class PlayerViewModel @Inject constructor(
                             }
                     )
                 }
+                loadedPool = representatives
                 return representatives
             }
 
