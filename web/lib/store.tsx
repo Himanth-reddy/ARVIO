@@ -788,9 +788,9 @@ export function AppProvider({
     })();
   }, []);
 
-  const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[]; onLocalSave?: () => void } = {}) => {
+  const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[]; addedIds?: string[]; onLocalSave?: () => void } = {}) => {
     const normalized = normalizeAddons(next);
-    queueAddons(authClient, normalized, activeProfileId, options.removedIds);
+    queueAddons(authClient, normalized, activeProfileId, options.removedIds, options.addedIds);
     saveLocalAddons(normalized);
     if (!authClient.session && JSON.stringify(loadLocalAddons()) !== JSON.stringify(normalized)) throw new Error("Device storage is full. Keep this page open and retry saving.");
     addonsRef.current = normalized;
@@ -1990,7 +1990,7 @@ export function AppProvider({
   const installAddon = useCallback(async (url: string) => {
     const addon = await installAddonManifest(url);
     const next = [addon, ...addonsRef.current.filter((candidate) => candidate.id !== addon.id)];
-    await persistAddons(next);
+    await persistAddons(next, { addedIds: [addon.id] });
   }, [persistAddons]);
 
   const removeAddon = useCallback(async (addon: InstalledAddon) => {
