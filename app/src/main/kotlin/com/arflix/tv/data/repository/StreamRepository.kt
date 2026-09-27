@@ -2825,7 +2825,12 @@ class StreamRepository @Inject constructor(
     }
 
     suspend fun hasHomeServerConnections(): Boolean = withContext(Dispatchers.IO) {
-        runCatching { homeServerRepository.hasUsableConnections() }.getOrDefault(false)
+        try {
+            homeServerRepository.hasUsableConnections()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            false
+        }
     }
 
     /** Counterpart of [hasHomeServerConnections] for IPTV playlists and portals. */
@@ -4486,7 +4491,12 @@ class StreamRepository @Inject constructor(
     }
 
     private fun decodeHeaderPart(value: String): String {
-        return runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+        return try {
+            URLDecoder.decode(value, "UTF-8")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            value
+        }
     }
 
     private fun buildMagnetForStream(stream: StreamSource): String? {
@@ -4557,7 +4567,12 @@ class StreamRepository @Inject constructor(
 
                 if (isM3uEndpoint) {
                     val request = Request.Builder().url(url).get().build()
-                    val response = runCatching { client.newCall(request).execute() }.getOrNull() ?: continue
+                    val response = try {
+                        client.newCall(request).execute()
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        null
+                    } ?: continue
                     response.use { resp ->
                         if (!resp.isSuccessful) return@use
                         val body = resp.body?.string().orEmpty()
@@ -4572,7 +4587,12 @@ class StreamRepository @Inject constructor(
                         .header("Range", "bytes=0-1")
                         .get()
                         .build()
-                    val response = runCatching { client.newCall(request).execute() }.getOrNull() ?: continue
+                    val response = try {
+                        client.newCall(request).execute()
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        null
+                    } ?: continue
                     response.use { resp ->
                         if (resp.isSuccessful) {
                             return stream.copy(url = url)

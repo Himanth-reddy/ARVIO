@@ -719,9 +719,17 @@ class AuthRepository @Inject constructor(
                 null
             } else {
                 withContext(Dispatchers.Main) {
-                    runCatching { supabase.auth.importAuthToken(accessToken, refreshToken, false, true) }
+                    try {
+                        supabase.auth.importAuthToken(accessToken, refreshToken, false, true)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                    }
                     supabase.auth.currentSessionOrNull() ?: run {
-                        runCatching { supabase.auth.loadFromStorage(true) }
+                        try {
+                            supabase.auth.loadFromStorage(true)
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                        }
                         supabase.auth.currentSessionOrNull()
                     }
                 }
@@ -897,15 +905,31 @@ class AuthRepository @Inject constructor(
 
         if (!Constants.USE_NETLIFY_CLOUD_SYNC) {
             withTimeoutOrNull(2_000L) {
-                runCatching { supabase.auth.signOut() }
+                try {
+                    supabase.auth.signOut()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
         }
 
-        runCatching { traktRepositoryProvider.get().logout() }
+        try {
+            traktRepositoryProvider.get().logout()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
 
         // Clear ALL local data (auth + settings + user preferences)
-        runCatching { context.authDataStore.edit { prefs -> prefs.clear() } }
-        runCatching { context.settingsDataStore.edit { prefs -> prefs.clear() } }
+        try {
+            context.authDataStore.edit { prefs -> prefs.clear() }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
+        try {
+            context.settingsDataStore.edit { prefs -> prefs.clear() }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
 
         _userProfile.value = null
         _authState.value = AuthState.NotAuthenticated
