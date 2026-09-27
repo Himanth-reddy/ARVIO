@@ -25,6 +25,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.espresso.Espresso
 import androidx.test.espresso.action.ViewActions.replaceText
+import androidx.test.espresso.action.ViewActions.pressImeActionButton
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.hasFocus
 import androidx.test.espresso.matcher.ViewMatchers.withHint
@@ -32,6 +33,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.arflix.tv.R
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.LocalHasTouchScreen
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -121,6 +123,16 @@ class IptvPlaylistModalDeviceTest {
     }
 
     @Test
+    fun tvKeyboardDoneReturnsToDialogAndCanSave() {
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionCenter))
+        Espresso.onView(withHint(EPG_HINT)).perform(replaceText(GUIDES), pressImeActionButton())
+        compose.waitForIdle()
+        keys(listOf(Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter))
+        assertEquals(SavedPlaylist(HOST, "user", "password", GUIDES), saved)
+    }
+
+    @Test
     fun tvRemoteM3uSaveIgnoresHiddenXtreamCredentials() {
         show(DeviceType.TV)
         keys(listOf(Key.DirectionLeft, Key.DirectionLeft, Key.DirectionLeft, Key.DirectionCenter))
@@ -145,7 +157,7 @@ class IptvPlaylistModalDeviceTest {
             assumeTrue("Run remote tests on a landscape TV emulator", config.screenWidthDp >= 600 && config.screenWidthDp > config.screenHeightDp)
         }
         compose.setContent {
-            CompositionLocalProvider(LocalDeviceType provides device) {
+            CompositionLocalProvider(LocalDeviceType provides device, LocalHasTouchScreen provides (device != DeviceType.TV)) {
                 IptvPlaylistModal(
                     isEditing = true, initialSourceType = source, initialName = "Test", initialUrl = HOST,
                     initialXtreamUser = "user", initialXtreamPass = "password", initialEpg = GUIDES,

@@ -278,6 +278,7 @@ data class SettingsUiState(
     val isSimklPolling: Boolean = false,
     val simklUserCode: String? = null,
     val simklVerificationUrl: String? = null,
+    val simklCodeExpiresAtMillis: Long? = null,
     val simklUsername: String? = null,
     val trackingWatchlistReadMode: com.arflix.tv.data.repository.sync.TrackingReadMode =
         com.arflix.tv.data.repository.sync.TrackingReadMode.AUTO,
@@ -4646,14 +4647,18 @@ class SettingsViewModel @Inject constructor(
         traktPollingJob = viewModelScope.launch {
             val expiresAt = System.currentTimeMillis() + (deviceCode.expiresIn * 1000)
             var lastFailure: SettingsMessage? = null
+            // Set while polls fail without reaching Trakt; reported if the code runs out that way.
+            var networkFailure: SettingsMessage? = null
             var pollDelayMs = deviceCode.interval.coerceAtLeast(1) * 1000L
 
             while (System.currentTimeMillis() < expiresAt) {
                 delay(minOf(pollDelayMs, (expiresAt - System.currentTimeMillis()).coerceAtLeast(0L)))
                 if (System.currentTimeMillis() >= expiresAt) break
 
+                var tokenSaved = false
                 try {
                     traktRepository.pollForToken(deviceCode.deviceCode)
+                    tokenSaved = true
 
                     // Get the expiration date
                     val expirationDate = traktRepository.getTokenExpirationDate()
@@ -4672,6 +4677,7 @@ class SettingsViewModel @Inject constructor(
                         isSimklConnected = simklStillConnected,
                         isSimklPolling = false,
                         simklUserCode = null,
+                        simklCodeExpiresAtMillis = null,
                         simklVerificationUrl = null,
                         traktAuthOutcome = TraktAuthOutcome.CONNECTED,
                         isTraktAuthStarting = false,
@@ -4687,8 +4693,8 @@ class SettingsViewModel @Inject constructor(
                     )
                     // Let the dialog report the success for a moment instead of vanishing the
                     // instant the token arrives; the toast below it stays untouched. This runs in
-                    // its own coroutine on purpose: the sync work below belongs to the polling
-                    // job, and waiting here would put it at the mercy of a dismiss.
+                    // its own coroutine on purpose: the work below belongs to the polling job, and
+                    // waiting here would put it at the mercy of a dismiss.
                     viewModelScope.launch {
                         delay(2_000L)
                         _uiState.value = _uiState.value.dismissTraktSuccess(deviceCode.deviceCode)
@@ -4699,9 +4705,11 @@ class SettingsViewModel @Inject constructor(
                         isMdbListConnected = mdbListStillConnected,
                         isSimklConnected = simklStillConnected
                     )
+                    // The sync runs in its own job and fills the sync summary when it ends; start it
+                    // first so the summary does not also wait for the Continue Watching fetch.
+                    performFullSync(silent = true)
                     traktRepository.clearContinueWatchingCache()
                     runCatching { traktRepository.getContinueWatching() }
-                    performFullSync(silent = true)
                     syncLocalStateToCloud(silent = true, force = true)
                     runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                     return@launch
@@ -4714,11 +4722,15 @@ class SettingsViewModel @Inject constructor(
                         else -> e.message?.contains("400") == true ||
                             e.message?.contains("pending", ignoreCase = true) == true
                     }
-                    if (isPending) continue
+                    if (isPending) {
+                        networkFailure = null
+                        continue
+                    }
 
                     // Trakt uses 429 to ask device clients to slow down. Keep the
                     // activation alive and honor Retry-After instead of aborting it.
                     if (httpError?.code() == 429) {
+                        networkFailure = null
                         pollDelayMs = com.arflix.tv.data.repository.traktRetryDelayMs(
                             httpError.response()?.headers()?.get("Retry-After"),
                             pollDelayMs + 1_000L
@@ -4726,9 +4738,18 @@ class SettingsViewModel @Inject constructor(
                         continue
                     }
 
+                    // Only the poll itself is retried (pollForToken also stores the token): once
+                    // the token is saved, asking again would report the code as already used.
+                    if (!tokenSaved && com.arflix.tv.data.repository.isTransientTraktPollFailure(e)) {
+                        networkFailure = e.message.orMessage(SettingsMessage.Res(R.string.settings_trakt_auth_failed))
+                        continue
+                    }
+
                     lastFailure = when (httpError?.code()) {
                         404 -> SettingsMessage.Res(R.string.settings_trakt_code_invalid)
-                        409 -> SettingsMessage.Res(R.string.settings_trakt_code_used)
+                        // Right after a dropped poll, 409 most likely means Trakt issued the token
+                        // but the answer was lost - not that the user reused an old code.
+                        409 -> networkFailure ?: SettingsMessage.Res(R.string.settings_trakt_code_used)
                         410 -> SettingsMessage.Res(R.string.settings_trakt_code_expired)
                         418 -> SettingsMessage.Res(R.string.settings_trakt_denied)
                         null -> e.message.orMessage(
@@ -4744,8 +4765,9 @@ class SettingsViewModel @Inject constructor(
             }
 
             // Local timeout and server-reported expiry both offer Retry; other failures keep
-            // their error toast and dismiss the dialog.
-            _uiState.value = _uiState.value.finishTraktActivationPolling(lastFailure)
+            // their error toast and dismiss the dialog. A code that ran out while the network was
+            // down reports the network error instead of a plain expiry.
+            _uiState.value = _uiState.value.finishTraktActivationPolling(lastFailure ?: networkFailure)
         }
     }
 
@@ -5043,19 +5065,22 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isSimklAuthStarting = true)
             runCatching {
                 val pinRes = simklAuthManager.startPinAuth()
+                val expiresAt = System.currentTimeMillis() + (pinRes.expiresIn * 1000L)
                 _uiState.value = _uiState.value.copy(
                     isSimklAuthStarting = false,
                     isSimklPolling = true,
                     simklUserCode = pinRes.userCode,
-                    simklVerificationUrl = pinRes.verificationUrl
+                    simklVerificationUrl = pinRes.verificationUrl,
+                    simklCodeExpiresAtMillis = expiresAt
                 )
-                startSimklPolling(pinRes.userCode, pinRes.expiresIn, pinRes.interval)
+                startSimklPolling(pinRes.userCode, expiresAt, pinRes.interval)
             }.onFailure { e ->
                 if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
                     isSimklAuthStarting = false,
                     isSimklPolling = false,
                     simklUserCode = null,
+                    simklCodeExpiresAtMillis = null,
                     simklVerificationUrl = null,
                     toastMessage = SettingsMessage.Res(
                         R.string.settings_simkl_auth_error,
@@ -5067,14 +5092,15 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun startSimklPolling(userCode: String, expiresInSec: Int, intervalSec: Int) {
+    private fun startSimklPolling(userCode: String, expiresAt: Long, intervalSec: Int) {
         simklPollingJob?.cancel()
         simklPollingJob = viewModelScope.launch {
-            val expiresAt = System.currentTimeMillis() + (expiresInSec * 1000L)
+            // Same deadline the dialog counts down to, so the two never disagree.
             val pollDelayMs = intervalSec.coerceAtLeast(3) * 1000L
 
             while (System.currentTimeMillis() < expiresAt) {
-                delay(pollDelayMs)
+                delay(minOf(pollDelayMs, (expiresAt - System.currentTimeMillis()).coerceAtLeast(0L)))
+                if (System.currentTimeMillis() >= expiresAt) break
                 try {
                     val success = simklAuthManager.pollPinAuth(userCode)
                     if (success) {
@@ -5086,6 +5112,7 @@ class SettingsViewModel @Inject constructor(
                             isSimklPolling = false,
                             isSimklConnected = true,
                             simklUserCode = null,
+                            simklCodeExpiresAtMillis = null,
                             simklVerificationUrl = null,
                             isTraktAuthenticated = traktStillConnected,
                             isMdbListConnected = mdbListStillConnected,
@@ -5118,6 +5145,7 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isSimklPolling = false,
                 simklUserCode = null,
+                simklCodeExpiresAtMillis = null,
                 simklVerificationUrl = null,
                 toastMessage = SettingsMessage.Res(R.string.settings_simkl_timed_out),
                 toastType = ToastType.ERROR
@@ -5140,6 +5168,7 @@ class SettingsViewModel @Inject constructor(
                         isSimklPolling = false,
                         isSimklConnected = true,
                         simklUserCode = null,
+                        simklCodeExpiresAtMillis = null,
                         simklVerificationUrl = null,
                         isTraktAuthenticated = traktStillConnected,
                         isMdbListConnected = mdbListStillConnected,
@@ -5171,12 +5200,14 @@ class SettingsViewModel @Inject constructor(
             isSimklAuthStarting = false,
             isSimklPolling = false,
             simklUserCode = null,
+            simklCodeExpiresAtMillis = null,
             simklVerificationUrl = null
         )
     }
 
     fun disconnectSimkl() {
-        cancelSimklAuth()
+        simklPollingJob?.cancel()
+        simklPollingJob = null
         viewModelScope.launch {
             simklAuthManager.disconnect()
             syncProviderStore.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
@@ -5185,6 +5216,7 @@ class SettingsViewModel @Inject constructor(
                 isSimklConnected = false,
                 isSimklPolling = false,
                 simklUserCode = null,
+                simklCodeExpiresAtMillis = null,
                 simklVerificationUrl = null,
                 simklUsername = null,
                 trackingWatchlistReadMode = preferences.watchlistReadMode,

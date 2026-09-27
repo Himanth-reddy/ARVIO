@@ -276,6 +276,8 @@
     <string name="settings_catalog_pack_delete_confirm">Paket löschen</string>
     <string name="settings_cd_unpack_catalog_row">Katalogzeile entpacken</string>
     <string name="settings_simkl_connect_title">Simkl verbinden</string>
+    <string name="settings_simkl_copy_and_open">Code kopieren und Simkl öffnen</string>
+    <string name="settings_simkl_instruction_touch">Tippe auf die Schaltfläche. Sie kopiert den Code und öffnet %1$s. Füge den Code dort ein (lange auf das Feld drücken) und melde dich an. Das Fenster ist danach von allein fertig.</string>
     <string name="settings_activation_visit_instruction">Rufe %1$s auf deinem Handy oder Computer auf und gib diesen Code ein:</string>
     <string name="settings_input_hint_enter">%1$s eingeben …</string>
     <string name="settings_label_playlist_name">Playlist-Name</string>

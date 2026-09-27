@@ -2226,6 +2226,11 @@ class HomeViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch {
+            // COMPLETED goes out before the watched cache is reloaded, so the ticks follow the
+            // reload itself - otherwise a fresh Trakt connection shows its ticks only after restart.
+            traktRepository.watchedCacheReloaded.collect { refreshWatchedBadges(immediate = true) }
+        }
         viewModelScope.launch(Dispatchers.IO) {
             delay(if (isLowRamDevice) 8 * 60_000L else 6 * 60_000L)
             // Warm IPTV channels + EPG in background after startup settles.
@@ -4638,6 +4643,16 @@ class HomeViewModel @Inject constructor(
         refreshWatchedBadges(force = true)
     }
 
+    /**
+     * The long-press menu just marked a title: the watched cache already holds it, but the rows are
+     * the ones the last pass marked, so no pass would run before the next return to Home.
+     * `immediate` runs it now, past the throttle; `force` keeps a pass that freshly published rows
+     * restart (the next-episode branch refreshes Continue Watching) on the short delay.
+     */
+    private fun refreshWatchedBadgesAfterMark() {
+        refreshWatchedBadges(immediate = true, force = true)
+    }
+
     private fun refreshWatchedBadges(immediate: Boolean = false, force: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
         if (!immediate && watchedBadgesPassIsRedundant(
@@ -5260,12 +5275,14 @@ class HomeViewModel @Inject constructor(
                 if (item.mediaType == MediaType.MOVIE) {
                     if (item.isWatched) {
                         traktRepository.markMovieUnwatched(item.id)
+                        refreshWatchedBadgesAfterMark()
                         _uiState.value = _uiState.value.copy(
                             toastMessage = context.getString(R.string.details_marked_unwatched),
                             toastType = ToastType.SUCCESS
                         )
                     } else {
                         traktRepository.markMovieWatched(item.id)
+                        refreshWatchedBadgesAfterMark()
                         watchHistoryRepository.removeFromHistory(item.id, null, null)
                         _uiState.value = _uiState.value.copy(
                             toastMessage = context.getString(R.string.details_marked_watched),
@@ -5294,6 +5311,7 @@ class HomeViewModel @Inject constructor(
 
                         // Sync to backend after UI update (these may be slow for non-Trakt/non-Cloud profiles)
                         traktRepository.markEpisodeWatched(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
+                        refreshWatchedBadgesAfterMark()
                         watchHistoryRepository.removeFromHistory(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
 
                         try {
