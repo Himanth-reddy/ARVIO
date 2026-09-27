@@ -215,6 +215,12 @@ fun IptvPlaylistModal(
 
     fun anyEditTextFocused(): Boolean = editTextRefs.any { it?.hasFocus() == true }
 
+    val returnFocusToDialog: () -> Unit = {
+        // A native keyboard callback can arrive while the dialog is being removed.
+        runCatching { modalFocusRequester.requestFocus() }
+        Unit
+    }
+
     fun hideKeyboardAll() {
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         editTextRefs.forEach { edit ->
@@ -226,12 +232,8 @@ fun IptvPlaylistModal(
         }
         // `view` belongs to the activity behind the dialog. On a remote the focus has
         // to come back into the dialog, or the highlight is gone after typing.
-        if (isTvLayout) modalFocusRequester.requestFocus() else view.requestFocus()
+        if (isTvLayout) returnFocusToDialog() else view.requestFocus()
     }
-
-    // Done and Back on the keyboard leave the field the same way the D-pad keys do,
-    // so they bring the focus back the same way too.
-    val returnFocusToDialog: () -> Unit = { modalFocusRequester.requestFocus() }
 
     fun showKeyboardFor(row: Int) {
         val edit = editTextRefs.getOrNull(row) ?: return
