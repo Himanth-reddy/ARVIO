@@ -82,6 +82,7 @@ import com.arflix.tv.ui.theme.SuccessGreen
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.LocalHasTouchScreen
 import com.arflix.tv.util.tr
 
 enum class IptvSourceType {
@@ -196,6 +197,7 @@ fun IptvPlaylistModal(
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     val configuration = LocalConfiguration.current
     val isTvLayout = !isTouchDevice
+    val hasTouchScreen = LocalHasTouchScreen.current
     val screenHeightDp = configuration.screenHeightDp.dp
     val maxDialogHeight = (screenHeightDp * 0.90f).coerceAtMost(if (isTouchDevice) 620.dp else 680.dp)
 
@@ -222,8 +224,14 @@ fun IptvPlaylistModal(
                 runCatching { imm?.restartInput(edit) }
             }
         }
-        view.requestFocus()
+        // `view` belongs to the activity behind the dialog. On a remote the focus has
+        // to come back into the dialog, or the highlight is gone after typing.
+        if (isTvLayout) modalFocusRequester.requestFocus() else view.requestFocus()
     }
+
+    // Done and Back on the keyboard leave the field the same way the D-pad keys do,
+    // so they bring the focus back the same way too.
+    val returnFocusToDialog: () -> Unit = { modalFocusRequester.requestFocus() }
 
     fun showKeyboardFor(row: Int) {
         val edit = editTextRefs.getOrNull(row) ?: return
@@ -334,7 +342,7 @@ fun IptvPlaylistModal(
         },
         properties = DialogProperties(
             dismissOnBackPress = true,
-            dismissOnClickOutside = true,
+            dismissOnClickOutside = hasTouchScreen,
             usePlatformDefaultWidth = false
         )
     ) {
@@ -349,6 +357,7 @@ fun IptvPlaylistModal(
         }
 
         ModalScrim(
+            dismissOnScrimClick = hasTouchScreen,
             onDismiss = {
                 hideKeyboardAll()
                 onDismiss()
@@ -702,6 +711,7 @@ fun IptvPlaylistModal(
                                         isFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 0,
                                         onValueChange = { playlistName = it },
                                         onRegisterEditText = { editTextRefs[0] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 0
@@ -726,6 +736,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 1 && rightFocusedColumn == 1,
                                         onValueChange = { playlistUrl = it },
                                         onRegisterEditText = { editTextRefs[1] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 1
@@ -766,6 +777,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 2 && rightFocusedColumn == 1,
                                         onValueChange = { epgSources = it },
                                         onRegisterEditText = { editTextRefs[2] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 2
@@ -804,6 +816,7 @@ fun IptvPlaylistModal(
                                         isFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 0,
                                         onValueChange = { playlistName = it },
                                         onRegisterEditText = { editTextRefs[0] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 0
@@ -828,6 +841,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 1 && rightFocusedColumn == 1,
                                         onValueChange = { playlistUrl = it },
                                         onRegisterEditText = { editTextRefs[1] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 1
@@ -867,6 +881,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 2 && rightFocusedColumn == 1,
                                         onValueChange = { xtreamUser = it },
                                         onRegisterEditText = { editTextRefs[2] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 2
@@ -907,6 +922,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 3 && rightFocusedColumn == 1,
                                         onValueChange = { xtreamPass = it },
                                         onRegisterEditText = { editTextRefs[3] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 3
@@ -946,6 +962,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 4 && rightFocusedColumn == 1,
                                         onValueChange = { epgSources = it },
                                         onRegisterEditText = { editTextRefs[4] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 4
@@ -984,6 +1001,7 @@ fun IptvPlaylistModal(
                                         isFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 0,
                                         onValueChange = { stalkerName = it },
                                         onRegisterEditText = { editTextRefs[0] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 0
@@ -1008,6 +1026,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 1 && rightFocusedColumn == 1,
                                         onValueChange = { stalkerPortalUrl = it },
                                         onRegisterEditText = { editTextRefs[1] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 1
@@ -1047,6 +1066,7 @@ fun IptvPlaylistModal(
                                         isPasteFocused = activePane == ActivePane.RIGHT && rightFocusedRow == 2 && rightFocusedColumn == 1,
                                         onValueChange = { stalkerMac = it },
                                         onRegisterEditText = { editTextRefs[2] = it },
+                                        onKeyboardClosed = returnFocusToDialog,
                                         onGainNativeFocus = {
                                             activePane = ActivePane.RIGHT
                                             rightFocusedRow = 2
@@ -1722,6 +1742,7 @@ private fun InputFieldWithPaste(
     onDpadUp: (() -> Unit)? = null,
     onDpadDown: (() -> Unit)? = null,
     onDpadRight: (() -> Unit)? = null,
+    onKeyboardClosed: (() -> Unit)? = null,
     onPasteClick: () -> Unit
 ) {
     val buttonPadding = 5.dp
@@ -1825,6 +1846,7 @@ private fun InputFieldWithPaste(
                                             val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                                             imm?.hideSoftInputFromWindow(windowToken, 0)
                                             clearFocus()
+                                            onKeyboardClosed?.invoke()
                                             true
                                         }
                                         else -> false
@@ -1837,6 +1859,7 @@ private fun InputFieldWithPaste(
                                     val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                                     imm?.hideSoftInputFromWindow(windowToken, 0)
                                     clearFocus()
+                                    onKeyboardClosed?.invoke()
                                     true
                                 } else false
                             }
@@ -1897,7 +1920,8 @@ private fun InputFieldBlock(
     onRegisterEditText: (EditText) -> Unit,
     onGainNativeFocus: () -> Unit,
     onDpadUp: (() -> Unit)? = null,
-    onDpadDown: (() -> Unit)? = null
+    onDpadDown: (() -> Unit)? = null,
+    onKeyboardClosed: (() -> Unit)? = null
 ) {
     Column(modifier = Modifier.fillMaxWidth().revealFocusedField(isFocused)) {
         Row(
@@ -1993,6 +2017,7 @@ private fun InputFieldBlock(
                                         val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                                         imm?.hideSoftInputFromWindow(windowToken, 0)
                                         clearFocus()
+                                        onKeyboardClosed?.invoke()
                                         true
                                     }
                                     else -> false
@@ -2005,6 +2030,7 @@ private fun InputFieldBlock(
                                 val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                                 imm?.hideSoftInputFromWindow(windowToken, 0)
                                 clearFocus()
+                                onKeyboardClosed?.invoke()
                                 true
                             } else false
                         }
@@ -2025,29 +2051,39 @@ private fun InputFieldBlock(
 
 @Composable
 private fun ModalScrim(
+    dismissOnScrimClick: Boolean,
     onDismiss: () -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
     val scrimInteraction = remember { MutableInteractionSource() }
     val contentInteraction = remember { MutableInteractionSource() }
 
+    // Tapping beside the dialog is a touch gesture. Without a touchscreen a
+    // clickable scrim is only another focus target, and OK on it throws the
+    // whole form away.
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.72f))
-            .clickable(
-                interactionSource = scrimInteraction,
-                indication = null,
-                onClick = onDismiss
+            .then(
+                if (dismissOnScrimClick) {
+                    Modifier.clickable(
+                        interactionSource = scrimInteraction,
+                        indication = null,
+                        onClick = onDismiss
+                    )
+                } else Modifier
             ),
         contentAlignment = Alignment.Center
     ) {
         Box(
-            modifier = Modifier.clickable(
-                interactionSource = contentInteraction,
-                indication = null,
-                onClick = {}
-            ),
+            modifier = if (dismissOnScrimClick) {
+                Modifier.clickable(
+                    interactionSource = contentInteraction,
+                    indication = null,
+                    onClick = {}
+                )
+            } else Modifier,
             content = content
         )
     }
