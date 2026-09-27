@@ -5006,6 +5006,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun cancelSimklAuth() {
+        simklPollingJob?.cancel()
+        simklPollingJob = null
+        _uiState.value = _uiState.value.copy(
+            isSimklAuthStarting = false,
+            isSimklPolling = false,
+            simklUserCode = null,
+            simklCodeExpiresAtMillis = null,
+            simklVerificationUrl = null
+        )
+    }
+
     fun disconnectSimkl() {
         simklPollingJob?.cancel()
         simklPollingJob = null

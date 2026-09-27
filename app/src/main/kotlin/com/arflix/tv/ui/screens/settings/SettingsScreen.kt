@@ -3153,7 +3153,7 @@ fun SettingsScreen(
                 openUrlLabel = stringResource(R.string.settings_simkl_copy_and_open),
                 showCopyCode = false,
                 expiresAtMillis = uiState.simklCodeExpiresAtMillis,
-                onDismiss = { viewModel.disconnectSimkl() }
+                onDismiss = { viewModel.cancelSimklAuth() }
             )
         }
 
