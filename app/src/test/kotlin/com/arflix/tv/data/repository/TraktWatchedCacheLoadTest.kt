@@ -46,6 +46,7 @@ class TraktWatchedCacheLoadTest {
     private val api = mockk<TraktApi>(relaxed = true)
     private val syncService = mockk<TraktSyncService>(relaxed = true)
     private val providers = mockk<SyncProviderStore>(relaxed = true)
+    private val profileId = MutableStateFlow("p")
     private lateinit var repository: TraktRepository
 
     private fun watchedMovie(tmdb: Int) =
@@ -57,8 +58,8 @@ class TraktWatchedCacheLoadTest {
         every { any<Context>().traktDataStore } returns store
         every { any<Context>().settingsDataStore } returns MemoryStore(emptyPreferences())
         val profiles = mockk<ProfileManager>(relaxed = true) {
-            every { getProfileIdSync() } returns "p"
-            every { activeProfileId } returns MutableStateFlow("p")
+            every { getProfileIdSync() } answers { profileId.value }
+            every { activeProfileId } returns profileId
             every { profileStringKey(any()) } answers { stringPreferencesKey(firstArg()) }
             every { profileLongKey(any()) } answers { longPreferencesKey(firstArg()) }
             every { profileBooleanKey(any()) } answers { booleanPreferencesKey(firstArg()) }
@@ -103,5 +104,30 @@ class TraktWatchedCacheLoadTest {
 
         repository.initializeWatchedCache()
         assertEquals(setOf(2), repository.getWatchedMoviesFromCache())
+    }
+
+    @Test fun aFailedCloudReadDoesNotPreventReadingTraktHistory() = runBlocking {
+        coEvery { syncService.getWatchedMovies() } throws java.io.IOException("offline")
+        coEvery { api.getWatchedMovies(any(), any(), any(), any(), any(), any()) } answers {
+            if (arg<Int?>(3) == 1) listOf(watchedMovie(2)) else emptyList()
+        }
+        repository.initializeWatchedCache()
+        assertEquals(setOf(2), repository.getWatchedMoviesFromCache())
+    }
+
+    @Test fun switchingProfileDuringALoadNeverPublishesTheOldProfilesHistory() = runBlocking {
+        val oldHistory = CompletableDeferred<Set<Int>>()
+        coEvery { syncService.getWatchedMovies() } coAnswers { oldHistory.await() }
+        coEvery { api.getWatchedMovies(any(), any(), any(), any(), any(), any()) } returns emptyList()
+        val oldLoad = async(start = CoroutineStart.UNDISPATCHED) { repository.initializeWatchedCache() }
+        profileId.value = "other"
+        repository.clearAllProfileCaches()
+        oldHistory.complete(setOf(1))
+        try {
+            oldLoad.await()
+            org.junit.Assert.fail("The old profile's load must be cancelled")
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            assertEquals(emptySet<Int>(), repository.getWatchedMoviesFromCache())
+        }
     }
 }
