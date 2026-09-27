@@ -742,7 +742,7 @@ class TraktRepository @Inject constructor(
      * Mark movie as watched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markMovieWatched(tmdbId: Int) {
-        ensureProfileCacheScope()
+        loadWatchedCacheBeforeWrite()
         // OPTIMISTIC UPDATE: Update caches immediately so the UI responds instantly
         updateWatchedCache(tmdbId, null, null, true)
         persistLocalWatchedSnapshotForCurrentProfile()
@@ -767,7 +767,7 @@ class TraktRepository @Inject constructor(
      * Mark movie as unwatched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markMovieUnwatched(tmdbId: Int) {
-        ensureProfileCacheScope()
+        loadWatchedCacheBeforeWrite()
         // OPTIMISTIC UPDATE: Update cache immediately so the UI responds instantly
         updateWatchedCache(tmdbId, null, null, false)
         persistLocalWatchedSnapshotForCurrentProfile()
@@ -791,7 +791,7 @@ class TraktRepository @Inject constructor(
      * Mark episode as watched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markEpisodeWatched(showTmdbId: Int, season: Int, episode: Int, isAnime: Boolean = false) {
-        ensureProfileCacheScope()
+        loadWatchedCacheBeforeWrite()
         // OPTIMISTIC UPDATE: Update all caches immediately so the UI responds instantly
         updateWatchedCache(showTmdbId, season, episode, true)
         updateShowWatchedCache(showTmdbId, season, episode, true)
@@ -820,7 +820,7 @@ class TraktRepository @Inject constructor(
      * Mark episode watched in local caches and Supabase without sending another Trakt request.
      */
     suspend fun markEpisodeWatchedWithoutTraktSync(showTmdbId: Int, season: Int, episode: Int) {
-        ensureProfileCacheScope()
+        loadWatchedCacheBeforeWrite()
         updateWatchedCache(showTmdbId, season, episode, true)
         updateShowWatchedCache(showTmdbId, season, episode, true)
         persistLocalWatchedSnapshotForCurrentProfile()
@@ -841,7 +841,7 @@ class TraktRepository @Inject constructor(
      * @param syncTrakt If true (default), also syncs to Trakt. Set false when batch Trakt removal is already done.
      */
     suspend fun markEpisodeUnwatched(showTmdbId: Int, season: Int, episode: Int, syncTrakt: Boolean = true, isAnime: Boolean = false) {
-        ensureProfileCacheScope()
+        loadWatchedCacheBeforeWrite()
         // OPTIMISTIC UPDATE: Update all caches immediately so the UI responds instantly
         updateWatchedCache(showTmdbId, season, episode, false)
         updateShowWatchedCache(showTmdbId, season, episode, false)
@@ -2861,20 +2861,44 @@ class TraktRepository @Inject constructor(
         }
     }
 
-    private suspend fun persistLocalWatchedSnapshotForCurrentProfile() {
-        val movieIds = watchedMoviesCache.toList().distinct().sorted()
-        val episodeKeys = watchedEpisodesCache.toList().distinct().sorted()
-        context.traktDataStore.edit { prefs ->
-            if (movieIds.isEmpty()) {
-                prefs.remove(localWatchedMoviesKey())
-            } else {
-                prefs[localWatchedMoviesKey()] = gson.toJson(movieIds)
+    /** Load saved history without making an optimistic local mark wait for remote providers. */
+    private suspend fun loadWatchedCacheBeforeWrite() {
+        val profileId = currentProfileId()
+        while (true) {
+            ensureProfileCacheScope()
+            val generation = watchedCacheGeneration
+            val (movies, episodes) = loadLocalWatchedSnapshotForCurrentProfile()
+            synchronized(this) {
+                if (currentProfileId() != profileId) throw kotlinx.coroutines.CancellationException("Profile changed during local watched load")
+                if (generation == watchedCacheGeneration) {
+                    // Do not undo an unwatch made while DataStore was being read.
+                    watchedMoviesCache.addAll(movies.filter { it !in movieWriteGenerations })
+                    watchedEpisodesCache.addAll(episodes.filter { it !in episodeWriteGenerations })
+                    return
+                }
             }
+        }
+    }
 
-            if (episodeKeys.isEmpty()) {
-                prefs.remove(localWatchedEpisodesKey())
-            } else {
-                prefs[localWatchedEpisodesKey()] = gson.toJson(episodeKeys)
+    private suspend fun persistLocalWatchedSnapshotForCurrentProfile() {
+        val profileId = currentProfileId()
+        val generation = watchedCacheGeneration
+        val moviesKey = localWatchedMoviesKey()
+        val episodesKey = localWatchedEpisodesKey()
+        context.traktDataStore.edit { prefs ->
+            synchronized(this) {
+                if (currentProfileId() != profileId || generation != watchedCacheGeneration) {
+                    throw kotlinx.coroutines.CancellationException("Watched scope changed before persistence")
+                }
+                // Merge within the DataStore transaction, not from a potentially stale snapshot.
+                val movies = decodeIntList(prefs[moviesKey].orEmpty()).toMutableSet()
+                val episodes = decodeStringList(prefs[episodesKey].orEmpty()).toMutableSet()
+                movies.addAll(watchedMoviesCache)
+                episodes.addAll(watchedEpisodesCache)
+                movies.removeAll(movieWriteGenerations.keys.filter { it !in watchedMoviesCache }.toSet())
+                episodes.removeAll(episodeWriteGenerations.keys.filter { it !in watchedEpisodesCache }.toSet())
+                prefs[moviesKey] = gson.toJson(movies.sorted())
+                prefs[episodesKey] = gson.toJson(episodes.sorted())
             }
         }
     }
@@ -4631,6 +4655,7 @@ class TraktRepository @Inject constructor(
             synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = true, isAnime = isAnime) || synced
         }
 
+        loadWatchedCacheBeforeWrite()
         episodes.forEach { ep ->
             updateWatchedCache(showTmdbId, seasonNumber, ep, true)
             updateShowWatchedCache(showTmdbId, seasonNumber, ep, true)
@@ -4738,6 +4763,7 @@ class TraktRepository @Inject constructor(
             synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = false, isAnime = isAnime) || synced
         }
 
+        loadWatchedCacheBeforeWrite()
         episodes.forEach { ep ->
             updateWatchedCache(showTmdbId, seasonNumber, ep, false)
             updateShowWatchedCache(showTmdbId, seasonNumber, ep, false)
