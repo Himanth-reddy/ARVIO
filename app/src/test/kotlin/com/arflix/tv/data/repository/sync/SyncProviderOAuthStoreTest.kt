@@ -85,7 +85,7 @@ class SyncProviderOAuthStoreTest {
         store.onProviderConnected(SyncProvider.MDBLIST, "one")
         val exported = store.exportForProfiles(listOf("one", "active-other-profile"))
         assertEquals(SyncProvider.MDBLIST, exported.getValue("one").provider)
-        assertEquals(SyncProvider.NONE, exported.getValue("active-other-profile").provider)
+        assertNull(exported["active-other-profile"])
         store.importForProfiles(mapOf("restored" to exported.getValue("one")))
         assertEquals(store.getMdbListCredential("one"), store.getMdbListCredential("restored"))
         assertNull(store.getMdbListApiKey("restored"))
