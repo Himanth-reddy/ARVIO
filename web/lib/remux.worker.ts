@@ -98,7 +98,10 @@ async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
       language: track.languageCode ?? undefined, channels: track.numberOfChannels,
       label: [track.languageCode?.toUpperCase(), codec.toUpperCase(), `${track.numberOfChannels}ch`, !passthrough && browserPlayable ? "converted" : ""].filter(Boolean).join(" / ") });
   }
-  probe = { container: format.name, videoCodec: await video.getCodecParameterString() ?? undefined,
+  // Mp4OutputFormat writes HEVC as hvc1, even when the input reports hev1.
+  // Advertise the output sample entry to MSE, not the source container label.
+  const videoCodec = (await video.getCodecParameterString())?.replace(/^hev1\./, "hvc1.");
+  probe = { container: format.name, videoCodec: videoCodec ?? undefined,
     videoPlayable: !videoReason, videoReason, hdr10BaseLayer: !!dolbyVision && canExtractHdr10BaseLayer(dolbyVision),
     videoProbeStatus: dolbyVision?.status === "unknown" ? dolbyVision.reason : dolbyVision?.status,
     audioTracks, chosenAudioIndex: preferredAudioIndex(audioTracks, command.language),

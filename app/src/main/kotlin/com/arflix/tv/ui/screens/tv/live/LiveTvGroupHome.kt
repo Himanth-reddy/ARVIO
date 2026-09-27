@@ -272,7 +272,7 @@ private fun QuickAccessGrid(
                 title = stringResource(R.string.live_quick_all_channels),
                 subtitle = stringResource(R.string.live_channels_count, allChannelsCount),
                 icon = Icons.Default.GridView,
-                iconTint = LiveColors.Accent,
+                iconTint = liveAccent(),
                 onClick = onOpenAllChannels,
                 modifier = Modifier.weight(1f),
             )
@@ -420,7 +420,7 @@ private fun PlaylistSubwayTile(
                 .border(
                     BorderStroke(
                         1.dp,
-                        if (expanded) LiveColors.Accent else LiveColors.Divider,
+                        if (expanded) liveAccent() else LiveColors.Divider,
                     ),
                     RoundedCornerShape(10.dp),
                 )
@@ -437,13 +437,13 @@ private fun PlaylistSubwayTile(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(LiveColors.Accent.copy(alpha = 0.16f)),
+                    .background(liveAccent().copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.SettingsInputAntenna,
                     contentDescription = null,
-                    tint = LiveColors.Accent,
+                    tint = liveAccent(),
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -477,7 +477,7 @@ private fun PlaylistSubwayTile(
             Icon(
                 imageVector = Icons.Default.KeyboardArrowDown,
                 contentDescription = stringResource(R.string.live_home_select_playlist),
-                tint = if (expanded) LiveColors.Accent else LiveColors.FgMute,
+                tint = if (expanded) liveAccent() else LiveColors.FgMute,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -515,13 +515,13 @@ private fun PlaylistSubwayTile(
                             modifier = Modifier
                                 .size(44.dp)
                                 .clip(CircleShape)
-                                .background(LiveColors.Accent.copy(alpha = 0.16f)),
+                                .background(liveAccent().copy(alpha = 0.16f)),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.SettingsInputAntenna,
                                 contentDescription = null,
-                                tint = LiveColors.Accent,
+                                tint = liveAccent(),
                                 modifier = Modifier.size(24.dp),
                             )
                         }
@@ -549,11 +549,11 @@ private fun PlaylistSubwayTile(
                                         .fillMaxWidth()
                                         .height(54.dp)
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(if (isSelected) LiveColors.Accent.copy(alpha = 0.16f) else LiveColors.PanelRaised)
+                                        .background(if (isSelected) liveAccent().copy(alpha = 0.16f) else LiveColors.PanelRaised)
                                         .border(
                                             BorderStroke(
                                                 width = if (isSelected) 1.5.dp else 1.dp,
-                                                color = if (isSelected) LiveColors.Accent else LiveColors.Divider,
+                                                color = if (isSelected) liveAccent() else LiveColors.Divider,
                                             ),
                                             shape = RoundedCornerShape(12.dp),
                                         )
@@ -568,7 +568,7 @@ private fun PlaylistSubwayTile(
                                     Icon(
                                         imageVector = Icons.Filled.SettingsInputAntenna,
                                         contentDescription = null,
-                                        tint = if (isSelected) LiveColors.Accent else LiveColors.FgMute,
+                                        tint = if (isSelected) liveAccent() else LiveColors.FgMute,
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Text(
@@ -586,14 +586,14 @@ private fun PlaylistSubwayTile(
                                         text = provider.count.toString(),
                                         style = LiveType.TimeMono.copy(
                                             fontSize = 12.sp,
-                                            color = if (isSelected) LiveColors.Accent else LiveColors.FgMute,
+                                            color = if (isSelected) liveAccent() else LiveColors.FgMute,
                                         ),
                                     )
                                     if (isSelected) {
                                         Icon(
                                             imageVector = Icons.Default.Check,
                                             contentDescription = stringResource(R.string.live_home_playlist_selected),
-                                            tint = LiveColors.Accent,
+                                            tint = liveAccent(),
                                             modifier = Modifier.size(18.dp),
                                         )
                                     }
@@ -649,7 +649,7 @@ private fun GroupPlankTile(
                 Icon(
                     imageVector = groupPlankIcon(category),
                     contentDescription = null,
-                    tint = LiveColors.Accent,
+                    tint = liveAccent(),
                     modifier = Modifier.size(20.dp),
                 )
             }

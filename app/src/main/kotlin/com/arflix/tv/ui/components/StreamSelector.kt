@@ -1140,7 +1140,9 @@ private fun isDebridLikeSource(stream: StreamSource, blob: String? = null): Bool
         append(' ')
         append(stream.addonTitle.orEmpty())
         append(' ')
-        append(stream.behaviorHints?.provider.orEmpty())
+        if (!IptvVodSourceIds.isIptvVodAddonId(stream.addonId)) {
+            append(stream.behaviorHints?.provider.orEmpty())
+        }
         append(' ')
         append(stream.behaviorHints?.sourceLabel.orEmpty())
         append(' ')
@@ -1261,7 +1263,10 @@ private fun presentSource(stream: StreamSource, unknownSourceLabel: String): Sou
         append(' ')
         append(stream.addonTitle.orEmpty())
         append(' ')
-        append(stream.behaviorHints?.provider.orEmpty())
+        // IPTV provider names are user-entered labels, not file metadata.
+        if (!IptvVodSourceIds.isIptvVodAddonId(stream.addonId)) {
+            append(stream.behaviorHints?.provider.orEmpty())
+        }
         append(' ')
         append(stream.behaviorHints?.sourceLabel.orEmpty())
         append(' ')
@@ -1463,7 +1468,11 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
         "1080p" -> add(SourceBadge("1080p", SourceBadgeImages.FULL_HD_1080))
         "720p" -> add(SourceBadge("720p", SourceBadgeImages.HD_720))
         "480p" -> add(SourceBadge("480p"))
-        else -> add(SourceBadge(presentation.resolutionLabel))
+        // A source whose text names no resolution has nothing to show here, and
+        // an empty badge is a pill with no word in it. Leave the slot out.
+        else -> if (presentation.resolutionLabel.isNotBlank()) {
+            add(SourceBadge(presentation.resolutionLabel))
+        }
     }
 
     when (presentation.releaseLabel) {

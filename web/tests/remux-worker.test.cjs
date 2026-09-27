@@ -148,6 +148,17 @@ test('Profile 8.1 extraction is enabled only by confirmed file metadata, while n
   }
 });
 
+test('HEVC probe advertises the hvc1 sample entry written by the MP4 muxer', async (t) => {
+  const helpers = load('lib/dolbyVision.ts', { './dolbyVisionProbeClient': {} });
+  const h = workerHarness(t, [], undefined, [], {
+    video: { codec: 'hevc', getCodecParameterString: async () => 'hev1.2.4.L153.B0' },
+    dolbyVision: { ...helpers, probeDolbyVision: async () => ({ status: 'absent', trackId: 7 }) }
+  });
+  const { probe: result } = await probe(h);
+  assert.equal(result.videoCodec, 'hvc1.2.4.L153.B0');
+  assert.equal(result.videoPlayable, true);
+});
+
 test('A 40-second GOP emits a real MP4 media fragment before waiting for the playback clock', { timeout: 5000 }, async (t) => {
   const packets = Array.from({ length: 90 }, (_, timestamp) => {
     const key = timestamp % 40 === 0;

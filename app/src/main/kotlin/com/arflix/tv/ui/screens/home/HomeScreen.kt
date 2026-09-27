@@ -767,6 +767,8 @@ fun HomeScreen(
                 // Returning from the background is handled by AppForegroundSignals,
                 // which fires whatever screen the app resumes onto.
                 viewModel.refreshContinueWatchingOnly(force = false)
+                // A title marked watched in Details should show its tick once Home is back.
+                viewModel.refreshWatchedBadgesOnResume()
                 // Catalog rows: no-op unless they have gone stale (6h). Home now survives
                 // navigation, so nothing else would re-fetch them in a long session.
                 viewModel.refreshHomeDataIfStale()
@@ -3027,6 +3029,7 @@ private fun MobileHomeRowsLayer(
             val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
             val isPortrait = category.isPortrait(rowUsePosterCards)
             val rowMobileItemWidth = if (isPortrait) 120.dp else 200.dp
+            // The keyed lazy item saves this state across disposal and navigation.
             val rowState = rememberLazyListState()
 
             LaunchedEffect(rowState, category.id) {

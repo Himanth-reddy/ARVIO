@@ -42,6 +42,9 @@ export function safeProxyHeaders(headers: HeadersInit = {}) {
   const result = new Headers();
   new Headers(headers).forEach((value, key) => {
     if (ALLOWED_HEADERS.has(key) && value.length <= 8192) result.set(key, value);
+    // Stalker authenticates a configured MAC via a narrowly scoped cookie.
+    // Never relay arbitrary browser session cookies through this endpoint.
+    if (key === "cookie" && /^mac=(?:[0-9a-f]{2}(?::|%3a)){5}[0-9a-f]{2}; stb_lang=[a-z]{2}; timezone=[A-Za-z_\/+-]+$/i.test(value)) result.set(key, value);
   });
   return result;
 }

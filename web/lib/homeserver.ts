@@ -222,7 +222,18 @@ export async function buildHomeServerCatalogConfigs(
 }
 
 function directUrl(url: string) {
-  return url;
+  const target = new URL(url);
+  const token = target.searchParams.get("api_key");
+  // Jellyfin 12 no longer accepts api_key; retain the alias for Emby.
+  if (token) target.searchParams.set("ApiKey", token);
+  return target.toString();
+}
+
+function jellyfinHeaders(url: string, headers?: Record<string, string>): Record<string, string> | undefined {
+  const token = new URL(url).searchParams.get("api_key") || headers?.["X-Emby-Token"];
+  const legacy = headers?.["X-Emby-Authorization"];
+  if (!token && !legacy) return headers;
+  return { ...headers, Authorization: `${legacy || AUTH_HEADER}${token ? `, Token="${encodeURIComponent(token)}"` : ""}` };
 }
 
 function hashId(value: string): number {
@@ -234,12 +245,13 @@ function hashId(value: string): number {
 }
 
 async function proxiedGet<T>(url: string, headers?: Record<string, string>, signal?: AbortSignal): Promise<T> {
-  return jsonRequest<T>(proxiedUrl(url, headers), { signal });
+  return jsonRequest<T>(proxiedUrl(directUrl(url), jellyfinHeaders(url, headers)), { signal });
 }
 
 async function proxiedPost<T>(url: string, body: unknown, headers?: Record<string, string>, signal?: AbortSignal): Promise<T> {
   const target = new URL("/api/proxy", window.location.origin);
-  target.searchParams.set("url", url);
+  target.searchParams.set("url", directUrl(url));
+  headers = jellyfinHeaders(url, headers);
   if (headers && Object.keys(headers).length) target.searchParams.set("headers", btoa(JSON.stringify(headers)));
   return jsonRequest<T>(target.toString(), { method: "POST", body: JSON.stringify(body), signal });
 }
@@ -334,6 +346,7 @@ export function homeServerLoginError(error: unknown): string {
     }
     return "Authentication failed — check token or username/password";
   }
+  if (failure?.status) return `Home Server connection failed (HTTP ${failure.status})`;
   return "Home Server connection failed";
 }
 
@@ -388,11 +401,11 @@ function mapItem(base: string, token: string, item: JellyfinItem, server?: HomeS
   // back-fill for home-server items, so there is nothing to recover with.
   const primaryTag = item.ImageTags?.Primary ?? item.PrimaryImageTag;
   const image = primaryTag
-    ? directUrl(`${base}/Items/${item.Id}/Images/Primary?maxWidth=500&tag=${primaryTag}&api_key=${token}`)
+    ? directUrl(`${base}/Items/${item.Id}/Images/Primary?maxWidth=500&tag=${primaryTag}&api_key=${encodeURIComponent(token)}`)
     : "";
   const backdropTag = item.BackdropImageTags?.[0];
   const backdrop = backdropTag
-    ? directUrl(`${base}/Items/${item.Id}/Images/Backdrop/0?maxWidth=1280&tag=${backdropTag}&api_key=${token}`)
+    ? directUrl(`${base}/Items/${item.Id}/Images/Backdrop/0?maxWidth=1280&tag=${backdropTag}&api_key=${encodeURIComponent(token)}`)
     : null;
   const tmdbId = Number(item.ProviderIds?.Tmdb) || null;
   return {
@@ -414,7 +427,7 @@ function mapItem(base: string, token: string, item: JellyfinItem, server?: HomeS
     homeServerId: server?.id ?? null,
     homeServerType: server?.type ?? null,
     // Movies stream directly; series would need episode browsing (future).
-    homeServerUrl: mediaType === "movie" ? directUrl(`${base}/Videos/${item.Id}/stream?static=true&api_key=${token}`) : null
+    homeServerUrl: mediaType === "movie" ? directUrl(`${base}/Videos/${item.Id}/stream?static=true&api_key=${encodeURIComponent(token)}`) : null
   };
 }
 
@@ -513,7 +526,7 @@ export async function loadHomeServerRows(
     const { token, userId } = session;
     try {
       const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
-        `${base}/Users/${userId}/Views?api_key=${token}`
+        `${base}/Users/${userId}/Views?api_key=${encodeURIComponent(token)}`
       );
       const libraries = (views.Items ?? [])
         .filter((view) => isVideoCollectionType(view.CollectionType))
@@ -532,7 +545,7 @@ export async function loadHomeServerRows(
         });
         if (hidden.has(identity.id)) return null;
         const items = await proxiedGet<{ Items?: JellyfinItem[] }>(
-          `${base}/Users/${userId}/Items?ParentId=${library.Id}&Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=24&Fields=Overview,PrimaryImageAspectRatio,BasicSyncInfo,ImageTags,BackdropImageTags,ProductionYear,CommunityRating&api_key=${token}`
+          `${base}/Users/${userId}/Items?ParentId=${library.Id}&Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=24&Fields=Overview,PrimaryImageAspectRatio,BasicSyncInfo,ImageTags,BackdropImageTags,ProductionYear,CommunityRating&api_key=${encodeURIComponent(token)}`
         ).catch(() => ({ Items: [] as JellyfinItem[] }));
         const mapped = (items.Items ?? []).map((item) => mapItem(base, token, item, server)).filter((m) => Boolean(m && m.title));
         return mapped.length ? { id: identity.id, title: `${server.name} - ${library.Name}`, items: mapped } : null;
@@ -598,8 +611,8 @@ export async function testHomeServerConnection(
     const session = await ensureSession(server, undefined, true);
     if (!session) return { ok: false, error: "Authentication failed — check token or username/password" };
     const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
-      `${base}/Users/${session.userId}/Views?api_key=${session.token}`
-    ).catch(() => null);
+      `${base}/Users/${session.userId}/Views?api_key=${encodeURIComponent(session.token)}`
+    );
     const info = await proxiedGet<{ Id?: string; ServerName?: string }>(
       `${base}/System/Info/Public`
     ).catch(() => null);
@@ -886,7 +899,7 @@ async function jellyfinItemSources(
   const { token, userId } = session;
   // PlaybackInfo yields the authoritative MediaSources with container/size.
   const playbackInfo = await proxiedPost<{ MediaSources?: JellyfinFullItem["MediaSources"] }>(
-    `${base}/Items/${item.Id}/PlaybackInfo?UserId=${userId}&IsPlayback=false&AutoOpenLiveStream=false&MaxStreamingBitrate=2147483647&api_key=${token}`,
+    `${base}/Items/${item.Id}/PlaybackInfo?UserId=${userId}&IsPlayback=false&AutoOpenLiveStream=false&MaxStreamingBitrate=2147483647&api_key=${encodeURIComponent(token)}`,
     {},
     { "X-Emby-Token": token }
   ).catch(() => null);
@@ -900,7 +913,7 @@ async function jellyfinItemSources(
     const container = (ms.Container ?? "").toLowerCase();
     const ext = container ? `.${container}` : "";
     // Direct static stream — playable in-browser (mp4) or via remux/external.
-    const params = new URLSearchParams({ Static: "true", MediaSourceId: ms.Id ?? "", api_key: token });
+    const params = new URLSearchParams({ Static: "true", MediaSourceId: ms.Id ?? "", ApiKey: token, api_key: token });
     if (ms.ETag) params.set("Tag", ms.ETag);
     const url = `${base}/Videos/${encodeURIComponent(item.Id)}/stream${ext}?${params}`;
     if (seen.has(url)) continue;
@@ -1110,7 +1123,7 @@ export async function resolveHomeServerEpisodeSources(
         const { token, userId } = session;
         // Keep separately stored episode versions instead of selecting the first one.
         const epRes = await proxiedGet<{ Items?: Array<JellyfinFullItem & { IndexNumber?: number; ParentIndexNumber?: number }> }>(
-          `${base}/Shows/${series.Id}/Episodes?userId=${userId}&Fields=MediaSources,Path&api_key=${token}`
+          `${base}/Shows/${series.Id}/Episodes?userId=${userId}&Fields=MediaSources,Path&api_key=${encodeURIComponent(token)}`
         ).catch(() => null);
         const episodes = (epRes?.Items ?? []).filter((item) =>
           item.ParentIndexNumber === season && item.IndexNumber === episode
@@ -1234,7 +1247,7 @@ export async function listHomeServerLibraries(
       if (!session) return [];
       const base = trimUrl(server.url);
       const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
-        `${base}/Users/${session.userId}/Views?api_key=${session.token}`
+        `${base}/Users/${session.userId}/Views?api_key=${encodeURIComponent(session.token)}`
       );
       return (views.Items ?? [])
         .filter((v) => isBrowsableLibraryType(v.CollectionType))

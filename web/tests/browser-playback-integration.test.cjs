@@ -222,6 +222,7 @@ function conversionRecoveryHarness(overrides = {}) {
     liveTv: overrides.liveTv ?? false, playbackRate: 1, config: { allowNetlifyMediaProxy: false },
     setError: (value) => state.errors.push(value), setErrorDetail: (value) => state.details.push(value),
     setBuffering: noop, setShowControls: noop, setActiveSubtitle: noop, setRemuxTracks: noop,
+    setPlayBlocked: value => { state.playBlocked = value; }, DOMException,
     setRemuxAudioIndex: noop, setTransportTracks: noop, defaultSubtitleIndex: () => -1,
     lastSavedRef: { current: 0 }, remuxAudioIndexRef: { current: -1 }, REMUX_STUCK_TICKS: 3,
     onToast: noop, canProviderTranscode: () => overrides.canConvert ?? true,
@@ -261,6 +262,8 @@ function conversionRecoveryHarness(overrides = {}) {
     error: message => options.onError(message), transportError: error => transport.onError(error),
     diagnostic: () => globals.failureDiagnosticRef.current,
     tick: () => { for (const [fn, kind] of [...timers]) if (kind === 'interval') fn(); },
+    timeouts: () => [...timers.values()].filter(kind => kind === 'timeout').length,
+    fireTimeouts: () => { for (const [fn, kind] of [...timers]) if (kind === 'timeout') { timers.delete(fn); fn(); } },
     emit: event => video.dispatchEvent(new Event(event)) };
 }
 
@@ -272,6 +275,37 @@ test('IPTV MKV repackaging tries the subscriber URL before the prepared relay', 
   assert.equal(h.state.probeArguments[1], undefined);
   assert.equal(h.state.probeArguments[3].fallbackUrl, 'https://relay.example/media');
   assert.equal(h.state.hops, 0);
+  cleanup();
+});
+
+test('autoplay permission does not mark a direct source dead; a Play tap restarts startup monitoring', async () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false }, canConvert: false });
+  h.video.paused = true;
+  h.video.readyState = 0;
+  h.video.play = async () => { throw new DOMException('Tap required', 'NotAllowedError'); };
+  const cleanup = h.setup();
+  h.emit('loadedmetadata'); await flush();
+  assert.equal(h.state.playBlocked, true);
+  // Only the scheduled initial play request remains; its rejection must not
+  // advance sources, and both network watchdogs have been cancelled.
+  h.fireTimeouts(); await flush();
+  assert.equal(h.timeouts(), 0);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false);
+  h.video.paused = false;
+  h.emit('play');
+  assert.equal(h.state.playBlocked, false);
+  assert.equal(h.timeouts(), 2);
+  cleanup();
+});
+
+test('remux autoplay rejection exposes Play without changing sources', async () => {
+  const h = conversionRecoveryHarness({ canConvert: false });
+  h.video.play = async () => { throw new DOMException('Tap required', 'NotAllowedError'); };
+  const cleanup = h.setup(); await flush();
+  assert.equal(h.state.playBlocked, true);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false);
   cleanup();
 });
 
@@ -493,6 +527,7 @@ function storeHarness(prepare, report = async () => {}, overrides = {}) {
     activeProfileIdRef: { current: 'profile-a' }, settingsRef: { current: settings },
     authClient: { session: { userId: 'account-a' } }, selected: { title: 'Fixture' }, activeProfile: { id: 'profile-a' }, selectedEpisode: null,
     prepareBrowserStream: prepare, reportHomeServerPlayback: report,
+    busyRef: { current: "" }, streamsRef: { current: [] }, browserAutoplayCandidates: (streams, excluded = new Set()) => streams.filter(s => s.url && !excluded.has(s.originalUrl ?? s.url)), recordBrowserPlaybackFailure: () => {},
     setActiveChannel: () => {}, setActiveStream: (value) => { state.active = value; state.accepted.push(value); },
     setToast: (value) => state.toasts.push(value),
     openLiveExternally: () => false, recordChannelPlayback: () => {}, buildXtreamCatchupUrl: () => 'https://iptv.example/archive.m3u8',
@@ -923,10 +958,11 @@ test('store stops a late cancelled prepared session using its captured credentia
 test('store timeout cancels negotiation and stops a later prepared result without mounting it', async () => {
   const pending = deferred();
   const stopped = [];
-  const h = storeHarness(() => pending.promise, async (...args) => { stopped.push(args); });
+  let signal;
+  const h = storeHarness((_stream, _settings, options) => { signal = options.signal; return pending.promise; }, async (...args) => { stopped.push(args); });
   h.play(homeStream());
   [...h.state.timers.values()][0]();
-  assert.equal(h.globals.playbackPreparation.current.signal.aborted, true);
+  assert.equal(signal.aborted, true);
   pending.resolve(preparedStream());
   await flush();
   assert.equal(h.state.active, null);
@@ -1194,4 +1230,56 @@ test('advanceEpisode starts at zero despite playStream retaining the previous ep
   assert.equal(inputs[0].resumePositionSeconds, 0);
   assert.equal(h.state.active.resumePositionSeconds, 0);
   assert.equal(candidate.resumePositionSeconds, undefined);
+});
+
+
+test('autoplay ignores external player preferences and falls through preparation failures', async () => {
+  const attempts=[];
+  const bad={url:'https://media.example/broken.mp4',autoSelect:true};
+  const good={url:'https://media.example/working.mp4'};
+  const h=storeHarness(async stream=>{attempts.push(stream.url);if(stream.url===bad.url)throw new Error('Unavailable');return stream;},undefined,{
+    settingsRef:{current:{...settings,defaultPlayer:'vlc'}},streamsRef:{current:[bad,good]},
+    openExternalPlayer:()=>assert.fail('Autoplay must never launch an external player')
+  });
+  h.play(bad);await flush();
+  assert.deepEqual(attempts,[bad.url,good.url]);
+  assert.equal(h.state.active.url,good.url);
+  assert.equal(h.state.active.autoSelect,true);
+});
+
+test('autoplay timeout aborts a source and tries the next browser candidate', async () => {
+  let firstSignal;
+  const first={url:'https://media.example/slow.mp4',autoSelect:true};
+  const second={url:'https://media.example/good.mp4'};
+  const h=storeHarness((s,_settings,o)=>{if(s.url===first.url){firstSignal=o.signal;return new Promise(()=>{});}return Promise.resolve(s);},undefined,{streamsRef:{current:[first,second]}});
+  h.play(first);[...h.state.timers.values()][0]();await flush();
+  assert.equal(firstSignal.aborted,true);assert.equal(h.state.active.url,second.url);
+});
+
+test('autoplay exhaustion is bounded and gives a manual Sources recovery action', async () => {
+  let calls=0;const stream={url:'https://media.example/down.mp4',autoSelect:true};
+  const h=storeHarness(async()=>{calls++;throw new Error('Down');},undefined,{streamsRef:{current:[stream]}});
+  h.play(stream);await flush();assert.equal(calls,1);assert.equal(h.state.active,null);
+  assert.match(h.state.toasts.at(-1),/Open Sources/);
+});
+
+
+test('autoplay waits for a late progressive source before declaring exhaustion', async()=>{
+ const bad={url:'https://media.example/bad.mp4',autoSelect:true},good={url:'https://media.example/late.mp4'};
+ const rows={current:[bad]},busy={current:'Finding sources'};
+ const h=storeHarness(async s=>{if(s.url===bad.url)throw Error('Down');return s;},undefined,{streamsRef:rows,busyRef:busy});
+ h.play(bad);await flush();assert.equal(h.state.active,null);
+ rows.current.push(good);busy.current='';for(const fn of [...h.state.timers.values()])fn();await flush();
+ assert.equal(h.state.active.url,good.url);
+});
+
+
+test('addon visibility is queued locally even when its cloud save fails',async()=>{
+  const settings=[];
+  const toggle=extracted('lib/store.tsx',node=>ts.isVariableDeclaration(node)&&node.name.getText()==='setAddonsState'&&ts.isCallExpression(node.initializer)?node.initializer.arguments[0]:undefined,{
+    persistAddons:async(_next,options)=>{options.onLocalSave();throw Error('Cloud sync pending');},
+    updateSettings:patch=>settings.push(patch)
+  });
+  await assert.rejects(toggle([{id:'enabled-again',enabled:true},{id:'still-disabled',enabled:false}]),/Cloud sync pending/);
+  assert.equal(settings.length,1);assert.equal(Array.from(settings[0].disabledAddonIds).join(','),'still-disabled');
 });

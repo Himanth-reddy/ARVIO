@@ -73,18 +73,52 @@ private val sportsDayFormat: java.time.format.DateTimeFormatter =
     java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.getDefault())
 
 internal const val SPORTS_GUIDE_CATEGORY = "sports-hub"
+internal const val SPORTS_CHANNEL_CATEGORY = "g-sports"
 
-internal fun LiveCategoryTree.withSportsDestination(): LiveCategoryTree = copy(
-    top = top.filterNot { it.id == SPORTS_GUIDE_CATEGORY }.flatMap { category ->
-        // The label stays in English so grouping/comparison logic keeps working;
-        // liveCategoryLabel() localizes it at render time (same pattern as the other categories).
-        if (category.id == "all") listOf(category, LiveCategory(SPORTS_GUIDE_CATEGORY, "Sports", 0, CategoryIcon.Sport))
-        else listOf(category)
-    }.let { categories ->
-        if (categories.any { it.id == SPORTS_GUIDE_CATEGORY }) categories
-        else categories + LiveCategory(SPORTS_GUIDE_CATEGORY, "Sports", 0, CategoryIcon.Sport)
-    },
-)
+/**
+ * Gives the match guide a home, preferring the one right next to the sport it
+ * belongs to.
+ *
+ * When the playlist has a "Sports · Global" channel list, the guide goes inside
+ * "All Channels" immediately before it: one is the fixtures, the other the
+ * channels, and split across two levels they read as duplicates of each other.
+ * Without that list — sport from addons, or an empty playlist — there is nothing
+ * to sit beside, so the guide stays a top-level row and remains reachable.
+ *
+ * The label stays in English so grouping and comparison keep working;
+ * liveCategoryLabel() localizes it at render time like the other categories.
+ *
+ * Applying this twice changes nothing.
+ */
+internal fun LiveCategoryTree.withSportsDestination(): LiveCategoryTree {
+    val guide = LiveCategory(SPORTS_GUIDE_CATEGORY, "Sports", 0, CategoryIcon.Sport)
+    val withoutGuide = top.filterNot { it.id == SPORTS_GUIDE_CATEGORY }.map { category ->
+        if (category.id != "all") category
+        else category.copy(children = category.children.filterNot { it.id == SPORTS_GUIDE_CATEGORY })
+    }
+    val beside = withoutGuide.any { category ->
+        category.id == "all" && category.children.any { it.id == SPORTS_CHANNEL_CATEGORY }
+    }
+    if (!beside) {
+        // No sports channels to pair with, so keep it at the top level where the
+        // sports addons can still be reached.
+        val all = withoutGuide.indexOfFirst { it.id == "all" }
+        return copy(
+            top = if (all < 0) withoutGuide + guide
+            else withoutGuide.take(all + 1) + guide + withoutGuide.drop(all + 1),
+        )
+    }
+    return copy(
+        top = withoutGuide.map { category ->
+            if (category.id != "all") category
+            else category.copy(
+                children = category.children.flatMap { child ->
+                    if (child.id != SPORTS_CHANNEL_CATEGORY) listOf(child) else listOf(guide, child)
+                },
+            )
+        },
+    )
+}
 
 @Composable
 internal fun SportsGuidePane(
@@ -306,7 +340,7 @@ internal fun SportsGuidePane(
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 if (isProcessing) {
-                    CircularProgressIndicator(color = LiveColors.Accent, modifier = Modifier.size(28.dp))
+                    CircularProgressIndicator(color = liveAccent(), modifier = Modifier.size(28.dp))
                     Text(
                         text = stringResource(R.string.live_sports_reading_schedule),
                         color = LiveColors.FgDim,

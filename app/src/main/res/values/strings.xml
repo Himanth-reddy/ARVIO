@@ -196,6 +196,8 @@
     <string name="trailer_sound_desc">TV: play trailer audio in the home background</string>
     <string name="trailer_delay">Trailer Delay</string>
     <string name="trailer_delay_desc">Seconds before trailer starts playing</string>
+    <string name="guide_rows">Guide Rows</string>
+    <string name="guide_rows_desc">Channel rows shown in the TV guide</string>
     <string name="trailer_in_cards">Trailers In Cards</string>
     <string name="trailer_in_cards_desc">TV: play trailers inside the focused card instead of full screen</string>
     <string name="frame_rate_desc">Off, Seamless, or Always</string>
@@ -454,6 +456,8 @@
     <string name="settings_use_email_password_short">Use Email/Password</string>
     <string name="settings_connect_trakt">Connect Trakt.tv</string>
     <string name="settings_trakt_instruction">Go to %1$s and enter this code</string>
+    <string name="settings_activation_instruction_tv">Scan the QR code with your phone. It already contains the code. Or open %1$s and enter it.</string>
+    <string name="settings_activation_instruction_touch">Tap the button and sign in. You don\'t have to enter the code. This window finishes on its own.</string>
     <string name="settings_waiting_for_authorization">Waiting for authorization</string>
     <string name="settings_open_auth_page">Open auth page</string>
     <string name="settings_open_trakt_page">Open Trakt page</string>
@@ -885,6 +889,21 @@
     <string name="settings_stalker_not_configured">Not configured</string>
     <string name="settings_stalker_remove">Remove portal</string>
     <string name="settings_cd_manage_stalker_categories">Manage Stalker categories</string>
+    <!-- IPTV account details: subscription end and stream limit -->
+    <string name="iptv_account_days_left">%1$d days left</string>
+    <string name="iptv_account_one_day_left">1 day left</string>
+    <string name="iptv_account_ends_today">Ends today</string>
+    <string name="iptv_account_unlimited">Unlimited</string>
+    <string name="iptv_account_expired">Expired</string>
+    <string name="iptv_account_until">until %1$s</string>
+    <string name="iptv_account_since">since %1$s</string>
+    <string name="iptv_account_no_info">No account info</string>
+    <string name="iptv_account_streams">%1$d streams</string>
+    <string name="iptv_account_one_stream">1 stream</string>
+    <string name="iptv_account_checked_at">Last checked: %1$s</string>
+    <string name="iptv_account_refresh">Refresh now</string>
+    <string name="iptv_account_refreshing">Checking…</string>
+    <string name="iptv_account_refresh_failed">The provider did not answer. Please try again in a minute.</string>
     <string name="settings_cd_edit_stalker_config">Edit Stalker portal</string>
     <string name="settings_section_stalker_portals">STALKER PORTALS</string>
     <string name="settings_add_stalker_portal_button">Add Stalker portal</string>
@@ -1415,6 +1434,20 @@
     <string name="settings_quality_filters_custom">Custom filters detected — use manual editing to modify</string>
     <string name="settings_addon_added_with_catalogs">Added %1$s (%2$d catalogs imported)</string>
     <string name="settings_addon_added_no_catalogs">Added %1$s (no catalogs exposed)</string>
+    <string name="settings_addon_configure">Configure addon</string>
+    <string name="settings_addon_setup_required">Setup required</string>
+    <string name="settings_addon_setup">Set up</string>
+    <string name="settings_addon_setup_first">Set up %1$s first</string>
+    <string name="settings_addon_loading">Loading addon…</string>
+    <string name="settings_addon_install_title">Install addon?</string>
+    <string name="settings_addon_install_trust">Only add addons you trust.</string>
+    <string name="settings_addon_install">Install</string>
+    <string name="settings_addon_already_installed_title">%1$s is already installed</string>
+    <string name="settings_addon_already_installed_message">This link has different settings. Replace the installed one, or keep both?</string>
+    <string name="settings_addon_replace_existing">Replace installed</string>
+    <string name="settings_addon_keep_both">Keep both</string>
+    <string name="settings_addon_configure_qr_title">Configure %1$s</string>
+    <string name="settings_addon_configure_qr_hint">Scan with your phone, change the settings there and tap Install in ARVIO on your phone. Then choose Refresh Addons here.</string>
     <string name="settings_addons_cloud_restore_failed">Cloud restore failed; addons were not changed</string>
     <string name="settings_addons_refresh_report">%1$d addons refreshed, %2$d failed</string>
     <string name="settings_addons_refresh_failed">Failed to refresh addons</string>
@@ -1595,6 +1628,7 @@
     <string name="watchlist_failed_remove_trakt">Failed to remove from Trakt watchlist</string>
     <string name="watchlist_failed_remove">Failed to remove from watchlist</string>
     <string name="collection_failed_load">Failed to load collection</string>
+    <string name="collection_missing_addon">This collection needs an add-on that is not installed or is turned off: %1$s</string>
     <string name="collection_not_found">Collection not found</string>
 
 

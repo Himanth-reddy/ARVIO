@@ -149,6 +149,7 @@ fun AppNavigation(
     currentProfile: Profile? = null,
     isCloudConnected: Boolean = false,
     onSwitchProfile: () -> Unit = {},
+    onProfileSelected: (String) -> Unit = {},
     onTvFullscreenChanged: (Boolean) -> Unit = {},
     onOverlayFullscreenChanged: (Boolean) -> Unit = {},
     onSettingsSubPageChanged: (Boolean) -> Unit = {},
@@ -174,7 +175,7 @@ fun AppNavigation(
         // popBackStack also clears everything stacked above Home, which is what the previous
         // comment here wanted (no stale Details pages); the fallback covers the case it worried
         // about, Home not being on the stack at all.
-        if (!navController.popBackStack(Screen.Home.route, inclusive = false)) {
+        if (!navController.popBackStack(Screen.Home.route, inclusive = false, saveState = true)) {
             navController.navigate(Screen.Home.route) {
                 popUpTo(Screen.Home.route) { inclusive = true; saveState = false }
                 launchSingleTop = true
@@ -190,10 +191,10 @@ fun AppNavigation(
         // Netflix TV uses ~250ms fade; this is tuned for Android TV's 60fps.
         // Pure crossfade — no horizontal slides (those feel mobile, not TV).
         // Netflix TV uses ~250ms crossfade for all screen transitions.
-        enterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
-        exitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
-        popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
-        popExitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+        enterTransition = { fadeIn(androidx.compose.animation.core.tween(180, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        exitTransition = { fadeOut(androidx.compose.animation.core.tween(140, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(180, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        popExitTransition = { fadeOut(androidx.compose.animation.core.tween(140, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
     ) {
         // Login screen
         composable(Screen.Login.route) {
@@ -329,7 +330,7 @@ fun AppNavigation(
 
         // Settings screen
         composable(
-            route = "settings?autoCloudAuth={autoCloudAuth}&initialSection={initialSection}&installPackUrl={installPackUrl}",
+            route = "settings?autoCloudAuth={autoCloudAuth}&initialSection={initialSection}&installPackUrl={installPackUrl}&installAddonUrl={installAddonUrl}",
             arguments = listOf(
                 navArgument("autoCloudAuth") {
                     type = NavType.BoolType
@@ -344,17 +345,24 @@ fun AppNavigation(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument("installAddonUrl") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
             val autoCloudAuth = backStackEntry.arguments?.getBoolean("autoCloudAuth") ?: false
             val initialSection = backStackEntry.arguments?.getString("initialSection")
             val installPackUrl = backStackEntry.arguments?.getString("installPackUrl")
+            val installAddonUrl = backStackEntry.arguments?.getString("installAddonUrl")
             SettingsScreen(
                 currentProfile = currentProfile,
                 autoStartCloudAuth = autoCloudAuth,
                 initialSection = initialSection,
                 installPackUrl = installPackUrl,
+                installAddonUrl = installAddonUrl,
                 onNavigateToHome = { navigateHome() },
                 onNavigateToSearch = { navigateTopLevel(Screen.Search.route) },
                 onNavigateToTv = { navigateTopLevel(Screen.Tv.createRoute()) },
@@ -377,7 +385,8 @@ fun AppNavigation(
         // Profile selection screen
         composable(Screen.ProfileSelection.route) {
             ProfileSelectionScreen(
-                onProfileSelected = {
+                onProfileSelected = { profileId ->
+                    onProfileSelected(profileId)
                     navController.navigate(Screen.Home.route) {
                         popUpTo(Screen.ProfileSelection.route) { inclusive = true }
                     }

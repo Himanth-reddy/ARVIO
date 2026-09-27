@@ -24,3 +24,14 @@ All 702 web tests pass, including direct success, failed direct probe then relay
 - `f0b3affe6`: preserve VOD headers and discover all matching series variants.
 - `c79e1dbe5`: direct-first IPTV VOD with header-aware relay fallback.
 - Deployment: https://github.com/ProdigyV21/ARVIO/actions/runs/35732746291
+
+## Broader iPad follow-up — 23 September
+
+User reports most sources work on Windows but fail in both Chrome and Safari on an iPad running the newest iPadOS (exact version and error behaviour not supplied).
+
+Fixed three confirmed code issues:
+- HEVC input codec strings from Mediabunny can start with `hev1`, while its MP4 muxer writes `hvc1`. Remux probes now advertise the output sample entry, preserving profile/level and the existing Dolby Vision safety checks.
+- Remux startup awaited `loadeddata` before the caller requested playback. It now returns after `loadedmetadata`, avoiding a circular wait in browsers that defer decoding until playback is requested.
+- Direct startup treated the absence of playable frames after `NotAllowedError` as a network timeout. Permission rejection now stops those watchdogs and shows a Play button. A user Play event rearms startup monitoring; remux also exposes Play instead of silently swallowing permission rejection.
+
+Validation: 706 web tests and TypeScript pass, including metadata-only startup, HEVC output labelling, and direct/remux autoplay permission recovery. A synthetic HEVC Main10 file played at readyState 4 and sought to 65 seconds in the desktop Chromium fixture. This is regression evidence, not proof of physical iPad playback. Browser/provider/network limits still apply. No native APK changes.

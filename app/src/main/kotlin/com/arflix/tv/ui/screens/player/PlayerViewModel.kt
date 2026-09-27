@@ -1446,6 +1446,10 @@ class PlayerViewModel @Inject constructor(
                 // a short grace period to avoid false low-quality picks, then
                 // force-select once quality/size looks stable.
                 val hasHomeServerConnections = streamRepository.hasHomeServerConnections()
+                // An IPTV playlist or portal is a source like any other: without it
+                // in the count, a user whose only provider is IPTV was told to go
+                // install a streaming addon whenever a search came back empty.
+                val hasIptvVodProviders = streamRepository.hasIptvVodProviders()
                 val HOME_SERVER_AUTOPLAY_WAIT_MS = 850L
                 val AUTOPLAY_MAX_WINDOW_MS = 1_750L
                 val AUTOPLAY_QUALITY_WINDOW_MS = 180L
@@ -1509,7 +1513,8 @@ class PlayerViewModel @Inject constructor(
                         PlayerAutoplayAvailability.SELECTED -> _uiState.value.error
                         PlayerAutoplayAvailability.NO_MATCH -> PlayerMessage.Res(R.string.stream_no_sources_match)
                         PlayerAutoplayAvailability.NO_SOURCES -> when {
-                            streamingAddonCount == 0 && !pluginSearchStarted && !hasHomeServerConnections ->
+                            streamingAddonCount == 0 && !pluginSearchStarted &&
+                                !hasHomeServerConnections && !hasIptvVodProviders ->
                                 PlayerMessage.Res(R.string.player_error_no_streaming_addons)
                             hasHomeServerConnections -> PlayerMessage.Res(R.string.player_error_no_streams_media_servers)
                             else -> PlayerMessage.Res(R.string.player_error_no_streams_from_addons)

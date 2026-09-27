@@ -557,3 +557,56 @@ test('unknown stream snapshots perform no authentication or network requests', (
   h.updateHomeServerPlaybackPosition({ ...stream(), playbackSession: { serverId: 'unknown', sessionId: 'unknown', itemId: 'movie', transcoding: false } }, { positionSeconds: 12 });
   assert.equal(h.calls.length, 0);
 });
+
+
+test('Jellyfin 12 accepts login and libraries with legacy authorization disabled', async () => {
+  const token = 'new & token';
+  const h = harness(({url, headers, body}) => {
+    if (url.pathname.endsWith('/System/Info/Public')) return {ServerName: 'Jellyfin 12.1.0'};
+    assert.match(headers.Authorization || '', /^MediaBrowser Client=/);
+    if (url.pathname.endsWith('/AuthenticateByName')) {
+      assert.equal(body.Username, 'member');
+      return {AccessToken: token, User: {Id: 'member'}};
+    }
+    assert.equal(url.searchParams.get('ApiKey'), token);
+    assert.ok(headers.Authorization.includes(`Token="${encodeURIComponent(token)}"`));
+    if (url.pathname.endsWith('/Users/Me')) return {Id: 'member'};
+    if (url.pathname.endsWith('/Views')) return {Items: [{Id:'movies', Name:'Movies', CollectionType:'movies'}]};
+    throw new Error(`Unexpected endpoint ${url.pathname}`);
+  });
+  const result = await h.homeserver.testHomeServerConnection({...jf, token: undefined, userId: undefined, username:'member', password:'password'});
+  assert.equal(result.ok, true);
+  assert.equal(result.libraryCount, 1);
+  const tokenResult = await h.homeserver.testHomeServerConnection({...jf, token, userId: undefined});
+  assert.equal(tokenResult.ok, true);
+});
+
+test('saved Jellyfin token is not reported connected when library access is rejected', async () => {
+  const h = harness(() => {throw Object.assign(new Error('Unauthorized'), {status:401});});
+  const result = await h.homeserver.testHomeServerConnection(jf);
+  assert.equal(result.ok, false);
+});
+
+test('Jellyfin 12 playback authenticates metadata and direct media without legacy keys', async () => {
+  const h = harness(({headers}) => {
+    assert.ok(headers.Authorization.includes(`Token="${encodeURIComponent(jf.token)}"`));
+    return playbackInfo();
+  });
+  const result = await h.prepareHomeServerPlayback(stream(), {homeServers:[jf]}, {});
+  assert.equal(new URL(result.url).searchParams.get('ApiKey'), jf.token);
+});
+
+
+test('Jellyfin 12 artwork and catalog media carry modern API keys', async () => {
+  const h = harness(({url}) => {
+    assert.equal(url.searchParams.get('ApiKey'), jf.token);
+    if (url.pathname.endsWith('/Views')) return {Items:[{Id:'movies',Name:'Movies',CollectionType:'movies'}]};
+    return {Items:[{Id:'movie',Name:'Example',Type:'Movie',ImageTags:{Primary:'poster'},BackdropImageTags:['backdrop']}]};
+  });
+  const rows = await h.homeserver.loadHomeServerRows([jf]);
+  assert.equal(rows.length, 1);
+  const item = rows[0].items[0];
+  for (const value of [item.image, item.backdrop, item.homeServerUrl]) {
+    assert.equal(new URL(value).searchParams.get('ApiKey'), jf.token);
+  }
+});

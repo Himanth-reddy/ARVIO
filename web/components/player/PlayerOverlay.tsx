@@ -34,6 +34,7 @@ import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer 
 import { proxiedUrl } from "@/lib/http";
 import { attachPlayback, type PlaybackHandle, type PlaybackTracks, type PlaybackError } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
+import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
 import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure } from "@/lib/streamCompatibility";
 import { reportHomeServerPlayback, updateHomeServerPlaybackPosition } from "@/lib/homeServerPlayback";
@@ -321,6 +322,7 @@ function VideoPlayer({
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [playing, setPlaying] = useState(false);
+  const [playBlocked, setPlayBlocked] = useState(false);
   // Boot screen (like the app): backdrop + pulsing clearlogo covers the player
   // and blocks input until first frames are ready.
   const [booted, setBooted] = useState(false);
@@ -673,7 +675,7 @@ function VideoPlayer({
     autoSourceHopsRef.current = 0;
   }, [item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
   const tryNextSource = useCallback(() => {
-    if (liveTv || !currentStreamRef.current.autoSelect || autoSourceHopsRef.current >= 6) return false;
+    if (liveTv || !currentStreamRef.current.autoSelect || autoSourceHopsRef.current >= sourceListRef.current.length) return false;
     // Carry the watched position across the switch — the replacement source is
     // the same title, so restarting at 0 loses the user's place.
     const playhead = videoRef.current?.currentTime ?? 0;
@@ -686,7 +688,8 @@ function VideoPlayer({
     // skip the rest of that addon and jump to the next provider.
     const addonKey = current.addonId || current.addonName || "";
     if (addonKey) failedAddonStrikesRef.current.set(addonKey, (failedAddonStrikesRef.current.get(addonKey) ?? 0) + 1);
-    const pick = (skipStruckAddons: boolean) => sourceListRef.current.find((candidate) => {
+    recordBrowserPlaybackFailure(current, "This source failed during browser playback", true);
+    const pick = (skipStruckAddons: boolean) => browserAutoplayCandidates(sourceListRef.current, failedSourceUrlsRef.current).find((candidate) => {
       if (!candidate.url || failedSourceUrlsRef.current.has(candidate.url)) return false;
       // Uncached debrid torrents would stall on a server-side download.
       if (isUncachedDebridStream(candidate)) return false;
@@ -704,7 +707,7 @@ function VideoPlayer({
     if (!next) return false;
     autoSourceHopsRef.current += 1;
     onToast(`Source failed — trying ${next.source || next.addonName || "the next source"}`);
-    onSelectStream({ ...next, autoSelect: true }, { forceBrowser: true });
+    onSelectStream({ ...next, autoSelect: true, resumePositionSeconds: resumeAtRef.current }, { forceBrowser: true });
     return true;
   }, [liveTv, onSelectStream, onToast]);
   const badges = useMemo(() => {
@@ -720,6 +723,7 @@ function VideoPlayer({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !stream.url) return undefined;
+    setPlayBlocked(false);
 
     // In-browser remux path (Tier 3): repackage an MKV direct link and play the
     // browser-safe audio track. Takes over the element entirely for this source.
@@ -788,7 +792,12 @@ function VideoPlayer({
           }
           if (cancelled || recovering) return;
           resumeAtRef.current = 0;
-          void video.play().catch(() => undefined);
+          void video.play().catch((reason: unknown) => {
+            if (cancelled || recovering) return;
+            if (reason instanceof DOMException && reason.name === "NotAllowedError") {
+              setPlayBlocked(true); setBuffering(false); setShowControls(true);
+            } else if (video.error) remuxFailed("Browser playback could not start.");
+          });
           // A CDN can stop supplying packets without an error. Require clock
           // progress too, and use the same bounded recovery as decoder failures.
           let lastSeen = -1;
@@ -916,6 +925,7 @@ function VideoPlayer({
         handlePlaybackError({ transport: stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
       }, liveTv ? 15000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     };
+    let awaitingGesture = false;
     const requestPlayback = () => {
       if (cancelled || !video.paused) return;
       setError(false);
@@ -927,6 +937,12 @@ function VideoPlayer({
           // A rejected play() during source replacement or autoplay blocking
           // does not establish that the media is broken.
           if (video.error) { handlePlaybackError(); return; }
+          if (reason instanceof DOMException && reason.name === "NotAllowedError") {
+            awaitingGesture = true;
+            window.clearTimeout(stallTimer);
+            window.clearTimeout(playableWatchdog);
+            setPlayBlocked(true);
+          }
           setBuffering(false);
           setShowControls(true);
         });
@@ -1081,6 +1097,13 @@ function VideoPlayer({
       requestPlayback();
     }
     const startTimer = window.setTimeout(requestPlayback, 0);
+    const onUserPlay = () => {
+      if (cancelled || !awaitingGesture) return;
+      awaitingGesture = false;
+      setPlayBlocked(false);
+      armStallTimer();
+    };
+    video.addEventListener("play", onUserPlay);
     // Each engine owns its error recovery and emits a terminal typed fault.
     // Listening to the same raw video error here bypasses HLS recovery and can
     // run the fallback ladder twice for one failure.
@@ -1103,6 +1126,7 @@ function VideoPlayer({
       window.clearTimeout(startTimer);
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
+      video.removeEventListener("play", onUserPlay);
       video.removeEventListener("playing", onFirstPlaying);
       video.removeEventListener("timeupdate", onFirstPlaying);
       clearAttemptStart();
@@ -1124,7 +1148,7 @@ function VideoPlayer({
       setBufferAheadSec(bufferedAhead(video.buffered, video.currentTime));
     };
     const onDur = () => setDuration(video.duration || 0);
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => { setPlaying(true); setPlayBlocked(false); };
     const onPause = () => setPlaying(false);
     const onWaiting = () => setBuffering(true);
     const onPlaying = () => setBuffering(false);
@@ -1608,7 +1632,12 @@ function VideoPlayer({
       </div>}
       {!dock.docked && dock.canDock && <button type="button" className="player-dock-return" onClick={dock.collapse} aria-label={translateUi("Return to guide")} title={translateUi("Return to guide")}><Minimize size={22} /></button>}
 
-      {!booted && !error && (
+      {playBlocked && !error && <div className="player-start-prompt">
+        <button type="button" className="player-error-external" onClick={togglePlay}>
+          <Play size={24} fill="currentColor" /> {translateUi("Play")}
+        </button>
+      </div>}
+      {!booted && !error && !playBlocked && (
         <div className="player-boot" style={{ backgroundImage: item?.backdrop ? `url(${item.backdrop})` : undefined }} aria-label={translateUi("Loading playback")}>
           {bootLogo
             ? <img className="player-boot-logo" src={bootLogo} alt={title} />

@@ -99,6 +99,9 @@ test('Hosted proxy rejects private, loopback and mapped addresses and strips uns
   assert.equal(m.isPublicAddress('8.8.8.8'), true);
   assert.equal(m.safeProxyHeaders({ host: 'internal', cookie: 'secret', authorization: 'Bearer x' }).has('host'), false);
   assert.equal(m.safeProxyHeaders({ cookie: 'secret' }).has('cookie'), false);
+  const portalCookie='mac=00%3A1A%3A79%3A12%3A34%3A56; stb_lang=en; timezone=UTC';
+  assert.equal(m.safeProxyHeaders({cookie:portalCookie}).get('cookie'),portalCookie);
+  assert.equal(m.safeProxyHeaders({cookie:portalCookie+'; session=secret'}).has('cookie'),false);
 });
 test('Proxy pins DNS and rejects a redirect into a private network before fetching it', async () => {
   const requested = [];

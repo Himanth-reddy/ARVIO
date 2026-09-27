@@ -53,6 +53,7 @@ import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -152,6 +153,8 @@ class TraktRepository @Inject constructor(
     private fun clearProfileScopedMemoryCaches(clearPreloaded: Boolean) {
         watchedMoviesCache.clear()
         watchedEpisodesCache.clear()
+        episodeWriteGenerations.clear()
+        movieWriteGenerations.clear()
         cacheInitialized = false
         cacheInitializing = false
         showWatchedEpisodesCache.clear()
@@ -1146,6 +1149,9 @@ class TraktRepository @Inject constructor(
     suspend fun getWatchedEpisodesForShow(tmdbId: Int): Set<String> {
         val auth = getAuthHeader()
         val prefix = "show_tmdb:$tmdbId:"
+        // Issue 4: fence captured BEFORE any suspend/backend call. Local writes
+        // with a generation past this point win over the returning response.
+        val requestWriteGeneration = watchedWriteGeneration.get()
         val localOptimistic = watchedEpisodesCache.filter { it.startsWith(prefix) }.toSet()
 
         // For non-Trakt profiles, use the global watched cache (populated from Supabase)
@@ -1172,7 +1178,9 @@ class TraktRepository @Inject constructor(
         val now = System.currentTimeMillis()
         if (now - showWatchedCacheTime < SHOW_CACHE_DURATION_MS) {
             showWatchedEpisodesCache[tmdbId]?.let { cachedSet ->
-                return (cachedSet + localOptimistic)
+                // Issue 4: re-read the live optimistic set rather than the snapshot
+                // above so a concurrent local mark is never dropped on this path.
+                return (cachedSet + watchedEpisodesCache.filter { it.startsWith(prefix) })
             }
         }
 
@@ -1198,6 +1206,7 @@ class TraktRepository @Inject constructor(
 
             if (traktId == null) {
                 // Cache empty result to avoid repeated lookups
+                applyLocalWriteFence(prefix, requestWriteGeneration, watchedSet)
                 showWatchedEpisodesCache[tmdbId] = watchedSet
                 return watchedSet
             }
@@ -1221,6 +1230,9 @@ class TraktRepository @Inject constructor(
             }
 
             // Cache the result
+            // Issue 4: local writes issued after this request started win over
+            // stale remote state (Trakt scrobble → progress replication lag).
+            applyLocalWriteFence(prefix, requestWriteGeneration, watchedSet)
             showWatchedEpisodesCache[tmdbId] = watchedSet
             showWatchedCacheTime = now
 
@@ -1230,6 +1242,29 @@ class TraktRepository @Inject constructor(
         }
 
         return watchedSet
+    }
+
+    /**
+     * Issue 4 (Option B): enforce local-write-wins over a stale backend response.
+     * Any key whose local write generation advanced past [requestWriteGeneration]
+     * (i.e. the user marked watched/unwatched while this request was in flight)
+     * is resolved from the live [watchedEpisodesCache], ignoring what Trakt
+     * returned. No wall-clock comparison — immune to device clock skew.
+     */
+    private fun applyLocalWriteFence(
+        prefix: String,
+        requestWriteGeneration: Long,
+        watchedSet: MutableSet<String>
+    ) {
+        for ((key, writeGen) in episodeWriteGenerations) {
+            if (writeGen > requestWriteGeneration && key.startsWith(prefix)) {
+                if (watchedEpisodesCache.contains(key)) {
+                    watchedSet.add(key)
+                } else {
+                    watchedSet.remove(key)
+                }
+            }
+        }
     }
 
     /**
@@ -4792,6 +4827,14 @@ class TraktRepository @Inject constructor(
     // In-memory cache for watched status (mirrors Supabase data)
     private val watchedMoviesCache = mutableSetOf<Int>()
     private val watchedEpisodesCache = mutableSetOf<String>()
+    // Issue 4 (Option B): monotonic local write-generation fence against Trakt
+    // replication lag. Every local user-intent write bumps [watchedWriteGeneration]
+    // and records the per-key generation. Reconciliation captures the counter before
+    // issuing the backend request; keys written after that fence win over stale
+    // remote responses. Pure local ordering — immune to device clock skew.
+    private val watchedWriteGeneration = AtomicLong(0L)
+    private val episodeWriteGenerations = ConcurrentHashMap<String, Long>()
+    private val movieWriteGenerations = ConcurrentHashMap<Int, Long>()
     private var cacheInitialized = false
     @Volatile private var cacheInitializing = false
 
@@ -4804,6 +4847,8 @@ class TraktRepository @Inject constructor(
         cacheInitialized = false
         watchedMoviesCache.clear()
         watchedEpisodesCache.clear()
+        episodeWriteGenerations.clear()
+        movieWriteGenerations.clear()
     }
 
     /**
@@ -4917,6 +4962,9 @@ class TraktRepository @Inject constructor(
             } else {
                 watchedMoviesCache.remove(tmdbId)
             }
+            // Issue 4: fence local movie writes (kept for symmetry; the episode
+            // path is where stale remote overwrites regress badges today).
+            movieWriteGenerations[tmdbId] = watchedWriteGeneration.incrementAndGet()
         } else {
             // Episode
             val key = buildEpisodeKey(
@@ -4931,6 +4979,10 @@ class TraktRepository @Inject constructor(
             } else {
                 watchedEpisodesCache.remove(key)
             }
+            // Issue 4: record the write generation for BOTH directions. A local
+            // unwatch after the reconcile request was issued must also win over a
+            // stale remote "completed=true".
+            episodeWriteGenerations[key] = watchedWriteGeneration.incrementAndGet()
         }
     }
 

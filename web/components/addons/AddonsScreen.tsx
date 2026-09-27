@@ -78,7 +78,7 @@ export function AddonsScreen() {
               <span>{resourceLabel(addon.resources)}</span>
               {addonProvidesStreams(addon) && <span>{translateUi("Streams")}</span>}
             </div>
-            <button type="button" className="secondary" onClick={() => removeAddon(addon)}>{translateUi("Remove")}</button>
+            <button type="button" className="secondary" onClick={() => void removeAddon(addon).catch(error => setToast(error instanceof Error ? error.message : "Could not remove addon."))}>{translateUi("Remove")}</button>
           </article>
         ))}
       </div>

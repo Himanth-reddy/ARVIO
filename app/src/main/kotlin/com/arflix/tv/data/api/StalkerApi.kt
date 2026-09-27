@@ -10,6 +10,7 @@ import com.google.gson.JsonPrimitive
 import com.google.gson.annotations.SerializedName
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import kotlinx.coroutines.ensureActive
@@ -32,6 +33,7 @@ open class StalkerApi(
 
     private val client = OkHttpClient.Builder()
         .withIptvProviderRequestGuard()
+        .connectionPool(ConnectionPool(MAX_IDLE_CONNECTIONS, IDLE_KEEP_ALIVE_SECONDS, TimeUnit.SECONDS))
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
@@ -122,6 +124,21 @@ open class StalkerApi(
             val response = doGet(url)
             response.contains("\"id\"")
         } catch (_: Exception) { false }
+    }
+
+    /**
+     * The raw `account_info/get_main_info` answer, which carries the
+     * subscription end date (see [com.arflix.tv.data.repository.IptvAccountInfoParser.parseStalker]).
+     * Null when the request itself failed.
+     */
+    suspend fun getAccountInfoBody(): String? {
+        return try {
+            coroutineContext.ensureActive()
+            doGet("$apiBase/server/load.php?type=account_info&action=get_main_info&JsHttpRequest=1-xml")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     /** Step 3: Get all channels */
@@ -861,6 +878,35 @@ open class StalkerApi(
          * stands for "all of them" and is never the `category_id` of an item.
          */
         const val ALL_CATEGORIES_ID = "*"
+
+        /**
+         * How long an unused connection may be kept for the next request.
+         *
+         * Measured against a real portal, three captures on three days: the
+         * portal closes an idle connection after exactly ten seconds. OkHttp's
+         * default keeps one for five minutes, so every request made more than
+         * ten seconds after the last one was written into a socket the portal
+         * had already given up on - and because
+         * [com.arflix.tv.network.withIptvProviderRequestGuard] switches
+         * OkHttp's own connection retry off, nothing tried again: the request
+         * was simply lost, and a source search that found the film on a second
+         * press found nothing on the first.
+         *
+         * Five seconds is half the portal's window, so a reused connection is
+         * always well inside it. The cost is a TCP handshake on a lookup that
+         * follows a longer pause - a few milliseconds, and *no* extra request,
+         * which is what the provider-side rate limits actually count.
+         */
+        internal const val IDLE_KEEP_ALIVE_SECONDS = 5L
+
+        /**
+         * The measured window: the portal closes an idle connection after this
+         * long. [IDLE_KEEP_ALIVE_SECONDS] has to stay safely below it.
+         */
+        internal const val MEASURED_PORTAL_IDLE_CLOSE_SECONDS = 10L
+
+        /** OkHttp's own default; only the keep-alive above is ours. */
+        private const val MAX_IDLE_CONNECTIONS = 5
 
         /**
          * Search results are already narrow; a handful of pages is plenty and

@@ -74,8 +74,8 @@ export function LiveTvScreen() {
   const [activeCategory, setActiveCategory] = useState("all");
   const hasSportsAddons = addons.some(addon => sportsEventCatalogs(addon).length > 0);
   useEffect(() => {
-    if (hasSportsAddons && !settings.iptvPlaylists.length) setActiveCategory("sports");
-  }, [hasSportsAddons, settings.iptvPlaylists.length]);
+    if (hasSportsAddons && !settings.iptvPlaylists.length && !settings.iptvStalkerUrl) setActiveCategory("sports");
+  }, [hasSportsAddons, settings.iptvPlaylists.length, settings.iptvStalkerUrl]);
   const [query, setQuery] = useState("");
   // Re-open Live TV where the user left off (requested: "start at the last
   // channel you left"). Persisted per device; falls back to the first channel
@@ -101,7 +101,7 @@ export function LiveTvScreen() {
   const channelById = useMemo(() => channelIdentityIndex(channels), [channels]);
   const enabledPlaylists = useMemo(() => playlists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim()), [playlists]);
   useEffect(() => {
-    if (provider !== "all" && !enabledPlaylists.some(playlist => playlist.id === provider)) setProvider("all");
+    if (provider !== "all" && provider !== "stalker" && !enabledPlaylists.some(playlist => playlist.id === provider)) setProvider("all");
   }, [enabledPlaylists, provider]);
   const favoriteChannels = useMemo(() => resolveChannelReferences(favorites, channelById), [favorites, channelById]);
   const favoriteIds = useMemo(() => new Set(favoriteChannels.map(channel => channel.id)), [favoriteChannels]);
@@ -112,7 +112,7 @@ export function LiveTvScreen() {
     && (favorites.length > favoriteChannels.length || tvSession.recentChannelIds.length > recentChannels.length);
   // Same helper the store stamps onto the snapshot, so both sides agree on when
   // a cached channel list still matches the configured playlists.
-  const playlistSignature = iptvPlaylistSignature(playlists);
+  const playlistSignature = iptvPlaylistSignature(playlists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "");
 
   // Re-entering Live TV used to rebuild the whole snapshot every time — with a
   // large provider that is ~139k channels re-parsed and re-grouped on each
@@ -120,7 +120,7 @@ export function LiveTvScreen() {
   // is already cached). Reuse the snapshot that is still in memory and only
   // rebuild when the playlists actually changed, or when it has gone stale.
   useEffect(() => {
-    if (!playlists.length) return;
+    if (!playlists.length && !settings.iptvStalkerUrl) return;
     const snapshotMatchesPlaylists = iptvSnapshot.channels.length > 0
       && iptvSnapshot.signature === playlistSignature;
     const age = Date.now() - (iptvSnapshot.loadedAt ?? 0);
@@ -343,8 +343,9 @@ export function LiveTvScreen() {
         </div>
         <div className="livetv-topbar-actions">
           <button type="button" className="livetv-chipbtn" title={translateUi("Toggle categories")} aria-label={translateUi("Toggle categories")} aria-expanded={groupsOpen} onClick={() => setGroupsOpen(!groupsOpen)}><PanelLeft size={18} /></button>
-          {enabledPlaylists.length > 1 && <select aria-label={translateUi("Playlist provider")} value={provider} onChange={(event) => { setProvider(event.target.value); setActiveCategory("all"); }}>
+          {enabledPlaylists.length + (settings.iptvStalkerUrl ? 1 : 0) > 1 && <select aria-label={translateUi("Playlist provider")} value={provider} onChange={(event) => { setProvider(event.target.value); setActiveCategory("all"); }}>
             <option value="all">{translateUi("All playlists")}</option>
+            {settings.iptvStalkerUrl && <option value="stalker">Stalker</option>}
             {enabledPlaylists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>}
           <button type="button" className="livetv-chipbtn" onClick={() => setManaging((value) => !value)} aria-expanded={managing}>
@@ -420,6 +421,7 @@ export function LiveTvScreen() {
           }}>
             <select aria-label={translateUi("Playlist provider")} value={provider} onChange={event => { setProvider(event.target.value); setActiveCategory("all"); }}>
               <option value="all">{translateUi("All playlists")}</option>
+            {settings.iptvStalkerUrl && <option value="stalker">Stalker</option>}
               {enabledPlaylists.map(playlist => <option key={playlist.id} value={playlist.id}>{playlist.name}</option>)}
             </select>
             <div className="livetv-search"><Search size={18} />

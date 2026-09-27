@@ -355,6 +355,7 @@ export interface IptvTvSession {
 }
 
 export interface IptvChannel {
+  stalker?: { portal: string; mac: string; cmd: string; direct: boolean };
   /** Exact provider-playlist identity used by Android cloud sync. */
   cloudId?: string;
   syncAliases?: string[];

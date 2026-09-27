@@ -210,7 +210,10 @@ async function prepareRemux(
       }).then(() => send({ type: "ack", id: data.id })).catch(fail);
     };
     clockTimer = setInterval(() => send({ type: "clock", time: positionPending ? target : video.currentTime }), 250);
-    const ready = event(video, "loadeddata", 20000);
+    // iOS can withhold the first decoded frame until play() is requested.
+    // Return once metadata is ready so the caller can request playback (or
+    // show a user-gesture Play button), rather than waiting in a circular dependency.
+    const ready = event(video, "loadedmetadata", 20000);
     begin();
     try { await ready; } catch (error) { fail(error); throw error; }
   };

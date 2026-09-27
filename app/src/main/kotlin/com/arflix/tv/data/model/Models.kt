@@ -378,7 +378,10 @@ data class Addon(
     val url: String? = null,
     val logo: String? = null,
     val manifest: AddonManifest? = null,           // Full manifest for advanced filtering
-    val transportUrl: String? = null               // Base URL for API calls (without manifest.json)
+    val transportUrl: String? = null,              // Base URL for API calls (without manifest.json)
+    // The addon's own settings page. Kept separately from the manifest because a configured
+    // addon usually stops advertising `configurable` (see AddonSetup.kt).
+    val configureUrl: String? = null
 )
 
 enum class AddonType {

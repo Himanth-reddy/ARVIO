@@ -40,9 +40,10 @@ function harness(probeOverrides = {}, onProbe) {
       assert.equal(this.updating, true);
       this.updating = false;
       this.ranges = [[0, 25]];
-      state.video.readyState = 4;
+      state.video.readyState = state.metadataOnly ? 1 : 4;
       this.dispatchEvent(new Event('updateend'));
-      queueMicrotask(() => state.video.dispatchEvent(new Event('loadeddata')));
+      queueMicrotask(() => state.video.dispatchEvent(new Event('loadedmetadata')));
+      if (!state.metadataOnly) queueMicrotask(() => state.video.dispatchEvent(new Event('loadeddata')));
     }
     remove() {
       assert.equal(this.updating, false, 'SourceBuffer operations must be serialized');
@@ -208,6 +209,17 @@ test('A container-safety rejection cannot be overwritten by HEVC MSE support', a
   handle.destroy();
   assert.equal(state.terminated, 1);
   assert.equal(state.timeouts.size, 0);
+});
+
+test('remux becomes ready for play even when iPad defers loadeddata until user playback', async () => {
+  const state = harness();
+  state.metadataOnly = true;
+  const handle = await state.prepare('https://fixture.invalid/film.mkv');
+  try {
+    await handle.start(state.video);
+    assert.equal(state.video.readyState, 1, 'no decoded frame or loadeddata event was required');
+    assert.equal(state.timeouts.size, 0);
+  } finally { handle.destroy(); }
 });
 
 async function playing(t) {
