@@ -11,6 +11,7 @@ import com.arflix.tv.data.repository.PersonMediaSearchResult
 import com.arflix.tv.data.repository.TraktRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -155,6 +156,36 @@ class SearchViewModelTest {
         assertTrue(model.uiState.value.isLoading)
         releaseCredits.complete(Unit)
         assertEquals(listOf(loki), awaitResults("Actor").personResults.single().items)
+    }
+
+    @Test fun searchResultsAndPeopleRowsCarryTheWatchedTick() = runBlocking {
+        val watchedFilm = MediaItem(id = 1, title = "Watched", mediaType = MediaType.MOVIE)
+        val newFilm = MediaItem(id = 3, title = "New", mediaType = MediaType.MOVIE)
+        every { trakt.getWatchedMoviesFromCache() } returns setOf(1)
+        every { trakt.getWatchedEpisodesFromCache() } returns setOf("show_tmdb:2:1:1")
+        coEvery { repository.searchWithPeople("Loki", any()) } returns MediaSearchResults(
+            listOf(watchedFilm, loki, newFilm), listOf(PersonMediaSearchResult(99, "Actor", listOf(loki, newFilm))))
+        model.updateQuery("Loki"); model.search()
+        val result = awaitResults("Loki")
+        // A film counts once it is in the watched list, a series once an episode of it is.
+        assertEquals(mapOf(1 to true, 2 to true, 3 to false), result.results.associate { it.id to it.isWatched })
+        assertEquals(listOf(true), result.movieResults.filter { it.id == 1 }.map { it.isWatched })
+        assertEquals(listOf(true), result.tvResults.map { it.isWatched })
+        assertEquals(listOf(true, false), result.personResults.single().items.map { it.isWatched })
+    }
+
+    @Test fun repeatedSearchReadsTheWatchedListAgainInsteadOfTheCachedAnswer() = runBlocking {
+        coEvery { repository.searchWithPeople("Loki", any()) } returns MediaSearchResults(listOf(loki), emptyList())
+        model.updateQuery("Loki"); model.search()
+        assertFalse(awaitResults("Loki").results.single().isWatched)
+        // Watched in the meantime: the cached answer is reused, the tick is not. Typing the
+        // query again goes through updateQuery, which cancels the first search's leftover logo
+        // work; a bare second search() would be ignored while that work is still running.
+        every { trakt.getWatchedEpisodesFromCache() } returns setOf("show_tmdb:2:1:1")
+        model.updateQuery("Lok")
+        model.updateQuery("Loki")
+        withTimeout(5_000) { model.uiState.first { it.results.singleOrNull()?.isWatched == true } }
+        coVerify(exactly = 1) { repository.searchWithPeople("Loki", any()) }
     }
 
     private suspend fun awaitResults(query: String) = withTimeout(5_000) {

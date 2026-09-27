@@ -25,7 +25,7 @@ interface MdbListApi {
     @FormUrlEncoded
     suspend fun requestDeviceAuthorization(
         @Field("client_id") clientId: String,
-        @Field("scope") scope: String = "write"
+        @Field("scope") scope: String = "read write"
     ): MdbDeviceAuthorizationResponse
 
     @POST("oauth/token/")

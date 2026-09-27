@@ -159,6 +159,7 @@ import com.arflix.tv.data.model.EpisodeIdentity
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Review
+import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.repository.MdbExternalRating
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.EpisodeContextMenu
@@ -214,6 +215,7 @@ import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.TmdbImageSizing
 import com.arflix.tv.util.formatGenreName
 import com.arflix.tv.util.isInCinema
 import com.arflix.tv.util.parseRatingValue
@@ -967,9 +969,23 @@ fun DetailsScreen(
             )
         }
         // Stream Selector Modal
+        // With "only search Telegram when clicking", Telegram is offered as a row the user selects
+        // (see TelegramSearchRow). It is added here, for display only: autoplay, pre-warming and
+        // every other reader of uiState.streams never see it.
+        val telegramRowLabel = when (uiState.telegramSearchRow) {
+            TelegramSearchRow.HIDDEN -> null
+            TelegramSearchRow.IDLE -> stringResource(R.string.telegram_search_row_idle)
+                .takeIf { uiState.streams.none { it.addonId == TELEGRAM_SEARCH_ROW.addonId } }
+            TelegramSearchRow.SEARCHING -> stringResource(R.string.telegram_search_row_searching)
+            TelegramSearchRow.NONE -> stringResource(R.string.telegram_search_row_none)
+        }
+        val selectorStreams = remember(uiState.streams, telegramRowLabel) {
+            if (telegramRowLabel == null) uiState.streams
+            else uiState.streams + TELEGRAM_SEARCH_ROW.copy(source = telegramRowLabel)
+        }
         StreamSelector(
             isVisible = showStreamSelector,
-            streams = uiState.streams,
+            streams = selectorStreams,
             selectedStream = null,
             isLoading = uiState.isLoadingStreams,
             hasStreamingAddons = uiState.hasStreamingAddons,
@@ -980,9 +996,13 @@ fun DetailsScreen(
             pluginScrapersLoading = uiState.pluginScrapersLoading,
             loadingPluginNames = uiState.loadingPluginNames,
             onFocusedStream = { stream ->
-                viewModel.prewarmStreamsAround(stream, uiState.streams)
+                if (!isTelegramSearchRow(stream)) viewModel.prewarmStreamsAround(stream, uiState.streams)
             },
             onSelect = { stream ->
+                if (isTelegramSearchRow(stream)) {
+                    viewModel.searchTelegramNow()
+                    return@StreamSelector
+                }
                 if (isPendingDebridStream(stream)) {
                     viewModel.showToast(
                         context.getString(R.string.details_toast_debrid_downloading),
@@ -1160,6 +1180,7 @@ private fun DetailsContent(
             availableWidthDp = maxWidth.value,
             availableHeightDp = (maxHeight - navigationBottomPadding).coerceAtLeast(1.dp).value,
         ).dp
+        val backdropWidth = maxWidth
         val mobileScrollState = rememberScrollState()
         val density = LocalDensity.current
         var stickyThreshold by remember { mutableStateOf(-1f) }
@@ -1214,11 +1235,18 @@ private fun DetailsContent(
                         .height(backdropHeight)
                         .zIndex(10f)
                 ) {
-                    val backdropRequest = remember(item.backdrop, item.image, context) {
+                    val backdropRequest = remember(item.backdrop, item.image, context, backdropWidth, backdropHeight, density) {
                         val url = item.backdrop ?: item.image
                         if (url.isNullOrBlank()) null else {
                             ImageRequest.Builder(context)
-                                .data(url)
+                                .data(
+                                    TmdbImageSizing.forSlot(
+                                        url,
+                                        with(density) { backdropWidth.roundToPx() },
+                                        with(density) { backdropHeight.roundToPx() },
+                                        TmdbImageSizing.Kind.BACKDROP
+                                    )
+                                )
                                 .crossfade(250)
                                 .allowHardware(true)
                                 .build()
@@ -1841,9 +1869,19 @@ private fun DetailsContent(
     // ===================== END MOBILE LAYOUT =====================
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Full-screen hero background
+        // Full-screen hero background, sized like the Home hero so both share one file.
+        val heroConfiguration = LocalConfiguration.current
+        val heroDensity = LocalDensity.current
+        val heroBackdropUrl = remember(item.backdrop, item.image, heroConfiguration, heroDensity) {
+            TmdbImageSizing.forSlot(
+                item.backdrop ?: item.image,
+                with(heroDensity) { heroConfiguration.screenWidthDp.dp.roundToPx() },
+                with(heroDensity) { heroConfiguration.screenHeightDp.dp.roundToPx() },
+                TmdbImageSizing.Kind.BACKDROP
+            )
+        }
         AsyncImage(
-            model = item.backdrop ?: item.image,
+            model = heroBackdropUrl,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
@@ -4850,3 +4888,16 @@ private fun SimilarMediaCard(
         onClick = onClick
     )
 }
+
+
+/** The "Search Telegram" row's stand-in source: listed under Telegram, never played. */
+private val TELEGRAM_SEARCH_ROW = StreamSource(
+    source = "",
+    addonName = "Telegram",
+    addonId = "telegram_native",
+    quality = "",
+    size = "",
+    url = "arvio-telegram-search://row"
+)
+
+private fun isTelegramSearchRow(stream: StreamSource): Boolean = stream.url == TELEGRAM_SEARCH_ROW.url

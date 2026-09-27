@@ -155,6 +155,46 @@ class SubtitleEncodingTest {
     }
 
     @Test
+    fun `loadRaw deadline cancels a body stalled after response headers`() {
+        val server = ServerSocket(0)
+        val accepted = java.util.concurrent.atomic.AtomicReference<Socket>()
+        val headersSent = java.util.concurrent.CountDownLatch(1)
+        val disconnected = java.util.concurrent.CountDownLatch(1)
+        val worker = thread(isDaemon = true) {
+            runCatching {
+                server.accept().use { socket ->
+                    accepted.set(socket)
+                    val input = socket.getInputStream().bufferedReader()
+                    while (!input.readLine().isNullOrEmpty()) { }
+                    socket.getOutputStream().apply {
+                        write("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n1".toByteArray())
+                        flush()
+                    }
+                    headersSent.countDown()
+                    if (input.read() == -1) disconnected.countDown()
+                }
+            }
+        }
+        try {
+            val elapsedMs = measureTimeMillis {
+                val result = runBlocking {
+                    withTimeoutOrNull(1_000) {
+                        SubtitleSyncMatcher.loadRaw("http://127.0.0.1:${server.localPort}/s.srt")
+                    }
+                }
+                assertThat(result).isNull()
+            }
+            assertThat(headersSent.count).isEqualTo(0)
+            assertThat(elapsedMs).isLessThan(5_000L)
+            assertThat(disconnected.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue()
+        } finally {
+            accepted.get()?.close()
+            server.close()
+            worker.join(2_000)
+        }
+    }
+
+    @Test
     fun `loadRaw returns promptly when its job is cancelled`() {
         val (server, _) = stalledServer()
         try {

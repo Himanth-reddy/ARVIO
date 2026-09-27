@@ -1,4 +1,4 @@
-import { jsonRequest } from "./http";
+import { HttpError, jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
 
 const LEGACY_MDBLIST_KEY_STORAGE = "arvio.web.mdblist.key";
@@ -35,6 +35,9 @@ export class MdbListClient {
   key: string | null = null;
   token: MdbListOAuthToken | null = null;
   private profileId: string | null = null;
+  private generation = 0;
+  private renewal: { generation: number; promise: Promise<void> } | null = null;
+  onTokenRefreshed?: (profileId: string, token: MdbListOAuthToken) => Promise<void>;
 
   get currentProfileId(): string | null { return this.profileId; }
 
@@ -53,6 +56,7 @@ export class MdbListClient {
   setProfile(profileId: string | null) {
     const normalized = profileId?.trim() || null;
     if (normalized === this.profileId) return;
+    this.generation += 1;
     this.profileId = normalized;
     this.watchedCache = null;
     if (!normalized) {
@@ -75,8 +79,13 @@ export class MdbListClient {
   }
 
   setKey(key: string | null) {
+    this.generation += 1;
     const trimmed = key?.trim();
     this.key = trimmed ? trimmed : null;
+    if (this.key) {
+      this.token = null;
+      if (this.profileId) removeStored(this.tokenStorage(this.profileId));
+    }
     this.watchedCache = null; // don't serve a previous key's watched history
     if (!this.profileId) return;
     if (this.key) saveStored(this.keyStorage(this.profileId), this.key);
@@ -84,7 +93,12 @@ export class MdbListClient {
   }
 
   setToken(token: MdbListOAuthToken | null) {
+    this.generation += 1;
     this.token = token && token.accessToken ? token : null;
+    if (this.token) {
+      this.key = null;
+      if (this.profileId) removeStored(this.keyStorage(this.profileId));
+    }
     this.watchedCache = null;
     if (!this.profileId) return;
     if (this.token) saveStored(this.tokenStorage(this.profileId), this.token);
@@ -204,23 +218,22 @@ export class MdbListClient {
     if (this.watchedCache && Date.now() - this.watchedCache.at < 30_000) {
       return this.watchedCache.data;
     }
-    const data = this.loadAllWatched(this.key);
+    const data = this.loadAllWatched(this.generation);
     this.watchedCache = { at: Date.now(), data };
     return data;
   }
 
-  private async loadAllWatched(key: string | null) {
+  private async loadAllWatched(generation: number) {
     const movies: MdbWatchedMovieRow[] = [];
     const episodes: MdbWatchedEpisodeRow[] = [];
-    if (!key) return { movies, episodes };
+    if (!this.isConnected) return { movies, episodes };
     const limit = 1000;
     // Hard page cap: never loop indefinitely on a bad has_more, even if it costs
     // a truncated tail (20k movies / 20k episodes is far beyond any real library).
     for (let page = 0; page < 20; page += 1) {
-      const resp = await this.request<MdbWatchedResponse>(`sync/watched?limit=${limit}&offset=${page * limit}`, {
-        headers: { "x-mdblist-key": key }
-      }).catch(() => null);
-      if (!resp) break;
+      if (generation !== this.generation) throw new Error("MDBList connection changed");
+      const resp = await this.request<MdbWatchedResponse>(`sync/watched?limit=${limit}&offset=${page * limit}`, {});
+      if (generation !== this.generation) throw new Error("MDBList connection changed");
       if (resp.movies) movies.push(...resp.movies);
       if (resp.episodes) episodes.push(...resp.episodes);
       if (!resp.pagination?.has_more) break;
@@ -245,7 +258,7 @@ export class MdbListClient {
   }
 
   private async modifyWatchlist(action: "add" | "remove", item: MdbMediaRef) {
-    if (!this.key) return;
+    if (!this.isConnected) return;
     const body = item.mediaType === "tv"
       ? { shows: [{ tmdb: item.tmdbId }] }
       : { movies: [{ tmdb: item.tmdbId }] };
@@ -253,12 +266,12 @@ export class MdbListClient {
   }
 
   async addToHistory(item: MdbMediaRef) {
-    if (!this.key) return;
+    if (!this.isConnected) return;
     await this.request("sync/watched", { method: "POST", body: JSON.stringify(this.watchedBody(item)) });
   }
 
   async removeFromHistory(item: MdbMediaRef) {
-    if (!this.key) return;
+    if (!this.isConnected) return;
     await this.request("sync/watched/remove", { method: "POST", body: JSON.stringify(this.watchedBody(item)) });
   }
 
@@ -293,7 +306,56 @@ export class MdbListClient {
     await this.request(`scrobble/${action}`, { method: "POST", body: JSON.stringify(body) });
   }
 
+  private async refreshToken(): Promise<void> {
+    const generation = this.generation;
+    if (this.renewal?.generation === generation) return this.renewal.promise;
+    const token = this.token;
+    const profileId = this.profileId;
+    if (!token?.refreshToken || !profileId) throw new Error("Reconnect MDBList to renew authorization");
+    const promise = (async () => {
+      const response = await jsonRequest<{ access_token: string; refresh_token?: string; expires_in?: number }>(
+        new URL("/api/mdblist/oauth/token/", window.location.origin).toString(),
+        { method: "POST", body: JSON.stringify({ refresh_token: token.refreshToken }) }
+      );
+      if (generation !== this.generation || profileId !== this.profileId) throw new Error("MDBList connection changed");
+      if (!response.access_token?.trim()) throw new Error("MDBList returned an empty access token");
+      const renewed: MdbListOAuthToken = {
+        accessToken: response.access_token.trim(),
+        refreshToken: response.refresh_token?.trim() || token.refreshToken,
+        expiresAt: typeof response.expires_in === "number" && response.expires_in > 0
+          ? Date.now() + response.expires_in * 1000 : null
+      };
+      // Rotation retains the connection generation; disconnects and new logins do not.
+      this.token = renewed;
+      saveStored(this.tokenStorage(profileId), renewed);
+      await this.onTokenRefreshed?.(profileId, renewed).catch(() => undefined);
+    })();
+    const renewal = { generation, promise };
+    this.renewal = renewal;
+    try { await promise; }
+    finally { if (this.renewal === renewal) this.renewal = null; }
+  }
+
   private async request<T>(path: string, init: RequestInit): Promise<T> {
+    const explicit = new Headers(init.headers);
+    const managed = !explicit.has("authorization") && !explicit.has("x-mdblist-token") && !explicit.has("x-mdblist-key");
+    const generation = this.generation;
+    if (managed && this.token?.expiresAt && this.token.expiresAt <= Date.now() + 60_000) {
+      await this.refreshToken();
+    }
+    if (managed && generation !== this.generation) throw new Error("MDBList connection changed");
+    const accessToken = this.token?.accessToken;
+    try { return await this.send<T>(path, init); }
+    catch (error) {
+      if (!managed || !accessToken || !(error instanceof HttpError) || error.status !== 401) throw error;
+      if (generation !== this.generation) throw new Error("MDBList connection changed");
+      if (this.token?.accessToken === accessToken) await this.refreshToken();
+      if (generation !== this.generation) throw new Error("MDBList connection changed");
+      return this.send<T>(path, init);
+    }
+  }
+
+  private async send<T>(path: string, init: RequestInit): Promise<T> {
     // Build a PLAIN object: jsonRequest spreads init.headers, and spreading a
     // Headers instance yields {} (Headers isn't enumerable), dropping our key.
     const headers: Record<string, string> = {};
@@ -303,7 +365,6 @@ export class MdbListClient {
     if (!headers["authorization"] && !headers["x-mdblist-token"] && !headers["x-mdblist-key"]) {
       if (this.token?.accessToken) {
         headers["authorization"] = `Bearer ${this.token.accessToken}`;
-        headers["x-mdblist-token"] = this.token.accessToken;
       } else if (this.key) {
         headers["x-mdblist-key"] = this.key;
       }

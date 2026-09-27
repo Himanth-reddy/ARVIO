@@ -10,7 +10,9 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.arflix.tv.R
 import com.arflix.tv.data.api.*
 import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.AddonBehaviorHints
 import com.arflix.tv.data.model.AddonInstallSource
+import com.arflix.tv.data.model.AddonSetup
 import com.arflix.tv.data.model.AddonCatalog
 import com.arflix.tv.data.model.AddonManifest
 import com.arflix.tv.data.model.AddonResource
@@ -147,6 +149,18 @@ internal fun shouldTryNativeAnimeFallback(
     val language = originalLanguage?.trim()?.lowercase(Locale.US)
     return language.isNullOrBlank() || language == "ja"
 }
+
+/**
+ * A source list with the Telegram results an earlier Telegram search found. With "only search
+ * Telegram when clicking" those live in the Telegram lookup's cache, not in the saved source list,
+ * so every path that returns a saved list adds them here.
+ */
+internal fun withCachedTelegramSources(
+    streams: List<StreamSource>,
+    telegramCached: List<StreamSource>
+): List<StreamSource> =
+    if (telegramCached.isEmpty()) streams
+    else (streams + telegramCached).distinctBy(::providerScopedStreamIdentity)
 
 internal fun providerScopedStreamIdentity(stream: StreamSource): String {
     return listOf(
@@ -712,7 +726,11 @@ class StreamRepository @Inject constructor(
         }
     }
 
-    private suspend fun hydrateCustomAddon(url: String, customName: String? = null): Addon {
+    private suspend fun hydrateCustomAddon(
+        url: String,
+        customName: String? = null,
+        probeParentConfigurePage: Boolean = true
+    ): Addon {
         val normalizedUrl = resolveAddonInstallUrl(url)
         if (normalizedUrl.isBlank()) {
             throw IllegalArgumentException(context.getString(R.string.addon_error_url_empty))
@@ -767,6 +785,8 @@ class StreamRepository @Inject constructor(
         val addonManifest = convertToAddonManifest(manifest)
         val resolvedName = customName?.trim()?.takeIf { it.isNotBlank() } ?: manifest.name
         val addonId = buildAddonInstanceId(manifest.id, normalizedUrl)
+        val configureUrl = AddonSetup.advertisedConfigureUrl(transportUrl, addonManifest.behaviorHints)
+            ?: if (probeParentConfigurePage) findParentConfigureUrl(transportUrl, manifest.id) else null
 
         val resourceNames = addonManifest.resources.map { it.name }.toSet()
         val hasSubtitles = "subtitles" in resourceNames
@@ -782,13 +802,38 @@ class StreamRepository @Inject constructor(
             version = manifest.version,
             description = manifest.description ?: "",
             isInstalled = true,
-            isEnabled = true,
+            // An addon that cannot work before it is set up starts switched off.
+            isEnabled = addonManifest.behaviorHints?.configurationRequired != true,
             type = addonType,
             url = normalizedUrl,
             logo = manifest.logo,
             manifest = addonManifest,
-            transportUrl = transportUrl
+            transportUrl = transportUrl,
+            configureUrl = configureUrl
         )
+    }
+
+    /**
+     * A configured addon built with the Stremio SDK no longer advertises its settings page.
+     * Its unconfigured manifest one path segment up still does, so look there once.
+     */
+    private suspend fun findParentConfigureUrl(transportUrl: String, manifestId: String): String? {
+        val parent = AddonSetup.parentTransportUrl(transportUrl) ?: return null
+        return try {
+            val parentManifest = streamApi.getAddonManifest("$parent/manifest.json")
+            if (parentManifest.id != manifestId) return null
+            val hints = parentManifest.behaviorHints
+            AddonSetup.advertisedConfigureUrl(
+                parent,
+                AddonBehaviorHints(
+                    configurable = hints?.configurable ?: false,
+                    configurationRequired = hints?.configurationRequired ?: false
+                )
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     /**
@@ -802,7 +847,7 @@ class StreamRepository @Inject constructor(
             // Remove existing addon with same ID if present
             addons.removeAll { it.id == newAddon.id }
             addons.add(newAddon)
-            saveAddons(addons)
+            saveAddons(addons, addedIds = setOf(newAddon.id))
 
             Result.success(newAddon)
         } catch (e: Exception) {
@@ -811,6 +856,32 @@ class StreamRepository @Inject constructor(
             Result.failure(e)
         }
     }
+
+    /**
+     * Fetch an addon's manifest without installing it, so the caller can ask the user first.
+     */
+    suspend fun prepareCustomAddon(url: String): Result<Addon> = withContext(Dispatchers.IO) {
+        try {
+            Result.success(hydrateCustomAddon(url))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Install an addon returned by [prepareCustomAddon]. [replaceAddonIds] are removed in the
+     * same write, used when the user replaces an older setup of the same addon.
+     */
+    suspend fun installPreparedAddon(addon: Addon, replaceAddonIds: Set<String> = emptySet()) =
+        withContext(Dispatchers.IO) {
+            val addons = installedAddons.first().toMutableList()
+            val replacedIndex = addons.indexOfFirst { it.id in replaceAddonIds }
+            addons.removeAll { it.id == addon.id || it.id in replaceAddonIds }
+            // A replacement keeps the old addon's place in the list.
+            if (replacedIndex in 0..addons.size) addons.add(replacedIndex, addon) else addons.add(addon)
+            saveAddons(addons, addedIds = setOf(addon.id), removedIds = replaceAddonIds - addon.id)
+        }
 
     /**
      * Refresh all installed custom addons by re-fetching manifests, invalidating stream caches,
@@ -830,10 +901,15 @@ class StreamRepository @Inject constructor(
                 oldAddon
             } else {
                 try {
-                    val hydrated = hydrateCustomAddon(url = addonUrl, customName = oldAddon.name)
+                    val hydrated = hydrateCustomAddon(
+                        url = addonUrl,
+                        customName = oldAddon.name,
+                        probeParentConfigurePage = oldAddon.configureUrl == null
+                    )
                     refreshedCount++
                     hydrated.copy(
                         id = oldAddon.id,
+                        configureUrl = hydrated.configureUrl ?: oldAddon.configureUrl,
                         isEnabled = oldAddon.isEnabled,
                         isInstalled = oldAddon.isInstalled,
                         runtimeKind = oldAddon.runtimeKind,
@@ -889,7 +965,7 @@ class StreamRepository @Inject constructor(
         val addons = installedAddons.first().toMutableList()
         addons.removeAll { it.id == addonId }
         addons.add(newAddon)
-        saveAddons(addons)
+        saveAddons(addons, addedIds = setOf(newAddon.id))
         return newAddon
     }
 
@@ -939,7 +1015,7 @@ class StreamRepository @Inject constructor(
         if (removableIds.isEmpty()) return@withContext false
 
         val retained = current.filterNot { it.id in removableIds }
-        saveAddons(retained)
+        saveAddons(retained, removedIds = removableIds)
         true
     }
 
@@ -1038,7 +1114,7 @@ class StreamRepository @Inject constructor(
         if (addonId == "opensubtitles") return
         val current = installedAddons.first()
         val addons = current.filter { it.id != addonId }
-        saveAddons(addons)
+        saveAddons(addons, removedIds = setOf(addonId))
     }
 
     @Deprecated(
@@ -1103,6 +1179,40 @@ class StreamRepository @Inject constructor(
     // intentional empty state can propagate (see reconcileAddonsWithCloud). Not bumped when applying
     // the cloud's addons, which would create false "local change" churn.
     private val addonsUpdatedAtKey = androidx.datastore.preferences.core.longPreferencesKey("addons_updated_at")
+    private val addonChangesKey = stringPreferencesKey("addon_changes_v1")
+
+    private fun readAddonChanges(prefs: Preferences): Map<String, AddonChange> = runCatching {
+        val type = object : TypeToken<Map<String, AddonChange>>() {}.type
+        val parsed: Map<String, AddonChange> = gson.fromJson(prefs[addonChangesKey], type) ?: emptyMap()
+        mergeAddonChanges(emptyMap(), parsed)
+    }.getOrDefault(emptyMap())
+
+    private fun addonCloudState(prefs: Preferences) = AddonCloudState(
+        enforceOpenSubtitles(readSharedOrLegacyAddons(prefs) ?: getDefaultAddonList()),
+        prefs[addonsUpdatedAtKey] ?: 0L,
+        readAddonChanges(prefs)
+    )
+
+    suspend fun exportAddonCloudState(): AddonCloudState = addonCloudState(context.streamDataStore.data.first())
+
+    suspend fun applyAddonCloudState(addons: List<Addon>, updatedAt: Long, changes: Map<String, AddonChange>?) {
+        context.streamDataStore.edit { prefs ->
+            val local = addonCloudState(prefs)
+            val resolved = if (changes != null) {
+                reconcileExplicitAddonState(local, AddonCloudState(addons, updatedAt, changes))
+            } else {
+                val legacy = reconcileAddonsWithCloud(addons, local.addons, updatedAt, local.updatedAt).first
+                local.copy(addons = legacy.filterNot { local.changes[it.id]?.removed == true },
+                    updatedAt = maxOf(local.updatedAt, updatedAt))
+            }
+            prefs[sharedAddonsKey] = gson.toJson(enforceOpenSubtitles(resolved.addons).filterNot(::isIncompleteExternalAddon))
+            prefs.remove(sharedPendingAddonsKey)
+            prefs[addonChangesKey] = gson.toJson(resolved.changes)
+            prefs[addonsUpdatedAtKey] = resolved.updatedAt
+        }
+        synchronized(streamResultCache) { streamResultCache.clear() }
+        invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "apply addon cloud state")
+    }
 
     suspend fun getAddonsUpdatedAt(): Long = context.streamDataStore.data.first()[addonsUpdatedAtKey] ?: 0L
 
@@ -1110,17 +1220,24 @@ class StreamRepository @Inject constructor(
         context.streamDataStore.edit { prefs -> prefs[addonsUpdatedAtKey] = value }
     }
 
-    private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true) {
-        val json = gson.toJson(addons.map { sanitizeAddonDisplayName(it) })
-
+    private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true,
+        removedIds: Set<String> = emptySet(), addedIds: Set<String> = emptySet()) {
         // Save locally to the shared account-level addon list. Mirror to the
         // active profile key so older builds/cloud payloads can still recover it.
         context.streamDataStore.edit { prefs ->
+            if (stampChange) {
+                val previous = addonCloudState(prefs)
+                val timestamp = maxOf(System.currentTimeMillis(), previous.updatedAt + 1)
+                val changes = recordAddonChanges(previous.changes, addedIds, removedIds, timestamp)
+                prefs[addonChangesKey] = gson.toJson(changes)
+                prefs[addonsUpdatedAtKey] = timestamp
+            }
+            val changes = readAddonChanges(prefs)
+            val json = gson.toJson(addons.filterNot { changes[it.id]?.removed == true }.map { sanitizeAddonDisplayName(it) })
             prefs[sharedAddonsKey] = json
             prefs.remove(sharedPendingAddonsKey)
             prefs[addonsKey()] = json
             prefs.remove(pendingAddonsKey())
-            if (stampChange) prefs[addonsUpdatedAtKey] = System.currentTimeMillis()
         }
         synchronized(streamResultCache) { streamResultCache.clear() }
         invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "save addons")
@@ -1653,6 +1770,16 @@ class StreamRepository @Inject constructor(
         val providerPart = providerEpisodeId?.let { "|provider:$it" }.orEmpty()
         return "$profileId|$type|$imdbId|${season ?: 0}|${episode ?: 0}$providerPart|addons:$addonRevision"
     }
+
+    /**
+     * Where the addon-only lookups ([resolveMovieStreams], [resolveEpisodeStreams]) store their
+     * result. They share [streamCacheKey] with the progressive lookups, which also carry Telegram
+     * sources — and writing the addon-only list under that key replaced the complete one: The
+     * Shards S01E01 (Sept 2026) showed a Telegram source, the player refreshed its source list
+     * through the addon-only path, and reopening the episode within the cache's 10 minutes served
+     * the list without Telegram. They still READ the complete list first; they only never write it.
+     */
+    private fun addonOnlyCacheKey(cacheKey: String): String = "$cacheKey|addon-only"
 
     private fun cacheTtlMsFor(result: StreamResult): Long {
         val streams = result.streams
@@ -2229,16 +2356,22 @@ class StreamRepository @Inject constructor(
             addonRevision = integrationCacheRevision(streamAddons)
         )
         val profileId = profileManager.getProfileIdSync()
+        // This lookup is addon-only; see addonOnlyCacheKey for why it never writes the full key.
+        val ownCacheKey = addonOnlyCacheKey(cacheKey)
         if (!forceRefresh) {
             synchronized(streamResultCache) {
-                val cached = streamResultCache[cacheKey]
-                if (cached != null && isStreamCacheFresh(cached)) {
-                    return@withContext cached.result
+                for (key in listOf(cacheKey, ownCacheKey)) {
+                    val cached = streamResultCache[key]
+                    if (cached != null && isStreamCacheFresh(cached)) {
+                        return@withContext cached.result
+                    }
                 }
             }
-            loadPersistedStreamResult(profileId, cacheKey)?.let { persisted ->
-                synchronized(streamResultCache) { streamResultCache[cacheKey] = persisted }
-                return@withContext persisted.result
+            for (key in listOf(cacheKey, ownCacheKey)) {
+                loadPersistedStreamResult(profileId, key)?.let { persisted ->
+                    synchronized(streamResultCache) { streamResultCache[key] = persisted }
+                    return@withContext persisted.result
+                }
             }
         }
 
@@ -2254,11 +2387,13 @@ class StreamRepository @Inject constructor(
         // IPTV VOD enrichment is appended separately in ViewModels.
 
         val result = StreamResult(streams = filteredStreams, subtitles = emptyList())
-        val finalCacheKey = streamCacheKey(
-            profileId = profileId,
-            type = "movie",
-            imdbId = imdbId,
-            addonRevision = integrationCacheRevision(streamAddons)
+        val finalCacheKey = addonOnlyCacheKey(
+            streamCacheKey(
+                profileId = profileId,
+                type = "movie",
+                imdbId = imdbId,
+                addonRevision = integrationCacheRevision(streamAddons)
+            )
         )
         val cachedResult = CachedStreamResult(result, System.currentTimeMillis())
         synchronized(streamResultCache) {
@@ -2289,13 +2424,23 @@ class StreamRepository @Inject constructor(
                 addonRevision = integrationCacheRevision(streamAddons)
             )
             val cacheKey = if (sequential) "$baseCacheKey:seq" else baseCacheKey
+            val telegramConnected = telegramSourceResolver.isEnabled() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.TELEGRAM)
+            // "Search Telegram only on click" (Telegram settings): list only what an earlier search
+            // found; the details screen offers the search itself as a source row. Worked out before
+            // the saved-list checks below: every list returned — saved, stale or addon-less — carries
+            // what a click-search already found, or reopening Sources dropped it (PR #757 review).
+            val telegramOnClick = telegramConnected && telegramSourceResolver.searchOnClickOnly()
+            val telegramEnabled = telegramConnected && !telegramOnClick
+            val telegramCached = if (telegramOnClick) {
+                telegramSourceResolver.cachedResults(title = title, imdbId = imdbId)
+            } else emptyList()
             if (!forceRefresh) {
                 var warmCache: CachedStreamResult? = null
                 synchronized(streamResultCache) {
                     val cached = streamResultCache[cacheKey]
                     if (cached != null) {
                         if (isStreamCacheFresh(cached)) {
-                            trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                            trySend(ProgressiveStreamResult(withCachedTelegramSources(cached.result.streams, telegramCached), cached.result.subtitles, 1, 1, true))
                             close()
                             return@launch
                         }
@@ -2313,7 +2458,7 @@ class StreamRepository @Inject constructor(
                     synchronized(streamResultCache) { streamResultCache[cacheKey] = cached }
                     trySend(
                         ProgressiveStreamResult(
-                            streams = cached.result.streams,
+                            streams = withCachedTelegramSources(cached.result.streams, telegramCached),
                             subtitles = cached.result.subtitles,
                             completedAddons = 1,
                             totalAddons = 1,
@@ -2328,7 +2473,6 @@ class StreamRepository @Inject constructor(
             }
 
             val prioritizedAddons = prioritizeStreamingAddons(streamAddons)
-            val telegramEnabled = telegramSourceResolver.isEnabled() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.TELEGRAM)
             if (prioritizedAddons.isEmpty() && !telegramEnabled) {
                 Log.w(
                     TAG,
@@ -2342,19 +2486,19 @@ class StreamRepository @Inject constructor(
                 if (!forceRefresh) {
                     val cached = synchronized(streamResultCache) { streamResultCache[cacheKey] }
                     if (cached != null) {
-                        trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                        trySend(ProgressiveStreamResult(withCachedTelegramSources(cached.result.streams, telegramCached), cached.result.subtitles, 1, 1, true))
                         close()
                         return@launch
                     }
                     val persisted = loadPersistedStreamResult(profileId = profileId, cacheKey = cacheKey)
                     if (persisted != null) {
                         synchronized(streamResultCache) { streamResultCache[cacheKey] = persisted }
-                        trySend(ProgressiveStreamResult(persisted.result.streams, persisted.result.subtitles, 1, 1, true))
+                        trySend(ProgressiveStreamResult(withCachedTelegramSources(persisted.result.streams, telegramCached), persisted.result.subtitles, 1, 1, true))
                         close()
                         return@launch
                     }
                 }
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+                trySend(ProgressiveStreamResult(telegramCached, emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2365,8 +2509,12 @@ class StreamRepository @Inject constructor(
             )
 
             val mutex = Mutex()
-            val aggregatedStreams = mutableListOf<StreamSource>()
+            val aggregatedStreams = mutableListOf<StreamSource>().apply { addAll(telegramCached) }
             var completed = 0
+            // Set when the Telegram lookup did not run to the end (timed out, refused, or stopped
+            // because playback started). The list is then not the answer and is not cached — the
+            // next source list searches again (see TelegramResolution).
+            var telegramIncomplete = false
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
 
             suspend fun sendProgress() {
@@ -2380,14 +2528,16 @@ class StreamRepository @Inject constructor(
                 if (completed == totalAddons) {
                     val createdAtMs = System.currentTimeMillis()
                     val finalResult = StreamResult(filtered, emptyList())
-                    synchronized(streamResultCache) {
-                        streamResultCache[cacheKey] = CachedStreamResult(finalResult, createdAtMs)
+                    if (!telegramIncomplete) {
+                        synchronized(streamResultCache) {
+                            streamResultCache[cacheKey] = CachedStreamResult(finalResult, createdAtMs)
+                        }
+                        persistStreamResult(
+                            profileId = profileId,
+                            cacheKey = cacheKey,
+                            cached = CachedStreamResult(finalResult, createdAtMs)
+                        )
                     }
-                    persistStreamResult(
-                        profileId = profileId,
-                        cacheKey = cacheKey,
-                        cached = CachedStreamResult(finalResult, createdAtMs)
-                    )
                     if (filtered.isEmpty()) {
                         AppLogger.breadcrumb(
                             tag = "Sources",
@@ -2441,12 +2591,15 @@ class StreamRepository @Inject constructor(
 
                 if (telegramEnabled) {
                     val telegramStreams = try {
-                        withTimeoutOrNull(3_500L) {
-                            telegramSourceResolver.resolve(title = title, year = year, imdbId = imdbId, isMovie = true)
-                        } ?: emptyList()
+                        val resolution = withTimeoutOrNull(3_500L) {
+                            telegramSourceResolver.resolveDetailed(title = title, year = year, imdbId = imdbId, isMovie = true)
+                        }
+                        if (resolution?.complete != true) mutex.withLock { telegramIncomplete = true }
+                        resolution?.streams.orEmpty()
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         Log.e(TAG, "[StreamFetch][Movie] telegram resolve failed", e)
+                        mutex.withLock { telegramIncomplete = true }
                         emptyList()
                     }
                     val valid = telegramStreams.filter { stream ->
@@ -2496,15 +2649,32 @@ class StreamRepository @Inject constructor(
 
                 if (telegramEnabled) {
                     launch {
+                        // Telegram results are shown as they are found (the lookup runs in stages);
+                        // each update is the whole list so far and replaces the previous one.
+                        var shownTelegram: List<StreamSource> = emptyList()
                         val telegramStreams = try {
-                            telegramSourceResolver.resolve(title = title, year = year, imdbId = imdbId, isMovie = true)
+                            val resolution = telegramSourceResolver.resolveDetailed(
+                                title = title, year = year, imdbId = imdbId, isMovie = true,
+                                onFound = { partial ->
+                                    mutex.withLock {
+                                        aggregatedStreams.removeAll(shownTelegram)
+                                        aggregatedStreams.addAll(partial)
+                                        shownTelegram = partial
+                                        sendProgress()
+                                    }
+                                }
+                            )
+                            if (!resolution.complete) mutex.withLock { telegramIncomplete = true }
+                            resolution.streams
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
 
                             Log.e(TAG, "[StreamFetch][Movie] telegram resolve failed", e)
+                            mutex.withLock { telegramIncomplete = true }
                             emptyList()
                         }
                         mutex.withLock {
+                            aggregatedStreams.removeAll(shownTelegram)
                             aggregatedStreams.addAll(telegramStreams)
                             completed += 1
                             sendProgress()
@@ -2573,6 +2743,44 @@ class StreamRepository @Inject constructor(
         }.orEmpty()
     }
 
+    /**
+     * Whether source lists should offer Telegram as a "Search Telegram" row instead of searching
+     * by themselves (the Telegram setting, when Telegram is connected and enabled).
+     */
+    suspend fun isTelegramSearchOnClick(): Boolean =
+        telegramSourceResolver.isEnabled() &&
+            streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.TELEGRAM) &&
+            telegramSourceResolver.searchOnClickOnly()
+
+    /**
+     * The search the user asked for from a source list. Same lookup, cache key and staged results
+     * as the automatic one: [onFound] gets the whole list so far each time it grows.
+     */
+    suspend fun searchTelegramNow(
+        mediaType: MediaType,
+        title: String,
+        year: Int?,
+        season: Int?,
+        episode: Int?,
+        imdbId: String,
+        onFound: suspend (List<StreamSource>) -> Unit
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
+        if (mediaType == MediaType.MOVIE) {
+            telegramSourceResolver.resolveDetailed(title = title, year = year, imdbId = imdbId, isMovie = true, onFound = onFound)
+        } else {
+            telegramSourceResolver.resolveDetailed(
+                title = title, year = null, season = season, episode = episode,
+                imdbId = imdbId, isMovie = false, onFound = onFound
+            )
+        }.streams
+    }
+
+    /** Playback is starting: stop running Telegram searches and keep new ones quiet. */
+    fun onPlaybackStarted() = telegramSourceResolver.onPlaybackStarted()
+
+    /** The player closed; Telegram searches may notify again. */
+    fun onPlaybackEnded() = telegramSourceResolver.onPlaybackEnded()
+
     suspend fun resolveTelegramStreams(
         mediaType: MediaType,
         title: String,
@@ -2584,6 +2792,15 @@ class StreamRepository @Inject constructor(
     ): List<StreamSource> = withContext(Dispatchers.IO) {
         if (!telegramSourceResolver.isEnabled() || !streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.TELEGRAM)) {
             return@withContext emptyList()
+        }
+        if (telegramSourceResolver.searchOnClickOnly()) {
+            // No search from the player: only what the user's own search already found.
+            return@withContext telegramSourceResolver.cachedResults(
+                title = title,
+                season = if (mediaType == MediaType.MOVIE) null else season ?: 1,
+                episode = if (mediaType == MediaType.MOVIE) null else episode ?: 1,
+                imdbId = imdbId.orEmpty()
+            )
         }
         withTimeoutOrNull(timeoutMs) {
             try {
@@ -2825,11 +3042,15 @@ class StreamRepository @Inject constructor(
             providerEpisodeId = animeQueryOverride,
             addonRevision = integrationCacheRevision(streamAddons)
         )
+        // This lookup is addon-only; see addonOnlyCacheKey for why it never writes the full key.
+        val ownCacheKey = addonOnlyCacheKey(cacheKey)
         if (!forceRefresh) {
             synchronized(streamResultCache) {
-                val cached = streamResultCache[cacheKey]
-                if (cached != null && isStreamCacheFresh(cached)) {
-                    return@withContext cached.result
+                for (key in listOf(cacheKey, ownCacheKey)) {
+                    val cached = streamResultCache[key]
+                    if (cached != null && isStreamCacheFresh(cached)) {
+                        return@withContext cached.result
+                    }
                 }
             }
         }
@@ -2858,7 +3079,7 @@ class StreamRepository @Inject constructor(
 
         val result = StreamResult(filteredStreams, subtitles)
         synchronized(streamResultCache) {
-            streamResultCache[cacheKey] = CachedStreamResult(result = result, createdAtMs = System.currentTimeMillis())
+            streamResultCache[ownCacheKey] = CachedStreamResult(result = result, createdAtMs = System.currentTimeMillis())
         }
         result
     }
@@ -2901,13 +3122,23 @@ class StreamRepository @Inject constructor(
                 addonRevision = integrationCacheRevision(streamAddons)
             )
             val cacheKey = if (sequential) "$baseCacheKey:seq" else baseCacheKey
+            val telegramConnected = telegramSourceResolver.isEnabled() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.TELEGRAM)
+            // "Search Telegram only on click" (Telegram settings): list only what an earlier search
+            // found; the details screen offers the search itself as a source row. Worked out before
+            // the saved-list checks below: every list returned — saved, stale or addon-less — carries
+            // what a click-search already found, or reopening Sources dropped it (PR #757 review).
+            val telegramOnClick = telegramConnected && telegramSourceResolver.searchOnClickOnly()
+            val telegramEnabled = telegramConnected && !telegramOnClick
+            val telegramCached = if (telegramOnClick) {
+                telegramSourceResolver.cachedResults(title = title, season = season, episode = episode, imdbId = imdbId)
+            } else emptyList()
             if (!forceRefresh) {
                 var staleCache: CachedStreamResult? = null
                 synchronized(streamResultCache) {
                     val cached = streamResultCache[cacheKey]
                     if (cached != null) {
                         if (isStreamCacheFresh(cached)) {
-                            trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                            trySend(ProgressiveStreamResult(withCachedTelegramSources(cached.result.streams, telegramCached), cached.result.subtitles, 1, 1, true))
                             close()
                             return@launch
                         }
@@ -2917,7 +3148,7 @@ class StreamRepository @Inject constructor(
                 staleCache?.let { cached ->
                     trySend(
                         ProgressiveStreamResult(
-                            streams = cached.result.streams,
+                            streams = withCachedTelegramSources(cached.result.streams, telegramCached),
                             subtitles = cached.result.subtitles,
                             completedAddons = 0,
                             totalAddons = 1,
@@ -2928,7 +3159,6 @@ class StreamRepository @Inject constructor(
             }
 
             val prioritizedAddons = prioritizeStreamingAddons(streamAddons)
-            val telegramEnabled = telegramSourceResolver.isEnabled() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.TELEGRAM)
             if (prioritizedAddons.isEmpty() && !telegramEnabled) {
                 Log.w(
                     TAG,
@@ -2942,12 +3172,12 @@ class StreamRepository @Inject constructor(
                 if (!forceRefresh) {
                     val cached = synchronized(streamResultCache) { streamResultCache[cacheKey] }
                     if (cached != null) {
-                        trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                        trySend(ProgressiveStreamResult(withCachedTelegramSources(cached.result.streams, telegramCached), cached.result.subtitles, 1, 1, true))
                         close()
                         return@launch
                     }
                 }
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+                trySend(ProgressiveStreamResult(telegramCached, emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2958,8 +3188,12 @@ class StreamRepository @Inject constructor(
             )
 
             val mutex = Mutex()
-            val aggregatedStreams = mutableListOf<StreamSource>()
+            val aggregatedStreams = mutableListOf<StreamSource>().apply { addAll(telegramCached) }
             var completed = 0
+            // Set when the Telegram lookup did not run to the end (timed out, refused, or stopped
+            // because playback started). The list is then not the answer and is not cached — the
+            // next source list searches again (see TelegramResolution).
+            var telegramIncomplete = false
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
 
             suspend fun sendProgress() {
@@ -2973,8 +3207,10 @@ class StreamRepository @Inject constructor(
                 if (completed == totalAddons) {
                     val createdAtMs = System.currentTimeMillis()
                     val finalResult = StreamResult(filtered, emptyList())
-                    synchronized(streamResultCache) {
-                        streamResultCache[cacheKey] = CachedStreamResult(finalResult, createdAtMs)
+                    if (!telegramIncomplete) {
+                        synchronized(streamResultCache) {
+                            streamResultCache[cacheKey] = CachedStreamResult(finalResult, createdAtMs)
+                        }
                     }
                     if (filtered.isEmpty()) {
                         AppLogger.breadcrumb(
@@ -3041,8 +3277,8 @@ class StreamRepository @Inject constructor(
 
                 if (telegramEnabled) {
                     val telegramStreams = try {
-                        withTimeoutOrNull(3_500L) {
-                            telegramSourceResolver.resolve(
+                        val resolution = withTimeoutOrNull(3_500L) {
+                            telegramSourceResolver.resolveDetailed(
                                 title = title,
                                 year = null,
                                 season = season,
@@ -3050,10 +3286,13 @@ class StreamRepository @Inject constructor(
                                 imdbId = imdbId,
                                 isMovie = false
                             )
-                        } ?: emptyList()
+                        }
+                        if (resolution?.complete != true) mutex.withLock { telegramIncomplete = true }
+                        resolution?.streams.orEmpty()
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         Log.e(TAG, "[StreamFetch][Episode] telegram resolve failed", e)
+                        mutex.withLock { telegramIncomplete = true }
                         emptyList()
                     }
                     val valid = telegramStreams.filter { stream ->
@@ -3117,22 +3356,37 @@ class StreamRepository @Inject constructor(
 
                 if (telegramEnabled) {
                     launch {
+                        // Telegram results are shown as they are found (the lookup runs in stages);
+                        // each update is the whole list so far and replaces the previous one.
+                        var shownTelegram: List<StreamSource> = emptyList()
                         val telegramStreams = try {
-                            telegramSourceResolver.resolve(
+                            val resolution = telegramSourceResolver.resolveDetailed(
                                 title = title,
                                 year = null,
                                 season = season,
                                 episode = episode,
                                 imdbId = imdbId,
-                                isMovie = false
+                                isMovie = false,
+                                onFound = { partial ->
+                                    mutex.withLock {
+                                        aggregatedStreams.removeAll(shownTelegram)
+                                        aggregatedStreams.addAll(partial)
+                                        shownTelegram = partial
+                                        sendProgress()
+                                    }
+                                }
                             )
+                            if (!resolution.complete) mutex.withLock { telegramIncomplete = true }
+                            resolution.streams
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
 
                             Log.e(TAG, "[StreamFetch][Episode] telegram resolve failed", e)
+                            mutex.withLock { telegramIncomplete = true }
                             emptyList()
                         }
                         mutex.withLock {
+                            aggregatedStreams.removeAll(shownTelegram)
                             aggregatedStreams.addAll(telegramStreams)
                             completed += 1
                             sendProgress()

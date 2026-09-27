@@ -45,6 +45,7 @@ class MdbListAuthLifecycleTest {
         mockkObject(Constants)
         every { Constants.MDBLIST_CLIENT_ID } returns "test-client-id"
         every { profileManager.getProfileIdSync() } returns "default-profile"
+        coEvery { store.setMdbListOAuthTokens(any(), any(), any(), any(), any()) } returns true
 
         repository = MdbListRepository(
             api = api,
@@ -106,9 +107,10 @@ class MdbListAuthLifecycleTest {
         }
 
         coEvery {
-            store.setMdbListOAuthTokens(any(), any(), any(), any())
+            store.setMdbListOAuthTokens(any(), any(), any(), any(), any())
         } answers {
             currentToken = firstArg()
+            true
         }
 
         // Launch 4 concurrent callers needing renewal
@@ -157,7 +159,8 @@ class MdbListAuthLifecycleTest {
                 accessToken = "new-access-1",
                 refreshToken = "keep-this-refresh-token",
                 expiresInSeconds = 7200,
-                profileId = "p1"
+                profileId = "p1",
+                expected = existingCred
             )
         }
 
@@ -177,7 +180,8 @@ class MdbListAuthLifecycleTest {
                 accessToken = "new-access-2",
                 refreshToken = "keep-this-refresh-token",
                 expiresInSeconds = 3600,
-                profileId = "p1"
+                profileId = "p1",
+                expected = existingCred
             )
         }
     }
@@ -187,7 +191,7 @@ class MdbListAuthLifecycleTest {
         repository.disconnect("profile-target")
 
         coVerify(exactly = 1) { store.clearAllMdbListCredentials("profile-target") }
-        coVerify(exactly = 1) { store.onProviderDisconnected(SyncProvider.MDBLIST) }
+        coVerify(exactly = 1) { store.onProviderDisconnected(SyncProvider.MDBLIST, "profile-target") }
     }
 
     @Test
@@ -276,9 +280,10 @@ class MdbListAuthLifecycleTest {
         )
 
         coEvery {
-            store.setMdbListOAuthTokens("refreshed-access-token", "ref-123", 3600, "p1")
+            store.setMdbListOAuthTokens("refreshed-access-token", "ref-123", 3600, "p1", any())
         } answers {
             currentToken = "refreshed-access-token"
+            true
         }
 
         coEvery {
@@ -294,7 +299,7 @@ class MdbListAuthLifecycleTest {
     }
 
     @Test
-    fun `refresh rejection with HTTP 401 or 400 clears credentials and disconnects safely`() = runTest {
+    fun `refresh rejection does not erase credentials or routing`() = runTest {
         coEvery { store.getMdbListCredential("p-reject") } returns SyncProviderStore.MdbListCredential.OAuth(
             accessToken = "bad-access",
             refreshToken = "revoked-refresh",
@@ -308,13 +313,13 @@ class MdbListAuthLifecycleTest {
         val result = repository.resolveAuth("p-reject", forceRefresh = true)
 
         assertNull(result)
-        coVerify(exactly = 1) { store.clearAllMdbListCredentials("p-reject") }
-        coVerify(exactly = 1) { store.onProviderDisconnected(SyncProvider.MDBLIST) }
+        coVerify(exactly = 0) { store.clearAllMdbListCredentials(any()) }
+        coVerify(exactly = 0) { store.onProviderDisconnected(any(), any()) }
     }
 
     @Test
     fun `transient refresh failure HTTP 500 returns non-expired token without wiping credentials`() = runTest {
-        val validExpiry = System.currentTimeMillis() + 600_000L
+        val validExpiry = System.currentTimeMillis() + 30_000L
         coEvery { store.getMdbListCredential("p-transient") } returns SyncProviderStore.MdbListCredential.OAuth(
             accessToken = "still-valid-token",
             refreshToken = "ref",
@@ -325,7 +330,7 @@ class MdbListAuthLifecycleTest {
             api.refreshToken(any(), any(), any())
         } throws httpException(500, """{"error":"server_error"}""")
 
-        val result = repository.resolveAuth("p-transient", forceRefresh = true)
+        val result = repository.resolveAuth("p-transient", forceRefresh = false)
 
         assertNotNull(result)
         assertEquals("still-valid-token", (result as MdbListRepository.MdbListAuth.OAuth).accessToken)
@@ -375,6 +380,7 @@ class MdbListAuthLifecycleTest {
         )
 
         repository.saveTokens(tokenResponse, profileId = "profile-b")
+        coVerify { store.onProviderConnected(SyncProvider.MDBLIST, "profile-b") }
 
         coVerify(exactly = 1) {
             store.setMdbListOAuthTokens(
@@ -392,5 +398,33 @@ class MdbListAuthLifecycleTest {
                 profileId = "default-profile"
             )
         }
+    }
+
+    @Test
+    fun `refresh discarded after credential change is not used`() = runTest {
+        val previous = SyncProviderStore.MdbListCredential.OAuth("old", "refresh", 1L)
+        coEvery { store.getMdbListCredential("p") } returns previous
+        coEvery { api.refreshToken(any(), any(), any()) } returns MdbTokenResponse(accessToken = "late", refreshToken = "rotated", expiresIn = 3600)
+        coEvery { store.setMdbListOAuthTokens(any(), any(), any(), "p", previous) } returns false
+        assertNull(repository.resolveAuth("p"))
+        coVerify(exactly = 0) { store.onProviderConnected(any(), any()) }
+    }
+
+    @Test
+    fun `expired token without configured client does not authenticate`() = runTest {
+        every { Constants.MDBLIST_CLIENT_ID } returns ""
+        coEvery { store.getMdbListCredential("p") } returns SyncProviderStore.MdbListCredential.OAuth("old", "refresh", 1L)
+        assertNull(repository.resolveAuth("p"))
+        coVerify(exactly = 0) { api.refreshToken(any(), any(), any()) }
+    }
+
+    @Test
+    fun `unavailable auth is not reported as a successfully empty watchlist`() = runTest {
+        every { Constants.MDBLIST_CLIENT_ID } returns ""
+        coEvery { store.getMdbListCredential("default-profile") } returns SyncProviderStore.MdbListCredential.OAuth("expired", "refresh", 1L)
+        val result = repository.getWatchlist()
+        assertTrue(result.connected)
+        assertNull(result.items)
+        assertTrue(repository.getWatchedSnapshot().isFailure)
     }
 }

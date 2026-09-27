@@ -11,6 +11,30 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   const method = request.method;
   const body = method === "GET" || method === "HEAD" ? undefined : await request.text();
 
+  if (path.join("/") === "oauth/token") {
+    if (method !== "POST") return NextResponse.json({ error: "Method not allowed" }, { status: 405 });
+    const clientId = (process.env.MDBLIST_CLIENT_ID || process.env.NEXT_PUBLIC_MDBLIST_CLIENT_ID)?.trim();
+    if (!clientId || clientId.startsWith("your-")) {
+      return NextResponse.json({ error: "MDBList OAuth is not configured on this server" }, { status: 503 });
+    }
+    let refreshToken: unknown;
+    try { refreshToken = JSON.parse(body ?? "{}").refresh_token; }
+    catch { return NextResponse.json({ error: "Invalid request" }, { status: 400 }); }
+    if (typeof refreshToken !== "string" || !refreshToken.trim() || refreshToken.length > 8192) {
+      return NextResponse.json({ error: "Missing refresh token" }, { status: 400 });
+    }
+    const response = await fetch("https://api.mdblist.com/oauth/token/", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000)
+    });
+    return new NextResponse(response.body, { status: response.status, headers: {
+      "content-type": "application/json", "cache-control": "no-store"
+    } });
+  }
+
   const authHeader = request.headers.get("authorization") ?? "";
   const tokenHeader = request.headers.get("x-mdblist-token") ?? "";
   const bearerToken = authHeader.toLowerCase().startsWith("bearer ")

@@ -1140,7 +1140,9 @@ private fun isDebridLikeSource(stream: StreamSource, blob: String? = null): Bool
         append(' ')
         append(stream.addonTitle.orEmpty())
         append(' ')
-        append(stream.behaviorHints?.provider.orEmpty())
+        if (!IptvVodSourceIds.isIptvVodAddonId(stream.addonId)) {
+            append(stream.behaviorHints?.provider.orEmpty())
+        }
         append(' ')
         append(stream.behaviorHints?.sourceLabel.orEmpty())
         append(' ')
@@ -1197,7 +1199,9 @@ private fun sourceStatusText(
     val remaining = (totalAddons - completedAddons).coerceAtLeast(0)
     val elapsed = if (elapsedSeconds > 0 && (isLoading || pluginScrapersLoading)) "${elapsedSeconds}s \u2022 " else ""
     return when {
-        isLoading && totalAddons > 0 && remaining > 0 -> stringResource(
+        // Not gated on isLoading: once the first sources are listed isLoading is false, and a
+        // source still running (Telegram delivers in stages) read as "3/4 addons checked".
+        totalAddons > 0 && remaining > 0 -> stringResource(
             if (remaining == 1) {
                 R.string.stream_status_still_checking_one
             } else {
@@ -1261,7 +1265,10 @@ private fun presentSource(stream: StreamSource, unknownSourceLabel: String): Sou
         append(' ')
         append(stream.addonTitle.orEmpty())
         append(' ')
-        append(stream.behaviorHints?.provider.orEmpty())
+        // IPTV provider names are user-entered labels, not file metadata.
+        if (!IptvVodSourceIds.isIptvVodAddonId(stream.addonId)) {
+            append(stream.behaviorHints?.provider.orEmpty())
+        }
         append(' ')
         append(stream.behaviorHints?.sourceLabel.orEmpty())
         append(' ')
@@ -1463,7 +1470,11 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
         "1080p" -> add(SourceBadge("1080p", SourceBadgeImages.FULL_HD_1080))
         "720p" -> add(SourceBadge("720p", SourceBadgeImages.HD_720))
         "480p" -> add(SourceBadge("480p"))
-        else -> add(SourceBadge(presentation.resolutionLabel))
+        // A source whose text names no resolution has nothing to show here, and
+        // an empty badge is a pill with no word in it. Leave the slot out.
+        else -> if (presentation.resolutionLabel.isNotBlank()) {
+            add(SourceBadge(presentation.resolutionLabel))
+        }
     }
 
     when (presentation.releaseLabel) {

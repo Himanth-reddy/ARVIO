@@ -64,6 +64,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import com.arflix.tv.core.plugin.PluginManager
 import com.arflix.tv.data.repository.toStreamSource
@@ -102,6 +104,8 @@ data class DetailsUiState(
     val loadingPluginNames: Set<String> = emptySet(),
     val completedAddons: Int = 0,
     val totalAddons: Int = 0,
+    /** The "Search Telegram" source row (Telegram setting "only search when clicking"). */
+    val telegramSearchRow: TelegramSearchRow = TelegramSearchRow.HIDDEN,
     val hasStreamingAddons: Boolean = true,
     val addonOrderedIds: List<String> = emptyList(),
     val isInWatchlist: Boolean = false,
@@ -211,7 +215,18 @@ enum class ToastType {
 }
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
-    IptvVodSourceIds.isIptvVodAddonId(stream.addonId) || stream.addonId == HomeServerRepository.ADDON_ID
+    IptvVodSourceIds.isIptvVodAddonId(stream.addonId) || stream.addonId == HomeServerRepository.ADDON_ID ||
+        // Found by the user's own "Search Telegram" — outside the addon lookup, like the above.
+        stream.addonId == TELEGRAM_ADDON_ID
+
+private const val TELEGRAM_ADDON_ID = "telegram_native"
+
+/**
+ * The "Search Telegram" source row. With the Telegram setting "Only search Telegram when clicking
+ * the Telegram source" (on by default) source lists no longer search Telegram by themselves; the
+ * row starts the search, and what it finds is listed under it as it arrives.
+ */
+enum class TelegramSearchRow { HIDDEN, IDLE, SEARCHING, NONE }
 
 private fun Addon.isVodStreamingAddon(): Boolean =
     isEnabled &&
@@ -282,6 +297,20 @@ class DetailsViewModel @Inject constructor(
     private var seasonPrefetchJob: kotlinx.coroutines.Job? = null
     private var seasonLoadRequestedSeason: Int = -1
     @Volatile private var initialLoadComplete = false
+    // Watchlist taps flip the bookmark at once; the Trakt/SIMKL and local writes then run one at
+    // a time so a quick double tap cannot land out of order.
+    private val watchlistWriteMutex = Mutex()
+    // Writes outlive page loads. Keep their saved state and latest intent attached to the title,
+    // not to whichever page happens to be visible when a slow remote write completes.
+    private class WatchlistSaveState {
+        var saved: Boolean? = null
+        var wanted: Boolean? = null
+        var version = 0L
+        var pendingWrites = 0
+    }
+    private val watchlistSaveStates = mutableMapOf<Pair<MediaType, Int>, WatchlistSaveState>()
+
+    private enum class WatchlistWrite { SAVED, UNCHANGED, FAILED }
 
     init {
         viewModelScope.launch {
@@ -473,9 +502,15 @@ class DetailsViewModel @Inject constructor(
                     1
                 }
 
+                val watchlistSaveState = watchlistSaveStates.getOrPut(mediaType to mediaId) { WatchlistSaveState() }
+                val watchlistVersionAtLoad = watchlistSaveState.version
+                val watchlistPendingAtLoad = watchlistSaveState.pendingWrites > 0
+                if (!watchlistPendingAtLoad) watchlistSaveState.saved = null
+
                 _uiState.value = DetailsUiState(
                     isLoading = initialItem == null,
                     item = initialItem,
+                    isInWatchlist = watchlistSaveState.wanted ?: false,
                     logoUrl = cachedLogoUrl,
                     episodes = cachedEpisodes ?: emptyList(),
                     currentSeason = seasonToLoad,
@@ -1006,6 +1041,12 @@ class DetailsViewModel @Inject constructor(
 
                 launch {
                     val isInWatchlist = runCatching { watchlistDeferred.await() }.getOrDefault(false)
+                    // A tap while this was loading already set the bookmark; the older read must
+                    // not undo it.
+                    if (!isCurrentRequest() || watchlistSaveState.version != watchlistVersionAtLoad ||
+                        watchlistPendingAtLoad) return@launch
+                    watchlistSaveState.saved = isInWatchlist
+                    watchlistSaveState.wanted = isInWatchlist
                     updateState { state -> state.copy(isInWatchlist = isInWatchlist) }
                 }
 
@@ -1456,41 +1497,81 @@ class DetailsViewModel @Inject constructor(
 
     fun toggleWatchlist() {
         val currentItem = _uiState.value.item ?: return
-        val newInWatchlist = !_uiState.value.isInWatchlist
+        val mediaType = currentMediaType
+        val mediaId = currentMediaId
+        if (currentItem.mediaType != mediaType || currentItem.id != mediaId) return
+        val saveState = watchlistSaveStates.getOrPut(mediaType to mediaId) { WatchlistSaveState() }
+        val previousInWatchlist = _uiState.value.isInWatchlist
+        val newInWatchlist = !previousInWatchlist
+        saveState.wanted = newInWatchlist
+        val toggleVersion = ++saveState.version
+        saveState.pendingWrites++
+
+        // Show the new state right away: the Trakt/SIMKL write and the cloud push behind it can
+        // take several seconds, and the bookmark used to wait for both.
+        _uiState.value = _uiState.value.copy(
+            isInWatchlist = newInWatchlist,
+            toastMessage = if (newInWatchlist) context.getString(R.string.added_to_watchlist) else context.getString(R.string.watchlist_toast_removed),
+            toastType = ToastType.SUCCESS
+        )
 
         viewModelScope.launch {
-            try {
-                val isAnime = currentItem.mediaType == MediaType.TV &&
-                    currentItem.originalLanguage.equals("ja", ignoreCase = true) &&
-                    currentItem.genreIds.contains(16)
-                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
-                if (newInWatchlist) {
-                    if (remoteConnected && !remoteSyncManager.addToWatchlist(currentMediaType, currentMediaId, isAnime)) {
-                        throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_add))
+            val result = try {
+                watchlistWriteMutex.withLock {
+                    val wanted = saveState.wanted ?: newInWatchlist
+                    // Unknown initial membership is not proof that a cancelling tap needs no write.
+                    if (wanted == saveState.saved) return@withLock WatchlistWrite.UNCHANGED
+                    try {
+                        writeWatchlist(currentItem, mediaType, mediaId, wanted)
+                        saveState.saved = wanted
+                        WatchlistWrite.SAVED
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Log.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
+                        AppLogger.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
+                        WatchlistWrite.FAILED
                     }
-                    // Pass the full MediaItem so it appears instantly in watchlist
-                    watchlistRepository.addToWatchlist(currentMediaType, currentMediaId, currentItem)
-                } else {
-                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(currentMediaType, currentMediaId, isAnime)) {
-                        throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_remove))
-                    }
-                    watchlistRepository.removeFromWatchlist(currentMediaType, currentMediaId)
                 }
-                runCatching { cloudSyncRepository.pushToCloud() }
-
-                _uiState.value = _uiState.value.copy(
-                    isInWatchlist = newInWatchlist,
-                    toastMessage = if (newInWatchlist) context.getString(R.string.added_to_watchlist) else context.getString(R.string.watchlist_toast_removed),
-                    toastType = ToastType.SUCCESS
-                )
-            } catch (e: Exception) {
-                Log.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
-                AppLogger.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
-                _uiState.value = _uiState.value.copy(
-                    toastMessage = context.getString(R.string.details_failed_update_watchlist),
-                    toastType = ToastType.ERROR
-                )
+            } finally {
+                saveState.pendingWrites--
             }
+            when (result) {
+                WatchlistWrite.SAVED -> runCatching { cloudSyncRepository.pushToCloud() }
+                WatchlistWrite.FAILED -> {
+                    // Only the latest tap may roll back; an older one is settled by the newer write.
+                    val isCurrentTitle = currentMediaType == mediaType && currentMediaId == mediaId
+                    if (toggleVersion == saveState.version) {
+                        saveState.wanted = saveState.saved ?: previousInWatchlist
+                        if (isCurrentTitle) {
+                            _uiState.value = _uiState.value.copy(
+                                isInWatchlist = saveState.wanted == true,
+                                toastMessage = context.getString(R.string.details_failed_update_watchlist),
+                                toastType = ToastType.ERROR
+                            )
+                        }
+                    }
+                }
+                WatchlistWrite.UNCHANGED -> Unit
+            }
+        }
+    }
+
+    private suspend fun writeWatchlist(item: MediaItem, mediaType: MediaType, mediaId: Int, inWatchlist: Boolean) {
+        val isAnime = item.mediaType == MediaType.TV &&
+            item.originalLanguage.equals("ja", ignoreCase = true) &&
+            item.genreIds.contains(16)
+        val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+        if (inWatchlist) {
+            if (remoteConnected && !remoteSyncManager.addToWatchlist(mediaType, mediaId, isAnime)) {
+                throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_add))
+            }
+            // Pass the full MediaItem so it appears instantly in watchlist
+            watchlistRepository.addToWatchlist(mediaType, mediaId, item)
+        } else {
+            if (remoteConnected && !remoteSyncManager.removeFromWatchlist(mediaType, mediaId, isAnime)) {
+                throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_remove))
+            }
+            watchlistRepository.removeFromWatchlist(mediaType, mediaId)
         }
     }
 
@@ -1899,6 +1980,58 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    private data class TelegramSearchRequest(
+        val requestId: Long,
+        val mediaType: MediaType,
+        val title: String,
+        val year: Int?,
+        val season: Int?,
+        val episode: Int?,
+        val imdbId: String
+    )
+
+    /** What the "Search Telegram" row searches for — the current source list's title/episode. */
+    private var telegramSearchRequest: TelegramSearchRequest? = null
+
+    /** The user selected the "Search Telegram" row: search now, listing results as they arrive. */
+    fun searchTelegramNow() {
+        val request = telegramSearchRequest ?: return
+        if (_uiState.value.telegramSearchRow == TelegramSearchRow.SEARCHING) return
+        _uiState.value = _uiState.value.copy(telegramSearchRow = TelegramSearchRow.SEARCHING)
+        viewModelScope.launch {
+            fun isCurrent() = request.requestId == loadStreamsRequestId
+            fun merge(found: List<StreamSource>) {
+                if (!isCurrent() || found.isEmpty()) return
+                _uiState.value = _uiState.value.copy(
+                    streams = sortPlayableStreamsFirst(
+                        (_uiState.value.streams + found).distinctBy(::providerScopedStreamIdentity)
+                    ),
+                    isLoadingStreams = false
+                )
+            }
+            val found = try {
+                streamRepository.searchTelegramNow(
+                    mediaType = request.mediaType,
+                    title = request.title,
+                    year = request.year,
+                    season = request.season,
+                    episode = request.episode,
+                    imdbId = request.imdbId,
+                    onFound = { merge(it) }
+                )
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "[Telegram] search failed: ${e.message}")
+                emptyList()
+            }
+            if (!isCurrent()) return@launch
+            merge(found)
+            _uiState.value = _uiState.value.copy(
+                telegramSearchRow = if (found.isEmpty()) TelegramSearchRow.NONE else TelegramSearchRow.HIDDEN
+            )
+        }
+    }
+
     fun loadStreams(imdbId: String?, identity: EpisodeIdentity? = null) {
         val requestId = ++loadStreamsRequestId
         loadStreamsJob?.cancel()
@@ -1918,8 +2051,10 @@ class DetailsViewModel @Inject constructor(
             streamsEpisodeIdentity = identity,
             subtitles = emptyList(),
             streamSearchStartTime = System.currentTimeMillis(),
-            pluginScrapersLoading = false
+            pluginScrapersLoading = false,
+            telegramSearchRow = TelegramSearchRow.HIDDEN
         )
+        telegramSearchRequest = null
         val requestMediaType = currentMediaType
         val requestMediaId = currentMediaId
 
@@ -1984,6 +2119,21 @@ class DetailsViewModel @Inject constructor(
                 val originalLanguage = item?.originalLanguage
                 val canonicalSeason = identity?.tmdbSeason
                 val canonicalEpisode = identity?.tmdbEpisode
+                if (!effectiveStreamId.isNullOrBlank() && streamRepository.isTelegramSearchOnClick()) {
+                    // The keys the automatic search would use, so both share its cache.
+                    telegramSearchRequest = TelegramSearchRequest(
+                        requestId = requestId,
+                        mediaType = requestMediaType,
+                        title = item?.title.orEmpty(),
+                        year = item?.year?.toIntOrNull(),
+                        season = if (requestMediaType == MediaType.MOVIE) null else canonicalSeason ?: 1,
+                        episode = if (requestMediaType == MediaType.MOVIE) null else canonicalEpisode ?: 1,
+                        imdbId = effectiveStreamId
+                    )
+                    if (isCurrentRequest()) {
+                        _uiState.value = _uiState.value.copy(telegramSearchRow = TelegramSearchRow.IDLE)
+                    }
+                }
                 val animeQueryOverride = identity?.kitsuQuery
                 val homeServerEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.HOME_SERVER)
                 val hasHomeServerConnections = homeServerEnabled && streamRepository.hasHomeServerConnections()

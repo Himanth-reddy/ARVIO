@@ -1,4 +1,5 @@
 import type { AuthClient } from "./auth";
+import { mergeAddonChanges, recordAddonChanges, type AddonChanges } from "./addonChanges";
 import { config, hasNetlifyBackendUrl } from "./config";
 import { parseHomeServerConnectionJson, serializeHomeServerConnectionJson } from "./homeserver";
 import { jsonRequest } from "./http";
@@ -800,24 +801,31 @@ export async function saveCloudAddons(
   auth: AuthClient,
   addons: InstalledAddon[],
   profileId?: string | null,
-  options: { removedIds?: string[] } = {}
+  options: { removedIds?: string[]; changes?: AddonChanges } = {}
 ) {
-  const removed = new Set(options.removedIds ?? []);
   await mutateCloudPayload(auth, (root) => {
     root.version = 2;
+    const timestamp = Math.max(Date.now(), Number(root.addonsUpdatedAt || 0) + 1);
+    // Outbox operations retain their original timestamps across retries.
+    const changes = mergeAddonChanges(root.addonChanges, options.changes ??
+      recordAddonChanges({}, [], options.removedIds ?? [], timestamp));
+    root.addonChanges = changes;
     // Addon writes are union-based and can only shrink via an explicit remove
     // list. This makes it impossible for a stale/empty in-memory list — or an
     // empty per-profile scope — to wipe the shared library. A removal drops the
     // id from every scope; everything else is merged in.
-    const applyRemovals = (list: InstalledAddon[]) => list.filter((a) => !removed.has(a.id));
+    const applyRemovals = (list: InstalledAddon[]) => list.filter((a) => !changes[a.id]?.removed);
     root.addons = applyRemovals(unionAddons(addons, root.addons));
+    const byProfile = objectRecord<InstalledAddon[]>(root.addonsByProfile);
+    for (const [id, list] of Object.entries(byProfile)) byProfile[id] = applyRemovals(arrayValue<InstalledAddon>(list));
+    root.addonsByProfile = byProfile;
     if (profileId) {
       const scoped = scopedValue<InstalledAddon[]>(root, "addonsByProfile", profileId);
       setScopedValue(root, "addonsByProfile", profileId, applyRemovals(unionAddons(addons, scoped)));
     }
     // Set-level timestamp: lets Android tell an intentional "removed everything" from a blank pull,
     // so removing the last add-on(s) from web actually propagates (reconcileAddonsWithCloud).
-    root.addonsUpdatedAt = Date.now();
+    root.addonsUpdatedAt = timestamp;
   });
 }
 

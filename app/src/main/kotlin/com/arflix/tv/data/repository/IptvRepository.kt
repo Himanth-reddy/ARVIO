@@ -14,6 +14,7 @@ import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.model.StalkerVodLink
+import com.arflix.tv.data.model.StreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.R
 import com.arflix.tv.network.withIptvProviderRequestGuard
@@ -638,13 +639,17 @@ class IptvRepository @Inject constructor(
     internal fun portalIdFromChannelId(channelId: String): String? =
         StalkerPortalSupport.portalIdFromChannelId(channelId)
 
-    private suspend fun getOrCreateStalkerApi(portal: StalkerPortalEntry): com.arflix.tv.data.api.StalkerApi? {
+    private suspend fun getOrCreateStalkerApi(
+        portal: StalkerPortalEntry,
+        initializeProfile: Boolean = false,
+    ): com.arflix.tv.data.api.StalkerApi? {
         cachedStalkerApis[portal.id]?.let { return it }
         return stalkerApiMutex.withLock {
             cachedStalkerApis[portal.id]?.let { return it }
             com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
                 .takeIf { it.handshake() }
                 ?.also { api ->
+                    if (initializeProfile) api.getProfile()
                     cachedStalkerApis = cachedStalkerApis + (portal.id to api)
                 }
         }
@@ -1107,6 +1112,89 @@ class IptvRepository @Inject constructor(
         profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
             decodeHiddenGroups(prefs)
         }
+
+    /**
+     * Subscription end date and stream limit per source id, as last asked.
+     * Local to this device and profile on purpose: it is not part of the
+     * cloud snapshot, so a stale date never travels to another device.
+     */
+    fun observeAccountInfo(): Flow<Map<String, IptvAccountInfo>> =
+        profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
+            decodeAccountInfo(prefs[accountInfoKey()])
+        }
+
+    /**
+     * Asks the provider behind [playlist] for its account details. Plain M3U
+     * files have none and cost no request. Null means the provider did not
+     * answer (offline, HTML page, or the request guard deferred it) - which is
+     * not the same as "answered without details".
+     */
+    suspend fun fetchAccountInfo(playlist: IptvPlaylistEntry): IptvAccountInfo? {
+        val fingerprint = IptvAccountInfoParser.fingerprint(playlist)
+        val now = System.currentTimeMillis()
+        // An independently configured EPG feed can belong to a different account.
+        val creds = resolveXtreamCredentials(playlist.m3uUrl)
+            ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
+        val url = "${creds.baseUrl}/player_api.php".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("username", creds.username)
+            ?.addQueryParameter("password", creds.password)
+            ?.build()
+            ?.toString()
+            ?: return IptvAccountInfoParser.unavailable(fingerprint, now)
+        val body: JsonObject? = requestJson(url, JsonObject::class.java, client = xtreamLookupHttpClient)
+        return IptvAccountInfoParser.parseXtream(body?.toString(), fingerprint, System.currentTimeMillis())
+    }
+
+    /**
+     * Asks a Stalker portal for its account details. The session the channel
+     * download opened is reused: a second handshake for the same MAC can
+     * invalidate its playback token. A missing session is created through the
+     * shared cache; a failed account request never triggers a replacement login.
+     * Null means the portal did not answer.
+     */
+    suspend fun fetchAccountInfo(portal: StalkerPortalEntry): IptvAccountInfo? = withContext(Dispatchers.IO) {
+        val fingerprint = IptvAccountInfoParser.fingerprint(portal)
+        fun parse(body: String?) =
+            IptvAccountInfoParser.parseStalker(body, fingerprint, System.currentTimeMillis())
+        val body = runCatching {
+            val api = getOrCreateStalkerApi(portal, initializeProfile = true)
+                ?: return@runCatching null
+            api.getAccountInfoBody()
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        parse(body)
+    }
+
+    suspend fun saveAccountInfo(sourceId: String, info: IptvAccountInfo) {
+        context.settingsDataStore.edit { prefs ->
+            val current = decodeAccountInfo(prefs[accountInfoKey()])
+            prefs[accountInfoKey()] = gson.toJson(current + (sourceId to info))
+        }
+    }
+
+    /** Drops entries whose source no longer exists. */
+    suspend fun retainAccountInfo(sourceIds: Set<String>) {
+        context.settingsDataStore.edit { prefs ->
+            val current = decodeAccountInfo(prefs[accountInfoKey()])
+            val retained = current.filterKeys { it in sourceIds }
+            if (retained.size == current.size) return@edit
+            if (retained.isEmpty()) prefs.remove(accountInfoKey())
+            else prefs[accountInfoKey()] = gson.toJson(retained)
+        }
+    }
+
+    private fun accountInfoKey(): Preferences.Key<String> =
+        profileManager.profileStringKey("iptv_account_info")
+
+    private fun decodeAccountInfo(raw: String?): Map<String, IptvAccountInfo> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val type = TypeToken.getParameterized(
+                Map::class.java, String::class.java, IptvAccountInfo::class.java
+            ).type
+            gson.fromJson<Map<String, IptvAccountInfo>>(raw, type)
+        }.getOrNull().orEmpty()
+    }
 
     /**
      * The `portalId|categoryId` keys the user switched off for [kind].
@@ -4873,7 +4961,11 @@ class IptvRepository @Inject constructor(
         val tmdbMap: Map<String, List<ResolverSeriesEntry>>,
         val imdbMap: Map<String, List<ResolverSeriesEntry>>,
         val canonicalTitleMap: Map<String, List<ResolverSeriesEntry>>,
-        val tokenMap: Map<String, List<ResolverSeriesEntry>>
+        val tokenMap: Map<String, List<ResolverSeriesEntry>>,
+        // Series id -> catalog name. The name is where a provider puts its
+        // quality marker ("UHD - The Gentlemen"), and the episode paths that
+        // resolve from a stored binding never see the catalog entry itself.
+        val idNameMap: Map<Int, String> = emptyMap()
     )
 
     private data class ResolverCandidate(
@@ -4895,6 +4987,13 @@ class IptvRepository @Inject constructor(
         val confidence: Float,
         val method: String,
         val title: String? = null,
+        // Nullable on purpose: this class is stored as Gson JSON and has
+        // parameters without defaults, so Gson allocates it without running the
+        // Kotlin constructor and skips every default value. A non-null
+        // `String = ""` would therefore arrive as null from older cache entries
+        // and crash on first touch - the same trap documented on
+        // [StalkerPortalEntry]. Always read it with `?.takeIf { ... }`.
+        val seriesName: String? = null,
         val savedAtMs: Long
     )
 
@@ -4924,6 +5023,8 @@ class IptvRepository @Inject constructor(
         private val resolvedTtlMs = 24 * 60 * 60_000L
         private val seriesInfoTtlMs = 24 * 60 * 60_000L
         private val catalogMemory = ConcurrentHashMap<String, ResolverCatalogIndex>()
+        private val persistedSeriesNames = mutableMapOf<String, Map<Int, String>>()
+        private val seriesNamesLock = Any()
         private val resolvedMemory = object : LinkedHashMap<String, ResolverCachedResolvedEpisode>(512, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ResolverCachedResolvedEpisode>?): Boolean {
                 return size > 512
@@ -5107,6 +5208,7 @@ class IptvRepository @Inject constructor(
                     confidence = 0.995f,
                     method = "fast_path_cache",
                     title = best.episode.title,
+                    seriesName = cachedSeriesName(providerKey, seriesId),
                     savedAtMs = now
                 )
             }
@@ -5184,6 +5286,7 @@ class IptvRepository @Inject constructor(
                                 confidence = 0.995f,
                                 method = "series_binding",
                                 title = hit.episode.title,
+                                seriesName = cachedSeriesName(providerKey, seriesId),
                                 savedAtMs = System.currentTimeMillis()
                             )
                         }
@@ -5274,6 +5377,7 @@ class IptvRepository @Inject constructor(
                         confidence = hit.first.confidence,
                         method = hit.first.method,
                         title = hit.second.title,
+                        seriesName = hit.first.entry.name.takeIf { it.isNotBlank() },
                         savedAtMs = System.currentTimeMillis()
                     )
                 }
@@ -5458,8 +5562,31 @@ class IptvRepository @Inject constructor(
                 tmdbMap = tmdbMap,
                 imdbMap = imdbMap,
                 canonicalTitleMap = canonicalTitleMap,
-                tokenMap = tokenMap
+                tokenMap = tokenMap,
+                idNameMap = normalizedEntries
+                    .filter { it.name.isNotBlank() }
+                    .associate { it.seriesId to it.name }
             )
+        }
+
+        /**
+         * Catalog name of a series, from memory or the saved catalog. Used by
+         * the episode paths that resolve from a stored binding and therefore
+         * never hold the catalog entry itself.
+         *
+         * These resolver paths run on IO. Read the saved names at most once per
+         * provider after a restart, without fetching or rebuilding the search index.
+         */
+        fun cachedSeriesName(providerKey: String, seriesId: Int): String? {
+            catalogMemory[providerKey]?.let { return it.idNameMap[seriesId] }
+            return synchronized(seriesNamesLock) {
+                val names = persistedSeriesNames.getOrPut(providerKey) {
+                    readPersistedCatalog(providerKey)?.entries.orEmpty()
+                        .filter { it.name.isNotBlank() }
+                        .associate { it.seriesId to it.name }
+                }
+                names[seriesId]
+            }
         }
 
         private fun buildCandidates(
@@ -5768,6 +5895,7 @@ class IptvRepository @Inject constructor(
          */
         fun clearAll() {
             catalogMemory.clear()
+            synchronized(seriesNamesLock) { persistedSeriesNames.clear() }
             synchronized(resolvedLock) { resolvedMemory.clear() }
             synchronized(seriesBindingLock) { seriesBindingMemory.clear() }
             synchronized(seriesInfoLock) { seriesInfoMemory.clear() }
@@ -5810,15 +5938,58 @@ class IptvRepository @Inject constructor(
     internal fun activeStalkerSeriesPortals(config: IptvConfig): List<StalkerPortalEntry> =
         activeStalkerPortals(config).filter { it.importSeries ?: true }
 
-    private fun xtreamCredentialsForVodImport(config: IptvConfig): List<XtreamCredentials> =
+    /**
+     * An Xtream provider together with the name the user typed for it in the
+     * settings. [XtreamCredentials] deliberately carries only host and login -
+     * it is a cache key and a request builder - so the playlist name, the only
+     * thing that tells two providers apart on screen, used to be dropped the
+     * moment credentials were resolved. It is kept beside them instead.
+     */
+    private data class XtreamVodProvider(
+        val creds: XtreamCredentials,
+        val name: String
+    )
+
+    private fun xtreamProvidersForVodImport(config: IptvConfig): List<XtreamVodProvider> =
         activeVodPlaylists(config)
-            .mapNotNull(::resolveXtreamCredentials)
-            .distinct()
+            .mapNotNull { playlist ->
+                resolveXtreamCredentials(playlist)?.let { XtreamVodProvider(it, playlist.name.trim()) }
+            }
+            // Dedupe on the credentials alone, exactly as before: two playlist
+            // entries pointing at the same account are one provider, and the
+            // first one's name is the one that shows.
+            .distinctBy { it.creds }
+
+    private fun xtreamProvidersForSeriesImport(config: IptvConfig): List<XtreamVodProvider> =
+        activeSeriesPlaylists(config)
+            .mapNotNull { playlist ->
+                resolveXtreamCredentials(playlist)?.let { XtreamVodProvider(it, playlist.name.trim()) }
+            }
+            .distinctBy { it.creds }
+
+    private fun xtreamCredentialsForVodImport(config: IptvConfig): List<XtreamCredentials> =
+        xtreamProvidersForVodImport(config).map { it.creds }
 
     private fun xtreamCredentialsForSeriesImport(config: IptvConfig): List<XtreamCredentials> =
-        activeSeriesPlaylists(config)
-            .mapNotNull(::resolveXtreamCredentials)
-            .distinct()
+        xtreamProvidersForSeriesImport(config).map { it.creds }
+
+    /**
+     * Stamps the provider a source came from onto it.
+     *
+     * The source menu already renders `behaviorHints.provider` as a second line
+     * next to the add-on name (`sourceAttributionLabels` -> `rowSubtitle`), which
+     * is how Stremio add-ons name their indexer. IPTV never filled it, so a user
+     * with several providers saw several identical rows reading "IPTV Series VOD"
+     * and no way to tell whose stream was whose. Nothing in the UI changes - the
+     * slot was simply empty.
+     */
+    internal fun StreamSource.withIptvProvider(providerName: String): StreamSource {
+        val name = providerName.trim()
+        if (name.isBlank()) return this
+        return copy(
+            behaviorHints = (behaviorHints ?: StreamBehaviorHints()).copy(provider = name)
+        )
+    }
 
     suspend fun findMovieVodSource(
         title: String,
@@ -5871,11 +6042,11 @@ class IptvRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext emptyList()
             val config = streamProviderConfig(observeConfig().first(), allowedProviderIds)
-            val xtreamSources = xtreamCredentialsForVodImport(config)
-                .flatMap { creds ->
+            val xtreamSources = xtreamProvidersForVodImport(config)
+                .flatMap { provider ->
                     runCatching {
                         findMovieVodSourcesForCredentials(
-                            creds = creds,
+                            creds = provider.creds,
                             title = title,
                             year = year,
                             imdbId = imdbId,
@@ -5883,6 +6054,10 @@ class IptvRepository @Inject constructor(
                             allowNetwork = allowNetwork
                         )
                     }.getOrDefault(emptyList())
+                        // Stamped here rather than deeper down on purpose: every
+                        // source in this batch came from this one provider, and
+                        // the disk cache below never has to know about names.
+                        .map { it.withIptvProvider(provider.name) }
                 }
             // Additive second provider: each Stalker portal is searched on its
             // own, and a failing portal never removes Xtream results.
@@ -5899,6 +6074,7 @@ class IptvRepository @Inject constructor(
                             originalTitle = originalTitle
                         )
                     }.getOrDefault(emptyList())
+                        .map { it.withIptvProvider(portal.name) }
                 }
             sortVodSources(xtreamSources + stalkerSources)
         }
@@ -6314,36 +6490,40 @@ class IptvRepository @Inject constructor(
             source = sourceName,
             addonName = "IPTV VOD",
             addonId = IptvVodSourceIds.STALKER,
-            quality = stalkerVodQuality(sourceName, hd),
+            quality = stalkerVodQuality(hd, sourceName),
             size = "",
             url = marker,
-            description = stalkerVodDescription(portal, time, ratingImdb)
+            description = stalkerVodDescription(time, ratingImdb)
         )
     }
 
     /**
      * Stalker knows no resolution field - the portal only flags `hd` - so the
-     * title is still the better source when it names one. Falling back to the
-     * flag at least separates HD entries from the rest.
+     * titles are still the better source when one of them names a resolution.
+     * Falling back to the flag at least separates HD entries from the rest.
      */
-    private fun stalkerVodQuality(sourceName: String, hdFlag: String?): String {
-        val inferred = inferQuality(sourceName)
-        if (inferred != "VOD") return inferred
-        return if (hdFlag?.trim() == "1") "HD" else "VOD"
+    private fun stalkerVodQuality(hdFlag: String?, vararg names: String?): String {
+        val inferred = inferQualityFrom(*names)
+        if (inferred.isNotBlank()) return inferred
+        return if (hdFlag?.trim() == "1") "HD" else ""
     }
 
     /**
-     * The little the portal knows beyond the title, which is what makes two
-     * entries of the same movie tellable apart: which portal it came from, how
-     * long it runs, and its IMDb rating.
+     * The little the portal knows beyond the title: how long it runs and its
+     * IMDb rating.
+     *
+     * The portal NAME used to lead this line, and the `portal` parameter with
+     * it. Both are gone: the name now travels in `behaviorHints.provider`, where
+     * the source menu prints it next to the add-on name for every IPTV source,
+     * Xtream and Stalker alike. Leaving it here as well showed it twice in one
+     * row - measured on a device on 22.09.2026, "IPTV VOD - Portal 100" sat
+     * directly above "Portal 100 - 192 min - IMDb 7.601".
      */
     private fun stalkerVodDescription(
-        portal: StalkerPortalEntry,
         runtime: String?,
         ratingImdb: String?
     ): String? {
         val parts = mutableListOf<String>()
-        portal.name.trim().takeIf { it.isNotBlank() }?.let(parts::add)
         runtime?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
             val minutes = value.toIntOrNull()
             parts += if (minutes != null && minutes > 0) "$minutes min" else value
@@ -6901,12 +7081,14 @@ class IptvRepository @Inject constructor(
             source = sourceName,
             addonName = "IPTV Series VOD",
             addonId = IptvVodSourceIds.STALKER,
-            // The season entry's own name ("Staffel 2") says nothing about
-            // quality, so the show's name is what gets inspected.
-            quality = stalkerVodQuality(showName, hd ?: show.hd),
+            // The show's name carries the provider's marker ("UHD - ..."), so it
+            // is asked first; the season entry's own name ("Staffel 2") usually
+            // says nothing, but a portal that labels the season instead still
+            // gets read rather than dropped to the bare "VOD" badge.
+            quality = stalkerVodQuality(hd ?: show.hd, showName, name),
             size = "",
             url = marker,
-            description = stalkerVodDescription(portal, time ?: show.time, ratingImdb ?: show.ratingImdb)
+            description = stalkerVodDescription(time ?: show.time, ratingImdb ?: show.ratingImdb)
         )
     }
 
@@ -6940,11 +7122,11 @@ class IptvRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext emptyList()
             val config = streamProviderConfig(observeConfig().first(), allowedProviderIds)
-            val xtreamSources = xtreamCredentialsForSeriesImport(config)
-                .flatMap { creds ->
+            val xtreamSources = xtreamProvidersForSeriesImport(config)
+                .flatMap { provider ->
                     runCatching {
                         findEpisodeVodSourcesForCredentials(
-                            creds = creds,
+                            creds = provider.creds,
                             title = title,
                             season = season,
                             episode = episode,
@@ -6953,6 +7135,7 @@ class IptvRepository @Inject constructor(
                             allowNetwork = allowNetwork
                         )
                     }.getOrDefault(emptyList())
+                        .map { it.withIptvProvider(provider.name) }
                 }
             // Additive second provider, exactly as on the movie path: each
             // Stalker portal is searched on its own, and a failing portal never
@@ -6974,10 +7157,15 @@ class IptvRepository @Inject constructor(
                         )
                     }.onFailure { error ->
                         if (error is kotlinx.coroutines.CancellationException) throw error
-                    }.getOrDefault(emptyList()).also { found ->
-                        completedSources.addAll(found)
-                        onSources(sortVodSources(completedSources))
-                    }
+                    }.getOrDefault(emptyList())
+                        // Stamped before the partial list is published, not after:
+                        // this path reports each portal's result as it arrives, so
+                        // a later stamp would show the first batch without a name.
+                        .map { it.withIptvProvider(portal.name) }
+                        .also { found ->
+                            completedSources.addAll(found)
+                            onSources(sortVodSources(completedSources))
+                        }
                 }
             sortVodSources(xtreamSources + stalkerSources)
         }
@@ -7007,11 +7195,19 @@ class IptvRepository @Inject constructor(
                 val ext = resolved.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
                 val streamUrl = "${creds.baseUrl}/series/${creds.username}/${creds.password}/${resolved.streamId}.$ext"
                 val sourceName = resolvedTitle.ifBlank { "$title S${season}E${episode}" }
+                // The provider marks its variants on the SERIES ("UHD - The
+                // Gentlemen"), while `sourceName` is the episode title ("Episode
+                // 2") and names no resolution at all. Asking the series name
+                // first is what makes three variants of one episode tellable
+                // apart; the episode title stays as the fallback for providers
+                // who label it the other way round.
+                val seriesName = resolved.seriesName?.takeIf { it.isNotBlank() }
+                    ?: seriesResolver.cachedSeriesName(providerKey, resolved.seriesId)
                 StreamSource(
                     source = sourceName,
                     addonName = "IPTV Series VOD",
                     addonId = IptvVodSourceIds.XTREAM,
-                    quality = inferQuality(sourceName),
+                    quality = inferQualityFrom(seriesName, sourceName),
                     size = "",
                     url = streamUrl
                 )
@@ -8023,25 +8219,64 @@ class IptvRepository @Inject constructor(
         return score
     }
 
-    private fun inferQuality(value: String): String {
-        val lower = value.lowercase(Locale.US)
+    /**
+     * Reads a resolution out of whatever text a provider gives us.
+     *
+     * IPTV providers mark their variants with words, not numbers - "UHD - The
+     * Gentlemen", "FHD - The Gentlemen". Only the live-TV path ([inferQualityLabel])
+     * ever knew those words, so every VOD entry fell through to the bare "VOD"
+     * badge and three variants of one episode looked identical in the source list.
+     * The word list is now the same on both paths.
+     *
+     * "HD" without a number stays "HD" on purpose: providers use it for both 720p
+     * and 1080i, so claiming either would be a guess printed as a fact.
+     *
+     * Returns a BLANK string when the text names no resolution. It used to return
+     * "VOD", which the source menu printed as a badge - a badge that told the user
+     * nothing they could not already see from the add-on name, and that looked
+     * exactly like a real quality. Saying nothing is the honest answer.
+     */
+    internal fun inferQuality(value: String): String {
+        val upper = value.uppercase(Locale.US)
         return when {
-            lower.contains("2160") || lower.contains("4k") -> "4K"
-            lower.contains("1080") -> "1080p"
-            lower.contains("720") -> "720p"
-            lower.contains("480") -> "480p"
-            else -> "VOD"
+            VOD_QUALITY_4K_REGEX.containsMatchIn(upper) -> "4K"
+            VOD_QUALITY_1080_REGEX.containsMatchIn(upper) -> "1080p"
+            VOD_QUALITY_720_REGEX.containsMatchIn(upper) -> "720p"
+            VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> "HD"
+            VOD_QUALITY_576_REGEX.containsMatchIn(upper) -> "576p"
+            VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> "480p"
+            else -> ""
         }
     }
 
-    private fun vodQualityRank(value: String): Int {
-        val lower = value.lowercase(Locale.US)
+    /**
+     * First candidate that actually names a resolution wins. Providers disagree
+     * about where they put the marker - some on the series ("UHD - The Gentlemen"),
+     * some on the episode ("The Gentlemen S02E02 1080p") - so both get looked at,
+     * in the order the caller considers most trustworthy.
+     */
+    internal fun inferQualityFrom(vararg candidates: String?): String {
+        candidates.forEach { candidate ->
+            val value = candidate?.trim().orEmpty()
+            if (value.isNotBlank()) {
+                val inferred = inferQuality(value)
+                if (inferred.isNotBlank()) return inferred
+            }
+        }
+        return ""
+    }
+
+    internal fun vodQualityRank(value: String): Int {
+        val upper = value.uppercase(Locale.US)
         return when {
-            lower.contains("2160") || lower.contains("4k") -> 500
-            lower.contains("1080") -> 400
-            lower.contains("720") -> 300
-            lower.contains("480") -> 200
-            lower.contains("360") -> 100
+            VOD_QUALITY_4K_REGEX.containsMatchIn(upper) -> 500
+            VOD_QUALITY_1080_REGEX.containsMatchIn(upper) -> 400
+            VOD_QUALITY_720_REGEX.containsMatchIn(upper) -> 300
+            // Between 720p and 480p: better than SD, and never claimed to be more.
+            VOD_QUALITY_HD_REGEX.containsMatchIn(upper) -> 250
+            VOD_QUALITY_576_REGEX.containsMatchIn(upper) -> 225
+            VOD_QUALITY_480_REGEX.containsMatchIn(upper) -> 200
+            VOD_QUALITY_360_REGEX.containsMatchIn(upper) -> 100
             else -> 0
         }
     }
@@ -12169,6 +12404,31 @@ class IptvRepository @Inject constructor(
         private val URL_QUERY_SECRETS_REGEX = Regex("""(?i)([?&](?:username|user|uname|password|pass|pwd)=)[^&]+""")
         private val URL_PATH_SECRETS_REGEX = Regex("""(?i)(/(?:live|movie|series|timeshift)/)([^/]+)/([^/]+)(/)""")
         private val QUALITY_WORDS_REGEX = Regex("""\b(4K|UHD|FHD|HD|SD|2160P?|1080P?|720P?|576P?|480P?)\b""", RegexOption.IGNORE_CASE)
+
+        // VOD quality words, in the order they must be tested: the more specific
+        // token always wins, so "FHD" is never read as the "HD" inside it.
+        //
+        // Three different guards, each for a reason that cost a regression once:
+        //  - Every token refuses a letter or digit IN FRONT of it, so "UHD" does
+        //    not fire inside a word like "NEUHDORF".
+        //  - Numbers refuse a trailing digit or X + digit (the width in a pixel
+        //    pair). "1920x1080" and "1080p" still identify the vertical resolution.
+        //  - 4K/UHD/FHD also allow a letter after them ("UHDRemux", "4KHDR") -
+        //    they are unambiguous, so a run-together name still resolves. HD does
+        //    NOT get that freedom: "HDR" is a colour range, not a resolution, and
+        //    reading it as HD would be a wrong fact on screen.
+        //
+        // "SD" is deliberately absent. It is also the language code for Sindhi,
+        // and portals that prefix a title with the language ("AL - ", "AR - ",
+        // "SD - ") are common - there is no way to tell the two apart, so the
+        // badge stays empty rather than claim the worst quality for a language.
+        private val VOD_QUALITY_4K_REGEX = Regex("""(?<![A-Z0-9])(?:4K|UHD)(?![0-9])|(?<!\d)2160(?!\d|X\d)""")
+        private val VOD_QUALITY_1080_REGEX = Regex("""(?<![A-Z0-9])FHD(?![0-9])|(?<!\d)1080(?!\d|X\d)""")
+        private val VOD_QUALITY_720_REGEX = Regex("""(?<!\d)720(?!\d|X\d)""")
+        private val VOD_QUALITY_HD_REGEX = Regex("""(?<![A-Z0-9])HD(?![A-Z0-9])""")
+        private val VOD_QUALITY_576_REGEX = Regex("""(?<!\d)576(?!\d|X\d)""")
+        private val VOD_QUALITY_480_REGEX = Regex("""(?<!\d)480(?!\d|X\d)""")
+        private val VOD_QUALITY_360_REGEX = Regex("""(?<!\d)360(?!\d|X\d)""")
         private val BRACKET_PAREN_REGEX = Regex("""\[[^\]]*]|\([^)]*\)""")
 
         const val ENC_PREFIX = "encv1:"

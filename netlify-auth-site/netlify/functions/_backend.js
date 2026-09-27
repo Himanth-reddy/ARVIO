@@ -1827,6 +1827,11 @@ function payloadMetrics(payload) {
 // version, so the server refuses catastrophic shrinks: if an existing list has
 // >= 3 addons and an incoming push keeps <= 1, the existing addons are merged
 // back in (union). Deliberate one-by-one removals (5→4→3→2→1) still work.
+//
+// New clients send per-id add/remove records. Missing entries alone are never
+// removals: a stale device may have toggled/refreshed its incomplete local list.
+// Keep removal records in the snapshot so later stale uploads cannot resurrect
+// them. Legacy snapshots retain the conservative shrink guard below.
 function addonIdentity(addon) {
   if (!addon || typeof addon !== "object") return "";
   return String(addon.manifestUrl || addon.url || addon.transportUrl || addon.id || "").trim().toLowerCase();
@@ -1845,17 +1850,81 @@ function unionAddonLists(existingList, incomingList) {
   return Array.from(merged.values());
 }
 
+function addonsUpdatedAtOf(payload) {
+  const value = Number(payload && payload.addonsUpdatedAt);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function addonChangesOf(payload) {
+  const raw = payload?.addonChanges;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return Object.fromEntries(Object.entries(raw).filter(([id, change]) =>
+    id.trim() && change && typeof change.removed === "boolean" &&
+    Number.isSafeInteger(change.updatedAt) && change.updatedAt > 0 &&
+    !(id === "opensubtitles" && change.removed)
+  ).map(([id, change]) => [id, { removed: change.removed, updatedAt: change.updatedAt }]));
+}
+
+function mergeExplicitAddonChanges(existing, incoming) {
+  const changes = Object.assign(Object.create(null), addonChangesOf(existing));
+  for (const [id, change] of Object.entries(addonChangesOf(incoming) || {})) {
+    const previous = changes[id];
+    if (!previous || change.updatedAt > previous.updatedAt ||
+        (change.updatedAt === previous.updatedAt && change.removed)) {
+      Object.defineProperty(changes, id, { value: change, enumerable: true, configurable: true, writable: true });
+    }
+  }
+  const incomingIsNewer = addonsUpdatedAtOf(incoming) >= addonsUpdatedAtOf(existing);
+  const keep = (addon) => addon && !changes[addon.id]?.removed;
+  const merge = (oldList, newList) => {
+    const old = Array.isArray(oldList) ? oldList : [];
+    const next = Array.isArray(newList) ? newList : [];
+    // unionAddonLists gives the second list precedence for metadata/order.
+    return (incomingIsNewer ? unionAddonLists(old, next) : unionAddonLists(next, old)).filter(keep);
+  };
+  const byProfile = {};
+  const profileLists = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const oldProfiles = profileLists(existing.addonsByProfile);
+  const newProfiles = profileLists(incoming.addonsByProfile);
+  const allAddons = (root, profiles) => unionAddonLists(
+    Object.values(profiles).flatMap(list => Array.isArray(list) ? list : []),
+    Array.isArray(root.addons) ? root.addons : []
+  );
+  const shared = merge(allAddons(existing, oldProfiles), allAddons(incoming, newProfiles));
+  const canonical = new Map(shared.map(addon => [addonIdentity(addon), addon]));
+  for (const id of new Set([...Object.keys(oldProfiles), ...Object.keys(newProfiles)])) {
+    Object.defineProperty(byProfile, id, {
+      value: unionAddonLists(shared, merge(oldProfiles[id], newProfiles[id]))
+        .map(addon => canonical.get(addonIdentity(addon))), enumerable: true
+    });
+  }
+  return {
+    ...incoming,
+    addons: shared,
+    addonsByProfile: byProfile,
+    addonChanges: changes,
+    addonsUpdatedAt: Object.values(changes).reduce((time, change) => Math.max(time, change.updatedAt),
+      Math.max(addonsUpdatedAtOf(existing), addonsUpdatedAtOf(incoming)))
+  };
+}
+
 function applyAddonWipeGuard(existingSnapshot, incomingPayload) {
   const existingPayload = existingSnapshot && existingSnapshot.payload;
-  if (!existingPayload || !incomingPayload || typeof incomingPayload !== "object") {
+  if (!incomingPayload || typeof incomingPayload !== "object") {
     return { payload: incomingPayload, guarded: false };
   }
+  if (addonChangesOf(incomingPayload) || addonChangesOf(existingPayload)) {
+    return { payload: mergeExplicitAddonChanges(existingPayload || {}, incomingPayload), guarded: false };
+  }
+  if (!existingPayload) return { payload: incomingPayload, guarded: false };
   let guarded = false;
+  let restored = false;
   const guardList = (existingListRaw, incomingListRaw) => {
     const existingList = Array.isArray(existingListRaw) ? existingListRaw.filter(Boolean) : [];
     const incomingList = Array.isArray(incomingListRaw) ? incomingListRaw.filter(Boolean) : [];
     if (existingList.length >= 3 && incomingList.length <= 1) {
       guarded = true;
+      restored = true;
       return unionAddonLists(existingList, incomingList);
     }
     return incomingListRaw;
@@ -1878,6 +1947,10 @@ function applyAddonWipeGuard(existingSnapshot, incomingPayload) {
       output.addonsByProfile = existingByProfile;
       guarded = true;
     }
+  }
+
+  if (restored && Object.prototype.hasOwnProperty.call(existingPayload, "addonsUpdatedAt")) {
+    output.addonsUpdatedAt = existingPayload.addonsUpdatedAt;
   }
 
   return { payload: output, guarded };

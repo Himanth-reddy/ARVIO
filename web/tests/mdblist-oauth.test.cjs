@@ -1,0 +1,107 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { load, storage } = require('./load.cjs');
+
+class HttpError extends Error { constructor(status) { super('HTTP error'); this.status = status; } }
+function setup(request) {
+  const stored = storage();
+  const { MdbListClient } = load('lib/mdblist.ts', {
+    './http': { jsonRequest: request, HttpError }, './storage': stored
+  }, { window: { location: { origin: 'https://arvio.test' } } });
+  const client = new MdbListClient();
+  client.setProfile('one');
+  return { client, stored };
+}
+const token = (expiresAt = Date.now() + 3600000) => ({ accessToken: 'access', refreshToken: 'refresh', expiresAt });
+
+test('OAuth supports watched history and writes without an API key', async () => {
+  const requests = [];
+  const { client } = setup(async (url, init) => {
+    requests.push([url, init]);
+    return { movies: [{ movie: { ids: { tmdb: 42 } } }], pagination: { has_more: false } };
+  });
+  client.setToken(token());
+  assert.equal((await client.watched('movies')).length, 1);
+  await client.addToWatchlist({ mediaType: 'movie', tmdbId: 42 });
+  await client.addToHistory({ mediaType: 'movie', tmdbId: 42 });
+  await client.removeFromHistory({ mediaType: 'movie', tmdbId: 42 });
+  assert.equal(requests.length, 4);
+  for (const [, init] of requests) {
+    assert.equal(init.headers.authorization, 'Bearer access');
+    assert.equal(init.headers['x-mdblist-key'], undefined);
+  }
+});
+
+test('new API-key connection replaces OAuth locally and in storage', async () => {
+  const { client, stored } = setup(async () => ({}));
+  client.setToken(token());
+  client.setKey('api-key');
+  assert.equal(client.token, null);
+  assert.equal(stored.values.has('arvio.web.mdblist.token:one'), false);
+  client.setToken(token());
+  assert.equal(client.key, null);
+  assert.equal(stored.values.has('arvio.web.mdblist.key:one'), false);
+});
+
+test('concurrent expiry shares refresh and preserves an omitted refresh token', async () => {
+  let renewals = 0, saved = 0;
+  const { client } = setup(async (url, init) => {
+    if (url.includes('/oauth/token/')) { renewals++; await new Promise(r => setTimeout(r, 5)); return { access_token: 'new', expires_in: 3600 }; }
+    assert.equal(init.headers.authorization, 'Bearer new');
+    return [];
+  });
+  client.setToken(token(1));
+  client.onTokenRefreshed = async (profile, value) => { assert.equal(profile, 'one'); assert.equal(value.refreshToken, 'refresh'); saved++; };
+  await Promise.all([client.addToHistory({ mediaType: 'movie', tmdbId: 1 }), client.addToWatchlist({ mediaType: 'movie', tmdbId: 2 })]);
+  assert.equal(renewals, 1);
+  assert.equal(saved, 1);
+});
+
+test('disconnect and profile switch discard a late refresh', async () => {
+  for (const change of [c => c.disconnect(), c => c.setProfile('two'), c => c.setKey('replacement')]) {
+    let complete;
+    let writes = 0;
+    const { client, stored } = setup(async url => {
+      if (url.includes('/oauth/token/')) return new Promise(resolve => { complete = resolve; });
+      writes++; return {};
+    });
+    client.setToken(token(1));
+    const pending = client.addToHistory({ mediaType: 'movie', tmdbId: 1 });
+    change(client);
+    complete({ access_token: 'late', expires_in: 3600 });
+    await assert.rejects(pending, /connection changed/);
+    assert.equal(client.token, null);
+    assert.equal(writes, 0);
+    assert.notEqual(stored.loadStored('arvio.web.mdblist.token:one', null)?.accessToken, 'late');
+  }
+});
+
+test('401 refreshes once then propagates a second failure', async () => {
+  let renewals = 0, requests = 0;
+  const { client } = setup(async url => {
+    if (url.includes('/oauth/token/')) { renewals++; return { access_token: 'new', expires_in: 3600 }; }
+    requests++; throw new HttpError(401);
+  });
+  client.setToken(token());
+  await assert.rejects(client.addToHistory({ mediaType: 'movie', tmdbId: 1 }), HttpError);
+  assert.equal(renewals, 1);
+  assert.equal(requests, 2);
+});
+
+test('proxy refresh uses server public client ID and form encoding, never an API key', async () => {
+  let call;
+  class NextResponse extends Response { static json(value, init) { return Response.json(value, init); } }
+  const route = load('app/api/mdblist/[...path]/route.ts', { 'next/server': { NextResponse } }, {
+    process: { env: { MDBLIST_CLIENT_ID: 'public-client' } },
+    fetch: async (url, init) => { call = [url, init]; return Response.json({ access_token: 'new' }); }
+  });
+  const result = await route.POST(new Request('https://arvio.test/api/mdblist/oauth/token/', {
+    method: 'POST', body: JSON.stringify({ refresh_token: 'refresh', client_id: 'untrusted' })
+  }), { params: Promise.resolve({ path: ['oauth', 'token'] }) });
+  assert.equal(result.status, 200);
+  assert.equal(call[0], 'https://api.mdblist.com/oauth/token/');
+  assert.equal(call[1].body.get('client_id'), 'public-client');
+  assert.equal(call[1].body.get('grant_type'), 'refresh_token');
+  assert.equal(call[1].headers.authorization, undefined);
+  assert.equal(result.headers.get('cache-control'), 'no-store');
+});

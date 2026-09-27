@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.components
 
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.model.IptvVodSourceIds
 import java.util.Locale
 
 private object StreamSourceAttributionRegexes {
@@ -20,7 +21,13 @@ internal fun sourceAttributionLabels(
     addonLabel: String
 ): List<String> {
     val hints = stream.behaviorHints
-    val structuredProvider = cleanSourceAttribution(hints?.provider)
+    val structuredProvider = if (IptvVodSourceIds.isIptvVodAddonId(stream.addonId)) {
+        // Keep names such as "Provider 4K" distinct from "Provider 1080p".
+        hints?.provider?.replace(StreamSourceAttributionRegexes.attributionWhitespace, " ")
+            ?.trim()?.takeIf { it.isNotBlank() }?.take(48)
+    } else {
+        cleanSourceAttribution(hints?.provider)
+    }
     val fallbackProvider = cleanSourceAttribution(stream.rawLabel)
     val provider = structuredProvider ?: fallbackProvider
     val source = cleanSourceAttribution(hints?.sourceLabel)

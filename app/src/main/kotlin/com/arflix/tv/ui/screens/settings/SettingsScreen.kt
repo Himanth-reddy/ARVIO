@@ -158,6 +158,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -203,6 +204,9 @@ import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
 import com.arflix.tv.data.model.CatalogPackManifest
 import com.arflix.tv.data.model.effectivePackId
+import com.arflix.tv.data.model.isRemovable
+import com.arflix.tv.data.model.needsConfiguration
+import com.arflix.tv.data.model.settingsPageUrl
 import com.arflix.tv.data.model.effectivePackName
 import com.arflix.tv.data.model.isBulkDeletablePack
 import com.arflix.tv.data.model.CatalogSourceType
@@ -511,6 +515,7 @@ fun SettingsScreen(
     autoStartCloudAuth: Boolean = false,
     initialSection: String? = null,
     installPackUrl: String? = null,
+    installAddonUrl: String? = null,
     onNavigateToHome: () -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
     onNavigateToTv: () -> Unit = {},
@@ -574,7 +579,11 @@ fun SettingsScreen(
     var sectionIndex by remember { mutableIntStateOf(initialSectionIdx ?: 0) }
     var mobilePage by remember {
         mutableStateOf(
-            if (initialSection == "iptv") "TV" else "MAIN"
+            when (initialSection) {
+                "iptv" -> "TV"
+                "stremio" -> "Addons"
+                else -> "MAIN"
+            }
         )
     }
     val currentOnSubPageChanged by rememberUpdatedState(onSubPageChanged)
@@ -625,6 +634,17 @@ fun SettingsScreen(
             viewModel.loadPackManifest(installPackUrl)
         }
     }
+
+    // Saved so the link is not offered again when the user comes back to this screen.
+    var handledInstallAddonUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(installAddonUrl) {
+        if (!installAddonUrl.isNullOrBlank() && installAddonUrl != handledInstallAddonUrl) {
+            handledInstallAddonUrl = installAddonUrl
+            viewModel.requestAddonInstall(installAddonUrl, fromLink = true)
+        }
+    }
+    // TV only: the addon whose settings page is shown as a QR code.
+    var addonConfigureTarget by remember { mutableStateOf<com.arflix.tv.data.model.Addon?>(null) }
 
     // Input modal states
     var showCustomAddonInput by remember { mutableStateOf(false) }
@@ -952,6 +972,7 @@ fun SettingsScreen(
         uiState.traktCode != null ||
         uiState.simklUserCode != null ||
         uiState.mdbListCode != null ||
+        uiState.showMdbListApiKeyDialog ||
         uiState.plexHomeServerAuth != null ||
         uiState.showAppUpdateDialog ||
         uiState.showUnknownSourcesDialog ||
@@ -1042,16 +1063,9 @@ fun SettingsScreen(
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
                     val focusedStremioAddon = stremioAddons.getOrNull(contentFocusIndex)
-                    val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
-                        !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
-                    } ?: false
-                    val focusedStremioAddonMaxAction = if (focusedStremioAddon == null) {
-                        0
-                    } else if (focusedStremioAddonCanDelete) {
-                        1
-                    } else {
-                        0
-                    }
+                    val focusedStremioAddonMaxAction = focusedStremioAddon
+                        ?.let { addonRowActions(it).size - 1 }
+                        ?: 0
 
                     val isRtl = isRtlLayoutDirection
                     val actualKey = event.key
@@ -1680,10 +1694,9 @@ fun SettingsScreen(
                                             when {
                                                 contentFocusIndex in 0 until stremioAddons.size -> {
                                                     val addon = stremioAddons[contentFocusIndex]
-                                                    val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
-                                                    when (addonActionIndex) {
-                                                        0 -> viewModel.toggleAddon(addon.id)
-                                                        1 -> if (canDelete) {
+                                                    when (addonRowActions(addon).getOrNull(addonActionIndex)) {
+                                                        AddonRowAction.CONFIGURE -> addonConfigureTarget = addon
+                                                        AddonRowAction.DELETE -> {
                                                             viewModel.removeAddon(addon.id)
                                                             addonActionIndex = 0
                                                             if (contentFocusIndex >= stremioAddons.size && contentFocusIndex > 0) {
@@ -2206,6 +2219,7 @@ fun SettingsScreen(
                             onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                             onManageStalkerCategories = { id -> openIptvCategories(id) },
                             onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                            accountInfo = uiState.iptvAccountInfo,
                             onEditPlaylist = { idx -> editingIptvIndex = idx; showIptvInput = true },
                             onTogglePlaylist = { idx ->
                                 val updated = uiState.iptvPlaylists.toMutableList()
@@ -2234,7 +2248,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -2269,6 +2283,7 @@ fun SettingsScreen(
                             onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                             onManageStalkerCategories = { id -> openIptvCategories(id) },
                             onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                            accountInfo = uiState.iptvAccountInfo,
                             onEditPlaylist = { idx -> editingIptvIndex = idx; showIptvInput = true },
                             onTogglePlaylist = { idx ->
                                 val updated = uiState.iptvPlaylists.toMutableList()
@@ -2297,7 +2312,7 @@ fun SettingsScreen(
                                     viewModel.saveIptvPlaylists(updated)
                                 }
                             },
-                            onRefresh = { viewModel.refreshIptv() },
+                            onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
@@ -2372,6 +2387,7 @@ fun SettingsScreen(
                             focusedActionIndex = addonActionIndex,
                             onToggleAddon = { viewModel.toggleAddon(it) },
                             onDeleteAddon = { viewModel.removeAddon(it) },
+                            onConfigureAddon = { addonConfigureTarget = it },
                             onAddCustomAddon = { showCustomAddonInput = true },
                             onRefreshAddons = { viewModel.refreshAddons() }
                         )
@@ -2606,6 +2622,21 @@ fun SettingsScreen(
                 editingPlaylist?.importSeries ?: true
             }
             val playlistEnabled = editingPlaylist?.enabled ?: true
+            // Account details belong to the saved source, so only an existing one offers "Refresh now".
+            val accountSourceId = when {
+                isEditingStalker -> editingStalkerPortal?.id
+                isEditingIptv -> editingPlaylist?.id
+                else -> null
+            }
+            val accountFingerprint = when {
+                isEditingStalker -> editingStalkerPortal?.let { com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(it) }
+                isEditingIptv -> editingPlaylist?.let { com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(it) }
+                else -> null
+            }
+            val accountInfo = accountSourceId
+                ?.let { uiState.iptvAccountInfo[it] }
+                ?.takeIf { it.sourceFingerprint == accountFingerprint }
+            val accountCheckedAtLabel = iptvAccountCheckedAtLabel(accountInfo?.checkedAtMs)
 
             key(
                 if (showStalkerInput) "stalker_${stalkerEditId ?: "new"}"
@@ -2692,7 +2723,10 @@ fun SettingsScreen(
                         showStalkerInput = false
                         editingIptvIndex = -1
                         stalkerEditId = null
-                    }
+                    },
+                    accountCheckedAtLabel = accountCheckedAtLabel,
+                    isAccountRefreshing = accountSourceId != null && accountSourceId in uiState.iptvAccountInfoRefreshing,
+                    onRefreshAccount = accountSourceId?.let { id -> { viewModel.refreshIptvAccountInfo(id) } }
                 )
             }
         }
@@ -2779,6 +2813,27 @@ fun SettingsScreen(
                     catalogPackInputUrl = ""
                     showCatalogPackInput = false
                 }
+            )
+        }
+
+        if (uiState.pendingAddonInstall != null || uiState.isAddonInstallLoading) {
+            AddonInstallDialog(
+                pending = uiState.pendingAddonInstall,
+                isLoading = uiState.isAddonInstallLoading,
+                onInstall = { viewModel.confirmAddonInstall(replaceExisting = false) },
+                onReplace = { viewModel.confirmAddonInstall(replaceExisting = true) },
+                onKeepBoth = { viewModel.confirmAddonInstall(replaceExisting = false) },
+                onDismiss = { viewModel.cancelAddonInstall() }
+            )
+        }
+
+        val configureTarget = addonConfigureTarget
+        val configureTargetUrl = configureTarget?.settingsPageUrl
+        if (configureTarget != null && configureTargetUrl != null) {
+            AddonConfigureQrDialog(
+                addon = configureTarget,
+                url = configureTargetUrl,
+                onDismiss = { addonConfigureTarget = null }
             )
         }
 
@@ -3035,6 +3090,16 @@ fun SettingsScreen(
             TraktActivationModal(
                 verificationUrl = traktCode.verificationUrl,
                 userCode = traktCode.userCode,
+                // Same split Plex already makes: the TV tells you to scan, the phone tells you to
+                // tap. Deliberately service-neutral names so SIMKL can reuse them.
+                instruction = if (LocalDeviceType.current.isTouchDevice()) {
+                    stringResource(R.string.settings_activation_instruction_touch)
+                } else {
+                    stringResource(
+                        R.string.settings_activation_instruction_tv,
+                        traktCode.verificationUrl
+                    )
+                },
                 onOpenUrl = {
                     openExternalUrl(
                         context,
@@ -3043,6 +3108,10 @@ fun SettingsScreen(
                 },
                 openUrlLabel = stringResource(R.string.settings_open_trakt_page),
                 showCopyCode = false,
+                qrData = traktActivationUrl(traktCode.verificationUrl, traktCode.userCode),
+                expiresAtMillis = uiState.traktCodeExpiresAtMillis,
+                outcome = uiState.traktAuthOutcome,
+                onRetry = { viewModel.startTraktAuth() },
                 onDismiss = { viewModel.cancelTraktAuth() }
             )
         }
@@ -3169,7 +3238,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ModalScrim(
+internal fun ModalScrim(
     onDismiss: () -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
@@ -4195,7 +4264,11 @@ private fun TraktActivationModal(
     openUrlLabel: String? = null,
     showCopyCode: Boolean = true,
     secondaryActionLabel: String? = null,
-    onSecondaryAction: (() -> Unit)? = null
+    onSecondaryAction: (() -> Unit)? = null,
+    qrData: String? = null,
+    expiresAtMillis: Long? = null,
+    outcome: TraktAuthOutcome? = null,
+    onRetry: (() -> Unit)? = null
 ) {
     val resolvedTitle = title ?: stringResource(R.string.settings_connect_trakt)
     val resolvedInstruction = instruction ?: stringResource(R.string.settings_trakt_instruction, verificationUrl)
@@ -4203,13 +4276,45 @@ private fun TraktActivationModal(
     val accentColor = resolveAccentColor(fallback = Pink)
     val accentContentColor = contrastingContentColor(accentColor)
     val focusRequester = remember { FocusRequester() }
+    val retryFocusRequester = remember { FocusRequester() }
+    val cancelFocusRequester = remember { FocusRequester() }
+    val hasSecondaryAction = !secondaryActionLabel.isNullOrBlank() && onSecondaryAction != null
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val qrContainerSize = if (isMobile) 0.dp else 172.dp
+    val qrContainerSize = if (isMobile) 0.dp else 224.dp
     val qrBitmapSizePx = if (isMobile) 0 else 512
+    // Services that can embed the user code in the QR payload pass it via [qrData]; everyone
+    // else keeps scanning the bare verification URL.
+    val qrPayload = qrData?.takeIf { it.isNotBlank() } ?: verificationUrl
     val clipboardManager = LocalClipboardManager.current
+    // Only callers that know when their code dies pass [expiresAtMillis]. Without it neither the
+    // countdown nor the progress bar is drawn, so the SIMKL and Plex dialogs look as before.
+    val totalMillis = remember(expiresAtMillis) {
+        expiresAtMillis?.let { (it - System.currentTimeMillis()).coerceAtLeast(1L) }
+    }
+    var remainingMillis by remember(expiresAtMillis) {
+        mutableLongStateOf(totalMillis ?: 0L)
+    }
 
-    LaunchedEffect(userCode) {
-        focusRequester.requestFocus()
+    if (expiresAtMillis != null) {
+        LaunchedEffect(expiresAtMillis) {
+            while (true) {
+                remainingMillis = (expiresAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+                if (remainingMillis <= 0L) break
+                kotlinx.coroutines.delay(1_000L)
+            }
+        }
+    }
+
+    // The dialog grabs focus for the code; once it turns into the expired panel the retry button
+    // has to take over, or the remote would have nothing to act on.
+    LaunchedEffect(userCode, outcome, hasSecondaryAction) {
+        if (outcome == TraktAuthOutcome.EXPIRED) {
+            runCatching { retryFocusRequester.requestFocus() }
+        } else if (hasSecondaryAction && !isMobile) {
+            runCatching { cancelFocusRequester.requestFocus() }
+        } else {
+            runCatching { focusRequester.requestFocus() }
+        }
     }
 
     androidx.compose.ui.window.Dialog(
@@ -4240,8 +4345,14 @@ private fun TraktActivationModal(
                                 true
                             }
                             Key.Enter, Key.DirectionCenter -> {
-                                onDismiss()
-                                true
+                                // The expired panel has its own buttons; swallowing OK here
+                                // would dismiss the dialog instead of retrying.
+                                if (outcome == TraktAuthOutcome.EXPIRED || hasSecondaryAction) {
+                                    false
+                                } else {
+                                    onDismiss()
+                                    true
+                                }
                             }
                             else -> false
                         }
@@ -4252,55 +4363,211 @@ private fun TraktActivationModal(
                     style = ArflixTypography.sectionTitle,
                     color = TextPrimary
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = resolvedInstruction,
-                    style = ArflixTypography.body,
-                    color = TextSecondary
-                )
+                if (outcome == null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = resolvedInstruction,
+                        style = ArflixTypography.body,
+                        color = TextSecondary
+                    )
+                }
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(24.dp)
-                ) {
-                    if (!isMobile && verificationUrl.isNotBlank()) {
+                if (outcome != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        val isConnected = outcome == TraktAuthOutcome.CONNECTED
                         Box(
                             modifier = Modifier
-                                .size(qrContainerSize)
-                                .background(Color.White, RoundedCornerShape(14.dp))
-                                .padding(12.dp),
+                                .size(48.dp)
+                                .background(
+                                    if (isConnected) {
+                                        Color(0xFF4CAF50) // Green checkmark
+                                    } else {
+                                        Color.White.copy(alpha = 0.08f)
+                                    },
+                                    RoundedCornerShape(percent = 50)
+                                )
+                                .then(
+                                    if (isConnected) {
+                                        Modifier
+                                    } else {
+                                        Modifier.border(
+                                            1.dp,
+                                            TextPrimary.copy(alpha = 0.24f),
+                                            RoundedCornerShape(percent = 50)
+                                        )
+                                    }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
-                            QrCodeImage(
-                                data = verificationUrl,
-                                sizePx = qrBitmapSizePx,
-                                modifier = Modifier.fillMaxSize(),
-                                foreground = android.graphics.Color.BLACK,
-                                background = android.graphics.Color.WHITE
+                            Icon(
+                                imageVector = if (isConnected) {
+                                    Icons.Default.Check
+                                } else {
+                                    Icons.Default.Schedule
+                                },
+                                contentDescription = null,
+                                tint = if (isConnected) {
+                                    BackgroundElevated
+                                } else {
+                                    TextPrimary.copy(alpha = 0.70f)
+                                },
+                                modifier = Modifier.size(if (isConnected) 26.dp else 24.dp)
                             )
                         }
+                        Text(
+                            text = stringResource(
+                                if (isConnected) {
+                                    R.string.settings_trakt_connected
+                                } else {
+                                    R.string.settings_trakt_code_expired
+                                }
+                            ),
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
+                        )
                     }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        if (!isMobile && qrPayload.isNotBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .size(qrContainerSize)
+                                    .background(Color.White, RoundedCornerShape(14.dp))
+                                    .padding(12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                QrCodeImage(
+                                    data = qrPayload,
+                                    sizePx = qrBitmapSizePx,
+                                    modifier = Modifier.fillMaxSize(),
+                                    foreground = android.graphics.Color.BLACK,
+                                    background = android.graphics.Color.WHITE
+                                )
+                            }
+                        }
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = userCode,
-                            style = ArflixTypography.heroTitle.copy(fontSize = 42.sp),
-                            color = accentColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = stringResource(R.string.settings_waiting_for_authorization),
-                            style = ArflixTypography.caption,
-                            color = TextSecondary.copy(alpha = 0.78f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = userCode,
+                                style = ArflixTypography.heroTitle.copy(fontSize = 42.sp),
+                                color = accentColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.settings_waiting_for_authorization),
+                                    style = ArflixTypography.caption,
+                                    color = TextSecondary.copy(alpha = 0.78f),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (totalMillis != null) {
+                                    val remainingSeconds = remainingMillis / 1000L
+                                    Text(
+                                        text = "%d:%02d".format(
+                                            remainingSeconds / 60,
+                                            remainingSeconds % 60
+                                        ),
+                                        style = ArflixTypography.caption.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontFeatureSettings = "tnum"
+                                        ),
+                                        color = TextSecondary.copy(alpha = 0.78f)
+                                    )
+                                }
+                            }
+                            if (totalMillis != null) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .background(
+                                            Color.White.copy(alpha = 0.20f),
+                                            RoundedCornerShape(percent = 50)
+                                        )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(
+                                                (remainingMillis.toFloat() / totalMillis.toFloat())
+                                                    .coerceIn(0f, 1f)
+                                            )
+                                            .fillMaxHeight()
+                                            .background(accentColor, RoundedCornerShape(percent = 50))
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
+                if (outcome == TraktAuthOutcome.CONNECTED) {
+                    // Nothing to do here: the dialog closes itself in two seconds.
+                    return@Column
+                }
+
                 Spacer(modifier = Modifier.height(28.dp))
+
+                if (outcome == TraktAuthOutcome.EXPIRED) {
+                    if (isMobile) {
+                        ActivationDialogButton(
+                            label = stringResource(R.string.retry),
+                            isPrimary = true,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = true,
+                            focusRequester = retryFocusRequester,
+                            onClick = { onRetry?.invoke() }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        ActivationDialogButton(
+                            label = stringResource(R.string.cancel),
+                            isPrimary = false,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = true,
+                            focusRequester = null,
+                            onClick = onDismiss
+                        )
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ActivationDialogButton(
+                                label = stringResource(R.string.retry),
+                                isPrimary = true,
+                                accentColor = accentColor,
+                                accentContentColor = accentContentColor,
+                                fillWidth = false,
+                                focusRequester = retryFocusRequester,
+                                onClick = { onRetry?.invoke() }
+                            )
+                            ActivationDialogButton(
+                                label = stringResource(R.string.cancel),
+                                isPrimary = false,
+                                accentColor = accentColor,
+                                accentContentColor = accentContentColor,
+                                fillWidth = false,
+                                focusRequester = null,
+                                onClick = onDismiss
+                            )
+                        }
+                    }
+                    return@Column
+                }
 
                 if (isMobile && onOpenUrl != null) {
                     Box(
@@ -4366,34 +4633,24 @@ private fun TraktActivationModal(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .background(accentColor, RoundedCornerShape(10.dp))
-                                .clickable { onDismiss() }
-                                .padding(vertical = 12.dp, horizontal = 18.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = stringResource(R.string.cancel),
-                                style = ArflixTypography.button,
-                                color = accentContentColor
-                            )
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
-                                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                                .clickable { onSecondaryAction() }
-                                .padding(vertical = 12.dp, horizontal = 18.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = secondaryActionLabel,
-                                style = ArflixTypography.button,
-                                color = Color.White
-                            )
-                        }
+                        ActivationDialogButton(
+                            label = stringResource(R.string.cancel),
+                            isPrimary = true,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = false,
+                            focusRequester = cancelFocusRequester,
+                            onClick = onDismiss
+                        )
+                        ActivationDialogButton(
+                            label = secondaryActionLabel,
+                            isPrimary = false,
+                            accentColor = accentColor,
+                            accentContentColor = accentContentColor,
+                            fillWidth = false,
+                            focusRequester = null,
+                            onClick = onSecondaryAction
+                        )
                     }
                 } else {
                     Box(
@@ -4415,6 +4672,74 @@ private fun TraktActivationModal(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A button for the activation dialog's expired panel. It draws its own focus ring because the
+ * dialog stops handling the OK key once two buttons compete for it, so the remote user has to see
+ * which one is selected.
+ */
+@Composable
+private fun ActivationDialogButton(
+    label: String,
+    isPrimary: Boolean,
+    accentColor: Color,
+    accentContentColor: Color,
+    fillWidth: Boolean,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+            .then(
+                if (isFocused) {
+                    Modifier.border(3.dp, Color.White, RoundedCornerShape(13.dp))
+                } else {
+                    Modifier
+                }
+            )
+            .padding(3.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+                .background(
+                    if (isPrimary) accentColor else Color.White.copy(alpha = 0.08f),
+                    RoundedCornerShape(10.dp)
+                )
+                .then(
+                    if (isPrimary) {
+                        Modifier
+                    } else {
+                        Modifier.border(
+                            1.dp,
+                            Color.White.copy(alpha = 0.14f),
+                            RoundedCornerShape(10.dp)
+                        )
+                    }
+                )
+                .then(
+                    if (focusRequester != null) {
+                        Modifier.focusRequester(focusRequester)
+                    } else {
+                        Modifier
+                    }
+                )
+                .onFocusChanged { isFocused = it.isFocused }
+                .clickable { onClick() }
+                .padding(vertical = 12.dp, horizontal = 18.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = ArflixTypography.button,
+                color = if (isPrimary) accentContentColor else TextPrimary
+            )
         }
     }
 }
@@ -5568,6 +5893,7 @@ private fun MobileSettingsSubPage(
                     onRemoveStalkerPortal = { id -> viewModel.onRemoveStalkerPortal(id) },
                     onManageStalkerCategories = { id -> viewModel.setIptvSelectedPlaylistId(id); onNavigate("IPTV_CATEGORIES") },
                     onRenameStalkerPortal = { portal -> stalkerRenameId = portal.id; stalkerRenameName = portal.name; showStalkerRename = true },
+                    accountInfo = uiState.iptvAccountInfo,
                     onEditPlaylist = onEditIptvClick,
                     onTogglePlaylist = { idx ->
                         val updated = uiState.iptvPlaylists.toMutableList()
@@ -5596,7 +5922,7 @@ private fun MobileSettingsSubPage(
                             viewModel.saveIptvPlaylists(updated)
                         }
                     },
-                    onRefresh = { viewModel.refreshIptv() },
+                    onRefresh = { viewModel.refreshIptvAndAccountInfo() },
                     onDelete = { viewModel.clearIptvConfig() },
                     onManageCategories = { playlistId ->
                         viewModel.setIptvSelectedPlaylistId(playlistId)
@@ -7873,6 +8199,7 @@ private fun IptvSettings(
     onRemoveStalkerPortal: (String) -> Unit = {},
     onManageStalkerCategories: (String) -> Unit = {},
     onRenameStalkerPortal: (StalkerPortalEntry) -> Unit = {},
+    accountInfo: Map<String, com.arflix.tv.data.repository.IptvAccountInfo> = emptyMap(),
     vodSearchEnabled: Boolean = true,
     onVodSearchToggle: (Boolean) -> Unit = {},
     epgVodActionsEnabled: Boolean = true,
@@ -7950,7 +8277,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(buildString { append(playlist.m3uUrl.take(56)); when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
@@ -8004,7 +8331,7 @@ private fun IptvSettings(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
@@ -8116,7 +8443,7 @@ private fun IptvSettings(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(buildString { append(playlist.m3uUrl.take(56)); when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary.copy(alpha = 0.72f))
                     }
                     CatalogActionChip(
                         icon = Icons.Default.List,
@@ -8170,7 +8497,7 @@ private fun IptvSettings(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == rowIndex) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary.copy(alpha = 0.72f))
                         }
                         CatalogActionChip(
                             icon = Icons.Default.List,
@@ -9485,10 +9812,12 @@ private fun StremioAddonsSettings(
     focusedActionIndex: Int = 0,
     onToggleAddon: (String) -> Unit = {},
     onDeleteAddon: (String) -> Unit = {},
+    onConfigureAddon: (com.arflix.tv.data.model.Addon) -> Unit = {},
     onAddCustomAddon: () -> Unit = {},
     onRefreshAddons: () -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
+    val context = LocalContext.current
 
     if (isMobile) {
         Column(
@@ -9525,21 +9854,42 @@ private fun StremioAddonsSettings(
                     MobileSettingsRow(icon = Icons.Default.Extension, title = stringResource(R.string.settings_no_addons_installed), value = "", isFocused = false, showDivider = false, onClick = {})
                 } else {
                     addons.forEachIndexed { index, addon ->
-                        val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
+                        val canDelete = addon.isRemovable
+                        val settingsUrl = addon.settingsPageUrl
+                        val needsSetup = addon.needsConfiguration && !addon.isEnabled
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { onToggleAddon(addon.id) }.padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(imageVector = Icons.Default.Extension, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
+                            AddonLogo(addon = addon, size = 32.dp, fallbackTint = TextSecondary)
+                            Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(addon.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(addon.description, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (needsSetup) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    AddonSetupRequiredChip()
+                                } else {
+                                    Text(addon.description, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
-                            // Toggle switch
-                            Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
-                                Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                            if (needsSetup && settingsUrl != null) {
+                                // Replaces the toggle: it cannot be switched on before setup anyway,
+                                // and the row is too narrow on phones for both.
+                                Box(modifier = Modifier.clickable { openExternalUrl(context, settingsUrl) }.background(AddonSetupRequiredColor, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 7.dp), contentAlignment = Alignment.Center) {
+                                    Text(stringResource(R.string.settings_addon_setup), style = ArflixTypography.button.copy(fontSize = 13.sp), color = Color.Black, maxLines = 1)
+                                }
+                            } else {
+                                // Toggle switch
+                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                }
+                            }
+                            if (settingsUrl != null && !needsSetup) {
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Box(modifier = Modifier.size(32.dp).clickable { openExternalUrl(context, settingsUrl) }.background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_addon_configure), tint = TextSecondary, modifier = Modifier.size(18.dp))
+                                }
                             }
                             if (canDelete) {
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -9563,13 +9913,12 @@ private fun StremioAddonsSettings(
                 Text(stringResource(R.string.settings_no_addons_installed), style = ArflixTypography.body, color = TextSecondary)
             } else {
                 addons.forEachIndexed { index, addon ->
-                    val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
                     AddonRow(
                         addon = addon,
                         isFocused = focusedIndex == index,
                         focusedAction = if (focusedIndex == index) focusedActionIndex else -1,
-                        canDelete = canDelete,
                         onToggle = { onToggleAddon(addon.id) },
+                        onConfigure = { onConfigureAddon(addon) },
                         onDelete = { onDeleteAddon(addon.id) },
                         modifier = Modifier.settingsFocusSlot(index)
                     )
@@ -9648,14 +9997,18 @@ private fun AddonRow(
     addon: com.arflix.tv.data.model.Addon,
     isFocused: Boolean,
     focusedAction: Int = -1,
-    canDelete: Boolean = true,
     onToggle: () -> Unit,
+    onConfigure: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isToggleFocused = isFocused && focusedAction == 0
-    val isDeleteFocused = canDelete && isFocused && focusedAction == 1
+    val actions = addonRowActions(addon)
+    val focusedRowAction = if (isFocused) actions.getOrNull(focusedAction) else null
+    val isToggleFocused = focusedRowAction == AddonRowAction.TOGGLE
+    val isConfigureFocused = focusedRowAction == AddonRowAction.CONFIGURE
+    val isDeleteFocused = focusedRowAction == AddonRowAction.DELETE
     val isEnabled = addon.isEnabled
+    val needsSetup = addon.needsConfiguration && !isEnabled
     val focusRingColor = resolveAccentColor(fallback = Pink)
 
     Row(
@@ -9685,12 +10038,7 @@ private fun AddonRow(
                     .background(Pink.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Widgets,
-                    contentDescription = null,
-                    tint = Pink,
-                    modifier = Modifier.size(24.dp)
-                )
+                AddonLogo(addon = addon, size = 32.dp, fallbackTint = Pink)
             }
 
             Spacer(modifier = Modifier.width(16.dp))
@@ -9722,6 +10070,13 @@ private fun AddonRow(
                         background = if (isEnabled) SuccessGreen.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.08f),
                         textColor = if (isEnabled) SuccessGreen else TextSecondary
                     )
+                    if (needsSetup) {
+                        AddonStatusChip(
+                            text = stringResource(R.string.settings_addon_setup_required),
+                            background = AddonSetupRequiredColor,
+                            textColor = Color.Black
+                        )
+                    }
                 }
             }
         }
@@ -9761,7 +10116,15 @@ private fun AddonRow(
                 }
             }
 
-            if (canDelete) {
+            if (AddonRowAction.CONFIGURE in actions) {
+                CatalogActionChip(
+                    icon = Icons.Default.Settings,
+                    isFocused = isConfigureFocused,
+                    onClick = onConfigure
+                )
+            }
+
+            if (AddonRowAction.DELETE in actions) {
                 CatalogActionChip(
                     icon = Icons.Default.Delete,
                     isFocused = isDeleteFocused,

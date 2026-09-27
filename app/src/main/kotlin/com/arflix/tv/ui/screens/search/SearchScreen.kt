@@ -358,6 +358,8 @@ fun SearchScreen(
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                // Back from a title's page: whatever was watched there gets its tick here too.
+                viewModel.refreshWatchedMarks()
                 isSearchEditing = false
                 keyboardController?.hide()
                 suppressSelectUntilMs = SystemClock.elapsedRealtime() + SEARCH_SELECT_SUPPRESS_MS

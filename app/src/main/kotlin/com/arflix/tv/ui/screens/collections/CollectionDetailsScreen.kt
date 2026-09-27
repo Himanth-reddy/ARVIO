@@ -88,6 +88,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -105,6 +106,9 @@ private const val COLLECTION_LOAD_FAILED_ERROR = "__collection_load_failed__"
 
 /** Same sentinel mechanism as [COLLECTION_LOAD_FAILED_ERROR], for an unknown collection id. */
 private const val COLLECTION_NOT_FOUND_ERROR = "__collection_not_found__"
+
+/** Prefix for an empty collection whose add-on sources are missing; the add-on ids follow it. */
+private const val COLLECTION_MISSING_ADDON_PREFIX = "__collection_missing_addon__:"
 
 data class CollectionDetailsUiState(
     val catalog: CatalogConfig? = null,
@@ -235,6 +239,24 @@ class CollectionDetailsViewModel @Inject constructor(
             CollectionTab.MOVIES -> page?.items.orEmpty().filter { it.mediaType == MediaType.MOVIE }
             CollectionTab.SERIES -> page?.items.orEmpty().filter { it.mediaType == MediaType.TV }
         }
+        val missingAddons = if (page != null && pageItems.isEmpty() &&
+            !SportsAddonCapabilities.isSportsCollectionCatalogId(catalog.id)
+        ) {
+            try {
+                mediaRepository.missingCollectionAddons(catalogForTab(catalog, tab))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+        val pageError = when {
+            page == null -> COLLECTION_LOAD_FAILED_ERROR
+            missingAddons.isNotEmpty() -> COLLECTION_MISSING_ADDON_PREFIX + missingAddons.joinToString(", ")
+            else -> null
+        }
         val decoratedCatalog = decorateSportsCatalogWithArtwork(catalog, pageItems)
         _uiState.value = when (tab) {
             CollectionTab.MOVIES -> _uiState.value.copy(
@@ -242,16 +264,16 @@ class CollectionDetailsViewModel @Inject constructor(
                 movieItems = pageItems,
                 isLoadingMovies = false,
                 hasMoreMovies = page?.hasMore == true,
-                loadedMovieOffset = pageItems.size,
-                error = _uiState.value.error ?: if (page == null) COLLECTION_LOAD_FAILED_ERROR else null
+                loadedMovieOffset = page?.nextOffset ?: pageItems.size,
+                error = _uiState.value.error ?: pageError
             )
             CollectionTab.SERIES -> _uiState.value.copy(
                 catalog = decoratedCatalog,
                 seriesItems = pageItems,
                 isLoadingSeries = false,
                 hasMoreSeries = page?.hasMore == true,
-                loadedSeriesOffset = pageItems.size,
-                error = _uiState.value.error ?: if (page == null) COLLECTION_LOAD_FAILED_ERROR else null
+                loadedSeriesOffset = page?.nextOffset ?: pageItems.size,
+                error = _uiState.value.error ?: pageError
             )
         }
         preloadLogos(pageItems.take(2))
@@ -300,13 +322,13 @@ class CollectionDetailsViewModel @Inject constructor(
                     movieItems = state.movieItems + uniqueNew,
                     isLoadingMoreMovies = false,
                     hasMoreMovies = next?.hasMore == true,
-                    loadedMovieOffset = state.loadedMovieOffset + freshItems.size
+                    loadedMovieOffset = next?.nextOffset ?: (state.loadedMovieOffset + freshItems.size)
                 )
                 CollectionTab.SERIES -> _uiState.value.copy(
                     seriesItems = state.seriesItems + uniqueNew,
                     isLoadingMoreSeries = false,
                     hasMoreSeries = next?.hasMore == true,
-                    loadedSeriesOffset = state.loadedSeriesOffset + freshItems.size
+                    loadedSeriesOffset = next?.nextOffset ?: (state.loadedSeriesOffset + freshItems.size)
                 )
             }
             preloadLogos(uniqueNew)
@@ -394,7 +416,10 @@ class CollectionDetailsViewModel @Inject constructor(
             mediaRepository.loadCollectionCatalogPage(
                 catalogForTab(catalog, tab),
                 offset = offset,
-                limit = limit
+                limit = limit,
+                // Lists without a per-source type (MDBList, Trakt, TMDB lists) mix movies and
+                // series; page through this tab's type only, or the tab stalls on pages of the other.
+                mediaType = if (tab == CollectionTab.MOVIES) MediaType.MOVIE else MediaType.TV
             )
         }
     }
@@ -684,11 +709,18 @@ fun CollectionDetailsScreen(
             onNearEnd = { viewModel.loadMoreIfNeeded(activeTab) },
             isLoading = isTabLoading,
             isLoadingMore = isTabLoadingMore,
-            emptyMessage = when (uiState.error) {
+            emptyMessage = when (val error = uiState.error) {
                 null -> stringResource(R.string.collection_empty)
                 COLLECTION_LOAD_FAILED_ERROR -> stringResource(R.string.collection_failed_load)
                 COLLECTION_NOT_FOUND_ERROR -> stringResource(R.string.collection_not_found)
-                else -> uiState.error!!
+                else -> if (error != null && error.startsWith(COLLECTION_MISSING_ADDON_PREFIX)) {
+                    stringResource(
+                        R.string.collection_missing_addon,
+                        error.removePrefix(COLLECTION_MISSING_ADDON_PREFIX)
+                    )
+                } else {
+                    error.orEmpty()
+                }
             },
             topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 22.dp else 10.dp
         )
