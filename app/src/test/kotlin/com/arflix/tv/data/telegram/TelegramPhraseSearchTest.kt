@@ -1,6 +1,9 @@
 package com.arflix.tv.data.telegram
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -34,6 +37,50 @@ class TelegramPhraseSearchTest {
         TelegramSearchPage(videos.toList(), answered = true, hasMore = hasMore)
 
     private val unanswered = TelegramSearchPage(emptyList(), answered = false, hasMore = false)
+
+    @Test
+    fun `completed query publishes results even when its sibling times out`() = runTest {
+        val found = mutableListOf<List<TelegramVideoMessage>>()
+        var stalledCancelled = false
+        val outcome = withTimeoutOrNull(100) {
+            TelegramPhraseSearch(fetchPage = { query, _ ->
+                if (query == "slow") {
+                    try { awaitCancellation() } finally { stalledCancelled = true }
+                } else answered(video("Show.S01E04.mkv"))
+            }).run(
+                core = listOf("slow", "fast"), fallback = emptyList(),
+                keep = { true }, matches = episodeMatcher,
+                onMatchedGrew = { found += it }
+            )
+        }
+        assertEquals(null, outcome)
+        assertTrue(stalledCancelled)
+        assertEquals(listOf("Show.S01E04.mkv"), found.last().map { it.fileName })
+    }
+
+    @Test
+    fun `answered pages survive a stalled filtered follow-up without duplicate results`() = runTest {
+        val found = mutableListOf<List<TelegramVideoMessage>>()
+        val requests = mutableListOf<TelegramSearchFilter>()
+        val outcome = withTimeoutOrNull(100) {
+            TelegramPhraseSearch(fetchPage = { _, filter ->
+                requests += filter
+                when (filter) {
+                    TelegramSearchFilter.ALL -> answered(video("Show.S01E04.mkv"), hasMore = true)
+                    TelegramSearchFilter.VIDEO -> answered(video("Show.S01E04.mkv"), video("Show.S01E04.720p.mp4"))
+                    TelegramSearchFilter.DOCUMENT -> awaitCancellation()
+                }
+            }).run(
+                core = listOf("show"), fallback = emptyList(),
+                keep = { true }, matches = episodeMatcher,
+                onMatchedGrew = { found += it }
+            )
+        }
+        assertEquals(null, outcome)
+        assertEquals(listOf(TelegramSearchFilter.ALL, TelegramSearchFilter.VIDEO, TelegramSearchFilter.DOCUMENT), requests)
+        assertEquals(2, found.size)
+        assertEquals(listOf("Show.S01E04.mkv", "Show.S01E04.720p.mp4"), found.last().map { it.fileName })
+    }
 
     @Test
     fun `a request Telegram did not answer makes the lookup incomplete but keeps what was found`() = runBlocking {

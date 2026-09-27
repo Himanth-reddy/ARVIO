@@ -3,6 +3,8 @@ package com.arflix.tv.data.telegram
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Which messages a global search page asks Telegram for. */
 enum class TelegramSearchFilter { ALL, VIDEO, DOCUMENT }
@@ -58,25 +60,29 @@ class TelegramPhraseSearch(
         var complete = true
         var phrasingsSent = 0
         var requestsSent = 0
+        val resultsMutex = Mutex()
+
+        suspend fun publish(videos: List<TelegramVideoMessage>) = resultsMutex.withLock {
+            var grew = false
+            for (msg in videos) {
+                if (!keep(msg)) continue
+                val fileKey = msg.fileName to msg.fileSize
+                if (!seen.add(fileKey) || !matches(msg)) continue
+                matched[fileKey] = msg
+                grew = true
+            }
+            if (grew) onMatchedGrew(matched.values.toList())
+        }
 
         suspend fun searchBatch(batch: List<String>) {
             val results = coroutineScope {
-                batch.map { query -> async { searchPhrase(query) } }.awaitAll()
+                batch.map { query -> async { searchPhrase(query, ::publish) } }.awaitAll()
             }
-            var grew = false
             for (result in results) {
                 requestsSent += result.requests
                 if (!result.complete) complete = false
-                for (msg in result.videos) {
-                    if (!keep(msg)) continue
-                    val fileKey = msg.fileName to msg.fileSize
-                    if (!seen.add(fileKey) || !matches(msg)) continue
-                    matched[fileKey] = msg
-                    grew = true
-                }
             }
             phrasingsSent += batch.size
-            if (grew) onMatchedGrew(matched.values.toList())
         }
 
         for (batch in core.chunked(parallelQueries)) searchBatch(batch)
@@ -89,21 +95,25 @@ class TelegramPhraseSearch(
         return Outcome(matched.values.toList(), complete, phrasingsSent, requestsSent, seen.size)
     }
 
-    private class PhraseResult(val videos: List<TelegramVideoMessage>, val complete: Boolean, val requests: Int)
+    private class PhraseResult(val complete: Boolean, val requests: Int)
 
-    private suspend fun searchPhrase(query: String): PhraseResult {
+    private suspend fun searchPhrase(
+        query: String,
+        publish: suspend (List<TelegramVideoMessage>) -> Unit
+    ): PhraseResult {
         val first = fetchPage(query, TelegramSearchFilter.ALL)
-        if (!first.answered) return PhraseResult(emptyList(), complete = false, requests = 1)
-        if (!first.hasMore) return PhraseResult(first.videos, complete = true, requests = 1)
+        if (!first.answered) return PhraseResult(complete = false, requests = 1)
+        // Preserve each answered page even if a sibling query or a filtered follow-up stalls.
+        publish(first.videos)
+        if (!first.hasMore) return PhraseResult(complete = true, requests = 1)
         // The unfiltered page was cut off: ask for the file types themselves.
-        val videos = first.videos.toMutableList()
         var complete = true
         for (filter in listOf(TelegramSearchFilter.VIDEO, TelegramSearchFilter.DOCUMENT)) {
             val page = fetchPage(query, filter)
             if (!page.answered) complete = false
-            videos += page.videos
+            publish(page.videos)
         }
-        return PhraseResult(videos, complete, requests = 3)
+        return PhraseResult(complete, requests = 3)
     }
 }
 
