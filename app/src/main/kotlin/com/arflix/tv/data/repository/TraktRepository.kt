@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -143,6 +144,7 @@ class TraktRepository @Inject constructor(
 
     private fun currentProfileId(): String = profileManager.getProfileIdSync().ifBlank { "default" }
 
+    @Synchronized
     private fun ensureProfileCacheScope() {
         val profileId = currentProfileId()
         if (activeCacheProfileId == profileId) return
@@ -150,13 +152,15 @@ class TraktRepository @Inject constructor(
         clearProfileScopedMemoryCaches(clearPreloaded = false)
     }
 
+    @Synchronized
     private fun clearProfileScopedMemoryCaches(clearPreloaded: Boolean) {
         watchedMoviesCache.clear()
         watchedEpisodesCache.clear()
         episodeWriteGenerations.clear()
         movieWriteGenerations.clear()
         cacheInitialized = false
-        cacheInitializing = false
+        watchedCacheGeneration++
+        watchedCacheReloads.reset()
         showWatchedEpisodesCache.clear()
         showWatchedCacheTime = 0L
         showCompletionCache.clear()
@@ -4835,16 +4839,26 @@ class TraktRepository @Inject constructor(
     private val watchedWriteGeneration = AtomicLong(0L)
     private val episodeWriteGenerations = ConcurrentHashMap<String, Long>()
     private val movieWriteGenerations = ConcurrentHashMap<Int, Long>()
-    private var cacheInitialized = false
-    @Volatile private var cacheInitializing = false
+    @Volatile private var cacheInitialized = false
+    private val watchedCacheLoadMutex = Mutex()
+    // Bumped by every invalidation and profile switch, so a load that started before one does not
+    // mark the cache initialized with data from before it.
+    @Volatile private var watchedCacheGeneration = 0L
+    private val watchedCacheReloads = WatchedCacheReloads()
+
+    /** Emits after the watched cache was reloaded following [invalidateWatchedCache]. */
+    val watchedCacheReloaded: SharedFlow<Unit> get() = watchedCacheReloads.reloads
 
     /**
      * Invalidate watched cache - forces reload on next access
      * Call this after sync operations to pick up new data
      */
+    @Synchronized
     fun invalidateWatchedCache() {
         ensureProfileCacheScope()
         cacheInitialized = false
+        watchedCacheGeneration++
+        watchedCacheReloads.invalidated()
         watchedMoviesCache.clear()
         watchedEpisodesCache.clear()
         episodeWriteGenerations.clear()
@@ -4859,100 +4873,75 @@ class TraktRepository @Inject constructor(
      * so all content appears unwatched (proper profile isolation)
      */
     suspend fun initializeWatchedCache() {
-        ensureProfileCacheScope()
-        if (cacheInitialized) return
-        // Prevent multiple simultaneous initializations
-        if (cacheInitializing) {
-            // Wait for ongoing initialization to complete
-            while (cacheInitializing && !cacheInitialized) {
-                delay(50)
-            }
-            return
-        }
-        cacheInitializing = true
-        try {
-            val readProviders = syncProviderStore.readProviders(
-                com.arflix.tv.data.repository.sync.TrackingFeature.WATCHED
-            )
-            val hasTraktAuth = com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in readProviders &&
-                refreshTokenIfNeeded() != null
-            val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
-
-            // Try to load from Supabase first (works for both Trakt and non-Trakt Cloud profiles)
-            val supabaseMovies = syncService.getWatchedMovies()
-            val supabaseEpisodes = syncService.getWatchedEpisodes()
-
-            // MDBList profiles: also pull watched state marked outside Arvio (e.g. the
-            // MDBList website) so those badges show up. Keys are already cache-compatible.
-            val useMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in readProviders
-            val mdbMovies = if (useMdbList) mdbListRepository.getWatchedMovies() else emptySet()
-            val mdbEpisodes = if (useMdbList) mdbListRepository.getWatchedEpisodes() else emptySet()
-            val useSimkl = com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in readProviders
-            val simklMovies = if (useSimkl) simklSyncService.getWatchedMovies() else emptySet()
-            val simklEpisodes = if (useSimkl) simklSyncService.getWatchedEpisodes() else emptySet()
-
-            // If no Trakt auth AND no Supabase/MDBList data, leave caches empty
-            if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty() &&
-                mdbMovies.isEmpty() && mdbEpisodes.isEmpty() && simklMovies.isEmpty() && simklEpisodes.isEmpty()
-            ) {
-                watchedMoviesCache.clear()
-                watchedMoviesCache.addAll(localSnapshotMovies)
-                watchedEpisodesCache.clear()
-                watchedEpisodesCache.addAll(localSnapshotEpisodes)
-                cacheInitialized = true
-                return
-            }
-
-            // Only fall back to Trakt API if we have Trakt auth and no Supabase data
-            val traktMovies = if (supabaseMovies.isEmpty() && hasTraktAuth) getWatchedMovies() else emptySet()
-            val traktEpisodes = if (supabaseEpisodes.isEmpty() && hasTraktAuth) getWatchedEpisodes() else emptySet()
-
-            watchedMoviesCache.clear()
-            watchedMoviesCache.addAll(localSnapshotMovies)
-            watchedMoviesCache.addAll(if (supabaseMovies.isNotEmpty()) supabaseMovies else traktMovies)
-            watchedMoviesCache.addAll(mdbMovies)
-            watchedMoviesCache.addAll(simklMovies)
-
-            watchedEpisodesCache.clear()
-            watchedEpisodesCache.addAll(localSnapshotEpisodes)
-            watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
-            watchedEpisodesCache.addAll(mdbEpisodes)
-            watchedEpisodesCache.addAll(simklEpisodes)
-
-            cacheInitialized = true
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            // If sync service fails, try direct Trakt load (only if Trakt auth available)
-            try {
+        val profileId = currentProfileId()
+        watchedCacheLoadMutex.withLock {
+            while (true) {
+                if (currentProfileId() != profileId) throw kotlinx.coroutines.CancellationException("Profile changed during watched load")
+                ensureProfileCacheScope()
+                if (cacheInitialized) return
+                val generation = watchedCacheGeneration
+                val writeGeneration = watchedWriteGeneration.get()
+                // Assemble privately. Never publish partial or obsolete results to another profile.
                 val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
-                val hasTraktFallback = refreshTokenIfNeeded() != null
-                if (hasTraktFallback) {
-                    watchedMoviesCache.clear()
-                    watchedMoviesCache.addAll(localSnapshotMovies)
-                    watchedMoviesCache.addAll(getWatchedMovies())
-                    watchedEpisodesCache.clear()
-                    watchedEpisodesCache.addAll(localSnapshotEpisodes)
-                    watchedEpisodesCache.addAll(getWatchedEpisodes())
-                } else {
-                    watchedMoviesCache.clear()
-                    watchedMoviesCache.addAll(localSnapshotMovies)
-                    watchedEpisodesCache.clear()
-                    watchedEpisodesCache.addAll(localSnapshotEpisodes)
+                val movies = localSnapshotMovies.toMutableSet()
+                val episodes = localSnapshotEpisodes.toMutableSet()
+                suspend fun addHistory(loadMovies: suspend () -> Set<Int>, loadEpisodes: suspend () -> Set<String>) {
+                    try {
+                        movies.addAll(loadMovies())
+                        episodes.addAll(loadEpisodes())
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        AppLogger.w("TraktRepository", "Watched source unavailable; retaining other history")
+                    }
                 }
-                cacheInitialized = true
-            } catch (_: Exception) {
-                // No data available - mark as initialized with empty caches
-                cacheInitialized = true
+                val readProviders = syncProviderStore.readProviders(
+                    com.arflix.tv.data.repository.sync.TrackingFeature.WATCHED
+                )
+                val hasTraktAuth = com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in readProviders &&
+                    refreshTokenIfNeeded() != null
+
+                // Try to load from Supabase first (works for both Trakt and non-Trakt Cloud profiles)
+                addHistory({ syncService.getWatchedMovies() }, { syncService.getWatchedEpisodes() })
+
+                // MDBList profiles: also pull watched state marked outside Arvio (e.g. the
+                // MDBList website) so those badges show up. Keys are already cache-compatible.
+                val useMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in readProviders
+                if (useMdbList) addHistory({ mdbListRepository.getWatchedMovies() }, { mdbListRepository.getWatchedEpisodes() })
+                val useSimkl = com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in readProviders
+                if (useSimkl) addHistory({ simklSyncService.getWatchedMovies() }, { simklSyncService.getWatchedEpisodes() })
+
+                // Always read Trakt when it is connected. Without a Supabase account the sync service
+                // only returns what the last full sync kept in memory, and that expands just the 15
+                // most recently watched shows when a show was rewatched - it cannot stand in for the
+                // Trakt history. (With USE_NETLIFY_CLOUD_SYNC the Supabase reads are empty anyway.)
+                if (hasTraktAuth) addHistory({ getWatchedMovies() }, { getWatchedEpisodes() })
+                synchronized(this) {
+                    if (currentProfileId() != profileId) throw kotlinx.coroutines.CancellationException("Profile changed during watched load")
+                    if (generation == watchedCacheGeneration) {
+                        // A local mark made while the network was busy wins over its older response.
+                        movieWriteGenerations.filterValues { it > writeGeneration }.keys.forEach {
+                            if (it in watchedMoviesCache) movies.add(it) else movies.remove(it)
+                        }
+                        episodeWriteGenerations.filterValues { it > writeGeneration }.keys.forEach {
+                            if (it in watchedEpisodesCache) episodes.add(it) else episodes.remove(it)
+                        }
+                        watchedMoviesCache.clear()
+                        watchedMoviesCache.addAll(movies)
+                        watchedEpisodesCache.clear()
+                        watchedEpisodesCache.addAll(episodes)
+                        cacheInitialized = true
+                        watchedCacheReloads.loaded()
+                        return
+                    }
+                }
             }
-        } finally {
-            cacheInitializing = false
         }
     }
 
     /**
      * Update watched cache entry
      */
+    @Synchronized
     private fun updateWatchedCache(tmdbId: Int, season: Int?, episode: Int?, watched: Boolean) {
         ensureProfileCacheScope()
         if (season == null || episode == null) {
