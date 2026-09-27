@@ -3131,12 +3131,29 @@ fun SettingsScreen(
 
         uiState.simklUserCode?.let { simklCode ->
             val verificationUrl = uiState.simklVerificationUrl ?: "https://simkl.com/pin"
+            val isTouch = LocalDeviceType.current.isTouchDevice()
+            val clipboardManager = LocalClipboardManager.current
             TraktActivationModal(
                 title = stringResource(R.string.settings_simkl_connect_title),
-                instruction = stringResource(R.string.settings_activation_visit_instruction, verificationUrl),
+                // Not the shared settings_activation_instruction_* lines: both promise the code
+                // travels with the link or QR, which SIMKL's PIN page does not support.
+                instruction = if (isTouch) {
+                    stringResource(R.string.settings_simkl_instruction_touch, verificationUrl)
+                } else {
+                    stringResource(R.string.settings_activation_visit_instruction, verificationUrl)
+                },
                 verificationUrl = verificationUrl,
                 userCode = simklCode,
-                onDismiss = { viewModel.disconnectSimkl() }
+                // SIMKL's PIN page (auth v1) ignores a code in the link, so unlike Trakt the
+                // phone button copies the code first and the user pastes it on the page.
+                onOpenUrl = {
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(simklCode))
+                    openExternalUrl(context, verificationUrl)
+                },
+                openUrlLabel = stringResource(R.string.settings_simkl_copy_and_open),
+                showCopyCode = false,
+                expiresAtMillis = uiState.simklCodeExpiresAtMillis,
+                onDismiss = { viewModel.cancelSimklAuth() }
             )
         }
 
@@ -4266,7 +4283,7 @@ private fun TraktActivationModal(
     val qrPayload = qrData?.takeIf { it.isNotBlank() } ?: verificationUrl
     val clipboardManager = LocalClipboardManager.current
     // Only callers that know when their code dies pass [expiresAtMillis]. Without it neither the
-    // countdown nor the progress bar is drawn, so the SIMKL and Plex dialogs look as before.
+    // countdown nor the progress bar is drawn, so the Plex dialog looks as before.
     val totalMillis = remember(expiresAtMillis) {
         expiresAtMillis?.let { (it - System.currentTimeMillis()).coerceAtLeast(1L) }
     }
