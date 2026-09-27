@@ -1,19 +1,33 @@
 package com.arflix.tv.ui.components
 
-import com.arflix.tv.ui.motion.*
 
+import androidx.activity.BackEventCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.mutableFloatStateOf
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import com.arflix.tv.ui.theme.appBackgroundDark
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -233,8 +247,94 @@ fun StreamSelector(
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
-    val backMotion = rememberArvioPredictiveBack(enabled = isVisible && isMobile, onCommit = onClose)
-    if (!isMobile) {
+
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    val progressAnimatable = remember { Animatable(0f) }
+    val exitOffsetAnimatable = remember { Animatable(0f) }
+    val exitAlphaAnimatable = remember { Animatable(1f) }
+    var isPredictiveBackActive by remember { mutableStateOf(false) }
+    var isPredictiveBackCommitted by remember { mutableStateOf(false) }
+    var swipeEdge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
+    val targetY = screenHeightPx
+
+    LaunchedEffect(isVisible) {
+        if (!isVisible) {
+            isPredictiveBackActive = false
+            progressAnimatable.snapTo(0f)
+        } else {
+            isPredictiveBackActive = false
+            isPredictiveBackCommitted = false
+            progressAnimatable.snapTo(0f)
+            exitOffsetAnimatable.snapTo(0f)
+            exitAlphaAnimatable.snapTo(1f)
+        }
+    }
+
+    if (isMobile) {
+        PredictiveBackHandler(enabled = isVisible) { progressFlow ->
+            try {
+                isPredictiveBackActive = true
+                isPredictiveBackCommitted = false
+                progressFlow.collect { backEvent ->
+                    swipeEdge = backEvent.swipeEdge
+                    progressAnimatable.snapTo(backEvent.progress)
+                }
+                // Gesture committed!
+                // Smoothly glide off-screen downwards and fade out BEFORE calling onClose(),
+                // so the modal never snaps back to full size / sticks to the top!
+                coroutineScope {
+                    launch {
+                        exitOffsetAnimatable.animateTo(
+                            targetValue = targetY,
+                            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                        )
+                    }
+                    launch {
+                        exitAlphaAnimatable.animateTo(
+                            targetValue = 0f,
+                            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                        )
+                    }
+                    launch {
+                        progressAnimatable.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                        )
+                    }
+                }
+                isPredictiveBackCommitted = true
+                onClose()
+            } catch (e: CancellationException) {
+                // Cancelled gesture: spring smoothly back
+                withContext(NonCancellable) {
+                    try {
+                        progressAnimatable.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            )
+                        )
+                    } finally {
+                        isPredictiveBackActive = false
+                        isPredictiveBackCommitted = false
+                        exitOffsetAnimatable.snapTo(0f)
+                        exitAlphaAnimatable.snapTo(1f)
+                    }
+                }
+            } finally {
+                isPredictiveBackActive = false
+                progressAnimatable.snapTo(0f)
+                if (!isPredictiveBackCommitted) {
+                    exitOffsetAnimatable.snapTo(0f)
+                    exitAlphaAnimatable.snapTo(1f)
+                }
+            }
+        }
+    } else {
         BackHandler(enabled = isVisible) {
             onClose()
         }
@@ -399,20 +499,43 @@ fun StreamSelector(
     val count1080 = remember(streams) {
         streams.count { it.quality.contains("1080p", ignoreCase = true) }
     }
+    val backProgress = progressAnimatable.value
+    val modalScale = if (isPredictiveBackActive) (1f - (backProgress * 0.10f)) else 1f
+    val cornerRadius = if (isPredictiveBackActive) (backProgress * 28).dp else 0.dp
+    val shadowElevation = if (isPredictiveBackActive) (backProgress * 16).dp else 0.dp
+    val direction = if (swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
+    val maxShiftDp = 8.dp
+    val modalXOffset = if (isPredictiveBackActive) (maxShiftDp * (direction * backProgress)) else 0.dp
+    val effectiveAlpha = exitAlphaAnimatable.value * (if (isPredictiveBackActive) (1f - backProgress * 0.15f) else 1f)
+
     AnimatedVisibility(
         visible = isVisible,
-        enter = fadeIn(tween(200)) + slideInVertically(tween(300)) { it / 4 },
-        exit = fadeOut(tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)) + slideOutVertically(tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { it / 4 }
+        enter = if (isMobile) {
+            fadeIn(tween(200)) + slideInVertically(tween(280, easing = FastOutSlowInEasing)) { it }
+        } else {
+            fadeIn(tween(200)) + slideInVertically(tween(300)) { it / 4 }
+        },
+        exit = if (isPredictiveBackCommitted) {
+            ExitTransition.None
+        } else if (isMobile) {
+            fadeOut(tween(250, easing = FastOutSlowInEasing)) + slideOutVertically(tween(280, easing = FastOutSlowInEasing)) { it }
+        } else {
+            fadeOut(tween(220, easing = FastOutSlowInEasing)) + slideOutVertically(tween(250, easing = FastOutSlowInEasing)) { it / 4 }
+        }
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     if (isMobile) {
-                        Color.Black.copy(
-                            alpha = (0.95f * (1f - backMotion.eased * 0.5f))
-                                .coerceIn(0f, 0.95f)
-                        )
+                        if (!isVisible && isPredictiveBackCommitted) {
+                            Color.Transparent
+                        } else {
+                            Color.Black.copy(
+                                alpha = (0.75f * (1f - (if (isPredictiveBackActive) backProgress * 0.35f else 0f)) * exitAlphaAnimatable.value)
+                                    .coerceIn(0f, 0.75f)
+                            )
+                        }
                     } else {
                         Color.Black
                     }
@@ -423,7 +546,30 @@ fun StreamSelector(
                     .fillMaxSize()
                     .focusRequester(focusRequester)
                     .focusable()
-                    .arvioBackModal(backMotion)
+                    .graphicsLayer {
+                        if (isMobile) {
+                            if (!isVisible && isPredictiveBackCommitted) {
+                                alpha = 0f
+                                translationY = targetY
+                            } else if (isPredictiveBackActive) {
+                                scaleX = modalScale
+                                scaleY = modalScale
+                                translationX = modalXOffset.toPx()
+                                translationY = exitOffsetAnimatable.value
+                                alpha = effectiveAlpha
+                                shape = RoundedCornerShape(cornerRadius)
+                                clip = cornerRadius > 0.dp
+                                this.shadowElevation = shadowElevation.toPx()
+                            }
+                        }
+                    }
+                    .background(
+                        if (isMobile) {
+                            appBackgroundDark()
+                        } else {
+                            Color.Transparent
+                        }
+                    )
                     .onKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown) {
                         val isRtl = isRtlLayoutDirection

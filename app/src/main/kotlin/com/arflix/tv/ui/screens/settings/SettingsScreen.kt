@@ -10,13 +10,26 @@ import com.arflix.tv.ui.components.LocalBottomBarInset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
-import com.arflix.tv.ui.motion.*
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import android.content.Context
 import android.content.Intent
@@ -4889,15 +4902,101 @@ private fun MobileSettingsLayout(
     // so sending Back to the main list skips a level and loses the page the user
     // was actually on.
     val backTarget = if (page == "IPTV_CATEGORIES") "TV" else "MAIN"
-    val backMotion = rememberArvioPredictiveBack(enabled = page != "MAIN") {
-        onNavigate(backTarget)
+    val progressAnimatable = remember { Animatable(0f) }
+    val exitOffsetAnimatable = remember { Animatable(0f) }
+    val exitAlphaAnimatable = remember { Animatable(1f) }
+    var isPredictiveBackActive by remember { mutableStateOf(false) }
+    var isPredictiveBackCommitted by remember { mutableStateOf(false) }
+    var swipeEdge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
+
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+
+    val targetX = screenWidthPx
+
+    PredictiveBackHandler(enabled = page != "MAIN") { progressFlow ->
+        try {
+            isPredictiveBackActive = true
+            isPredictiveBackCommitted = false
+            progressFlow.collect { backEvent ->
+                swipeEdge = backEvent.swipeEdge
+                progressAnimatable.snapTo(backEvent.progress)
+            }
+            // User completed back gesture (committed).
+            // Smoothly glide off-screen to the right and fade out BEFORE calling onNavigate(backTarget),
+            // so the card never snaps back to full size / sticks to the screen!
+            coroutineScope {
+                launch {
+                    exitOffsetAnimatable.animateTo(
+                        targetValue = targetX,
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                    )
+                }
+                launch {
+                    exitAlphaAnimatable.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                    )
+                }
+                launch {
+                    progressAnimatable.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                    )
+                }
+            }
+            isPredictiveBackCommitted = true
+            onNavigate(backTarget)
+        } catch (e: CancellationException) {
+            // User cancelled gesture by dragging back to screen edge.
+            // Run spring reset inside NonCancellable so coroutine cancellation does not abort it.
+            withContext(NonCancellable) {
+                try {
+                    progressAnimatable.animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    )
+                } finally {
+                    isPredictiveBackActive = false
+                    isPredictiveBackCommitted = false
+                    exitOffsetAnimatable.snapTo(0f)
+                    exitAlphaAnimatable.snapTo(1f)
+                }
+            }
+        } finally {
+            isPredictiveBackActive = false
+            progressAnimatable.snapTo(0f)
+            if (!isPredictiveBackCommitted) {
+                exitOffsetAnimatable.snapTo(0f)
+                exitAlphaAnimatable.snapTo(1f)
+            }
+        }
     }
+
+    val backProgress = progressAnimatable.value
+    val subPageScale = 1f - (backProgress * 0.10f)
+    val cornerRadius = (backProgress * 28).dp
+    val direction = if (swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
+    val maxShiftDp = 8.dp
+    val subPageXOffset = maxShiftDp * (direction * backProgress)
 
     var lastSubPage by remember { mutableStateOf(if (page != "MAIN") page else "") }
     val displayedSubPage = if (page != "MAIN") page else lastSubPage
     LaunchedEffect(page) {
         if (page != "MAIN") {
             lastSubPage = page
+            isPredictiveBackActive = false
+            isPredictiveBackCommitted = false
+            progressAnimatable.snapTo(0f)
+            exitOffsetAnimatable.snapTo(0f)
+            exitAlphaAnimatable.snapTo(1f)
+        } else {
+            isPredictiveBackActive = false
+            progressAnimatable.snapTo(0f)
         }
     }
 
@@ -4909,7 +5008,14 @@ private fun MobileSettingsLayout(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .arvioBackPeek(backMotion, active = page != "MAIN")
+                .graphicsLayer {
+                    if (page != "MAIN" && isPredictiveBackActive && backProgress > 0f) {
+                        val bgScale = 0.95f + (backProgress * 0.05f)
+                        scaleX = bgScale
+                        scaleY = bgScale
+                        alpha = 0.7f + (backProgress * 0.3f)
+                    }
+                }
         ) {
             Row(
                 modifier = Modifier
@@ -4949,15 +5055,40 @@ private fun MobileSettingsLayout(
             )
         }
 
+        if (page != "MAIN" && isPredictiveBackActive && backProgress > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.35f * (1f - backProgress)))
+            )
+        }
+
         AnimatedVisibility(
             visible = page != "MAIN",
-            enter = fadeIn(tween(200)) + slideInHorizontally(tween(250)) { it / 6 },
-            exit = fadeOut(tween(220, easing = FastOutSlowInEasing)) + slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 4 }
+            enter = fadeIn(tween(200)) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it },
+            exit = if (isPredictiveBackCommitted) {
+                ExitTransition.None
+            } else {
+                fadeOut(tween(250, easing = FastOutSlowInEasing)) + slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { it }
+            }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .arvioBackSurface(backMotion)
+                    .graphicsLayer {
+                        if (page == "MAIN" && isPredictiveBackCommitted) {
+                            alpha = 0f
+                            translationX = targetX
+                        } else if (isPredictiveBackActive) {
+                            scaleX = subPageScale
+                            scaleY = subPageScale
+                            translationX = subPageXOffset.toPx() + exitOffsetAnimatable.value
+                            alpha = exitAlphaAnimatable.value
+                            shape = RoundedCornerShape(cornerRadius)
+                            clip = cornerRadius > 0.dp
+                            shadowElevation = (backProgress * 16).dp.toPx()
+                        }
+                    }
                     .background(appBackgroundDark())
                     // The main settings list stays composed underneath this page,
                     // and an opaque background hides it without stopping a touch.

@@ -73,8 +73,6 @@ import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.ui.theme.appBackgroundDark
 import androidx.compose.foundation.layout.PaddingValues
-import com.arflix.tv.ui.motion.rememberArvioPredictiveBack
-import com.arflix.tv.ui.motion.arvioBackSurface
 import com.arflix.tv.util.LocalDeviceType
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
@@ -91,14 +89,15 @@ fun TelegramSettingsScreen(
     val searchOnClickOnly by viewModel.searchOnClickOnly.collectAsState()
     var showDisconnectConfirm by remember { mutableStateOf(false) }
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val backMotion = rememberArvioPredictiveBack(enabled = isMobile && showHeader && !showDisconnectConfirm) {
-        onBack()
+    if (showDisconnectConfirm) {
+        BackHandler { showDisconnectConfirm = false }
+    } else if (showHeader) {
+        BackHandler { onBack() }
     }
 
     val rootModifier = if (showHeader) {
         Modifier
             .fillMaxSize()
-            .arvioBackSurface(backMotion)
             .background(appBackgroundDark())
     } else {
         Modifier.fillMaxSize()
