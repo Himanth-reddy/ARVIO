@@ -2872,8 +2872,8 @@ class TraktRepository @Inject constructor(
                 if (currentProfileId() != profileId) throw kotlinx.coroutines.CancellationException("Profile changed during local watched load")
                 if (generation == watchedCacheGeneration) {
                     // Do not undo an unwatch made while DataStore was being read.
-                    watchedMoviesCache.addAll(movies.filter { it !in movieWriteGenerations })
-                    watchedEpisodesCache.addAll(episodes.filter { it !in episodeWriteGenerations })
+                    watchedMoviesCache.addAll(movies.filter { !movieWriteGenerations.containsKey(it) })
+                    watchedEpisodesCache.addAll(episodes.filter { !episodeWriteGenerations.containsKey(it) })
                     return
                 }
             }
