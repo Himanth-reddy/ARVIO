@@ -32,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
@@ -79,6 +80,40 @@ internal fun collectionCompactBudget(item: MediaItem?, locale: Locale = Locale.g
     }.format(value.toDouble() / divisor) + if (divisor == 1_000_000L) "M" else "B"
 }
 
+internal fun collectionSpotlightHeight(isMobile: Boolean, compact: Boolean): Dp = when {
+    compact -> 174.dp
+    isMobile -> 258.dp
+    else -> 198.dp
+}
+
+/** One backdrop continues behind the header and grid, rather than ending at their boundary. */
+@Composable
+internal fun CollectionBackdrop(catalog: CatalogConfig?, item: MediaItem?, isMobile: Boolean, height: Dp) {
+    val context = LocalContext.current
+    val backdrop = item?.backdrop?.takeIf(String::isNotBlank)
+        ?: catalog?.collectionHeroImageUrl?.takeIf(String::isNotBlank)
+    val request = remember(backdrop, context) {
+        ImageRequest.Builder(context).data(backdrop).size(1280, 720).crossfade(160).build()
+    }
+    val background = appBackgroundDark()
+    Box(Modifier.fillMaxWidth().height(height).testTag("collection_backdrop")) {
+        if (backdrop != null) {
+            AsyncImage(request, null,
+                Modifier.fillMaxHeight().fillMaxWidth(if (isMobile) 1f else 0.78f).align(Alignment.CenterEnd),
+                contentScale = ContentScale.Crop, alignment = BiasAlignment(1f, -0.5f))
+        }
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
+            0f to background, 0.25f to background, 0.40f to background.copy(alpha = 0.88f),
+            0.65f to background.copy(alpha = 0.45f), 1f to Color.Transparent
+        )))
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+            0f to background.copy(alpha = 0.12f), 0.25f to Color.Transparent,
+            0.55f to background.copy(alpha = 0.18f), 0.78f to background.copy(alpha = 0.72f),
+            1f to background
+        )))
+    }
+}
+
 /** Fixed-size, non-interactive preview: changing focus never moves the grid below it. */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
@@ -91,31 +126,9 @@ internal fun CollectionSpotlight(
     providerLogoUrl: String? = item?.primaryNetworkLogo
 ) {
     val context = LocalContext.current
-    val backdrop = item?.backdrop?.takeIf(String::isNotBlank)
-        ?: catalog?.collectionHeroImageUrl?.takeIf(String::isNotBlank)
-    val request = remember(backdrop, context) {
-        ImageRequest.Builder(context).data(backdrop).size(1280, 540).crossfade(160).build()
-    }
-    val background = appBackgroundDark()
     val inset = if (isMobile) 20.dp else 42.dp
-    val height = when {
-        compact -> 174.dp
-        isMobile -> 258.dp
-        else -> 198.dp
-    }
+    val height = collectionSpotlightHeight(isMobile, compact)
     Box(Modifier.fillMaxWidth().height(height).testTag("collection_spotlight")) {
-        if (backdrop != null) {
-            AsyncImage(request, null,
-                Modifier.fillMaxHeight().fillMaxWidth(if (isMobile) 1f else 0.72f).align(Alignment.CenterEnd),
-                contentScale = ContentScale.Crop, alignment = BiasAlignment(1f, -0.5f))
-        }
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
-            0f to background, 0.30f to background.copy(alpha = 0.97f),
-            0.60f to background.copy(alpha = 0.62f), 1f to Color.Transparent
-        )))
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
-            Color.Transparent, background.copy(alpha = 0.15f), background
-        ))))
         Column(
             Modifier.fillMaxSize().padding(start = inset, end = inset, top = 10.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp)

@@ -75,11 +75,9 @@ class CollectionDetailsUiDeviceTest {
                 val secondTab = remember { FocusRequester() }
                 val mobile = device.isTouchDevice()
                 val inputMode = LocalInputModeManager.current
-                val width = LocalConfiguration.current.screenWidthDp - if (mobile) 40 else 84
-                val gap = if (posters) 18 else 14
-                val minimum = if (posters) { if (mobile) 106 else 128 } else { if (mobile) 160 else 220 }
-                val columns = ((width + gap) / (minimum + gap)).coerceIn(1, 8)
-                val cardWidth = ((width - gap * (columns - 1)).toFloat() / columns).dp
+                val layout = collectionGridLayout(LocalConfiguration.current.screenWidthDp, mobile, posters)
+                val columns = layout.columns
+                val cardWidth = layout.cardWidthDp.dp
                 LaunchedEffect(Unit) {
                     kotlinx.coroutines.delay(300)
                     if (!mobile) {
@@ -108,6 +106,13 @@ class CollectionDetailsUiDeviceTest {
         val gridTop = compose.onNodeWithTag("collection_grid").fetchSemanticsNode().boundsInRoot.top
         val heroBottom = compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot.bottom
         assertTrue("Hero and cards cannot overlap", gridTop >= heroBottom)
+        val backdropBottom = compose.onNodeWithTag("collection_backdrop").fetchSemanticsNode().boundsInRoot.bottom
+        assertTrue("Artwork must continue behind the grid", backdropBottom > gridTop + 100)
+        val density = context.resources.displayMetrics.density
+        val expectedWidth = collectionGridLayout(context.resources.configuration.screenWidthDp,
+            device.isTouchDevice(), posters).cardWidthDp * density
+        assertEquals("Cards must match home width", expectedWidth,
+            compose.onNodeWithTag("collection_item_0").fetchSemanticsNode().boundsInRoot.width, 2f)
         if (device == DeviceType.TV) {
             compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
             compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
@@ -121,6 +126,11 @@ class CollectionDetailsUiDeviceTest {
             compose.runOnIdle { assertEquals(items[1].id, opened?.id) }
             repeat(14) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
             compose.runOnIdle { assertTrue("Pagination must remain reachable", nearEnd) }
+            Thread.sleep(1500)
+            val scrolled = File(context.getExternalFilesDir(null), "collection-blended-scrolled-${if (posters) "poster" else "landscape"}.png")
+            scrolled.outputStream().use {
+                compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
             repeat(14) { compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) } }
             compose.onNodeWithTag("collection_item_0").onChildren().filter(hasClickAction()).onFirst()
                 .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus) { it() }
@@ -134,10 +144,24 @@ class CollectionDetailsUiDeviceTest {
         // Let real images decode before recording the visual result (not a loading benchmark).
         Thread.sleep(2500)
         compose.waitForIdle()
+        val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
+        // The old header's rectangular edge caused a visible colour step across this seam.
+        val seamY = gridTop.toInt()
+        var seamDifference = 0L
+        val startX = screenshot.width * 3 / 4
+        for (x in startX until screenshot.width) {
+            val above = screenshot.getPixel(x, seamY - 1)
+            val below = screenshot.getPixel(x, seamY)
+            seamDifference += kotlin.math.abs(android.graphics.Color.red(above) - android.graphics.Color.red(below)) +
+                kotlin.math.abs(android.graphics.Color.green(above) - android.graphics.Color.green(below)) +
+                kotlin.math.abs(android.graphics.Color.blue(above) - android.graphics.Color.blue(below))
+        }
+        assertTrue("Backdrop must blend across the hero/grid boundary",
+            seamDifference.toDouble() / ((screenshot.width - startX) * 3) < 12)
         val suffix = (if (posters) "" else "-landscape") + (if (catalogId != null) "-service" else "")
         val file = File(context.getExternalFilesDir(null), "collection-branded-${device.name}$suffix.png")
         file.outputStream().use {
-            compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+            screenshot.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
         instrumentation.sendStatus(0, Bundle().apply { putString("stream", "Collection UI passed: $device, ${items.size} real cards; screenshot ${file.name}\n") })
     }

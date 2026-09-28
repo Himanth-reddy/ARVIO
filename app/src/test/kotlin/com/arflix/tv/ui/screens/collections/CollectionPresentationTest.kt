@@ -7,6 +7,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CollectionPresentationTest {
+    @Test fun `TV cards retain home sizes instead of stretching to fill columns`() {
+        assertEquals(CollectionGridLayout(7, 105), collectionGridLayout(960, false, true))
+        assertEquals(CollectionGridLayout(4, 210), collectionGridLayout(960, false, false))
+        assertEquals(105, collectionGridLayout(1280, false, true).cardWidthDp)
+        assertEquals(210, collectionGridLayout(1280, false, false).cardWidthDp)
+    }
+
+    @Test fun `touch cards match home and tiny windows cannot overflow`() {
+        assertEquals(CollectionGridLayout(2, 120), collectionGridLayout(411, true, true))
+        assertEquals(CollectionGridLayout(1, 200), collectionGridLayout(411, true, false))
+        assertEquals(CollectionGridLayout(1, 60), collectionGridLayout(100, true, false))
+    }
+
     @Test fun `budget is factual USD only for movies with known positive budget`() {
         val movie = MediaItem(1, "Movie", budget = 150_000_000L)
         assertEquals("$150,000,000", collectionBudget(movie, Locale.US))

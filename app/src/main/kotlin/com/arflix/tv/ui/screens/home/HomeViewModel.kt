@@ -227,6 +227,8 @@ internal fun applyIptvFavoritesPlacement(
 /** Landscape Home card widths; the backdrop preload must size its requests like the row. */
 internal const val HOME_TV_LANDSCAPE_CARD_WIDTH_DP = 210
 internal const val HOME_MOBILE_LANDSCAPE_CARD_WIDTH_DP = 200
+internal const val HOME_TV_POSTER_CARD_WIDTH_DP = 105
+internal const val HOME_MOBILE_POSTER_CARD_WIDTH_DP = 120
 
 /**
  * Pixel size of a landscape Home card, rounded the way Compose rounds `Dp.roundToPx()`, so the

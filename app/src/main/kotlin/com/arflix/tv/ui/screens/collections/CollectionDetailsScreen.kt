@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,10 +28,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -659,12 +665,9 @@ fun CollectionDetailsScreen(
         rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
     val configuration = LocalConfiguration.current
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val horizontalInset = if (isMobile) 20 else 42
-    val gap = if (usePosterCards) 18 else 14
-    val availableWidth = (configuration.screenWidthDp - horizontalInset * 2).coerceAtLeast(160)
-    val minCardWidth = if (usePosterCards) { if (isMobile) 106 else 128 } else { if (isMobile) 160 else 220 }
-    val gridColumns = ((availableWidth + gap) / (minCardWidth + gap)).coerceIn(1, 8)
-    val cardWidth = ((availableWidth - gap * (gridColumns - 1)).toFloat() / gridColumns).dp
+    val layout = collectionGridLayout(configuration.screenWidthDp, isMobile, usePosterCards)
+    val gridColumns = layout.columns
+    val cardWidth = layout.cardWidthDp.dp
 
     val initialTab = when {
         uiState.supportsMovies -> CollectionTab.MOVIES
@@ -1067,21 +1070,32 @@ internal fun CollectionItemsGrid(
         }
     }
 
+    Box(Modifier.fillMaxSize().background(appBackgroundDark())) {
+        CollectionBackdrop(catalog, previewItem, isMobile,
+            collectionSpotlightHeight(isMobile, compact) + 150.dp)
     Column(Modifier.fillMaxSize()) {
         CollectionSpotlight(catalog, previewItem, isMobile, compact, onBack,
             providerLogos["${previewItem?.mediaType}_${previewItem?.id}"] ?: previewItem?.primaryNetworkLogo)
         TvLazyVerticalGrid(
         columns = TvGridCells.Fixed(gridColumns),
         state = gridState,
-        modifier = Modifier.weight(1f).fillMaxWidth().arvioDpadFocusGroup().clipToBounds().testTag("collection_grid"),
+        modifier = Modifier.weight(1f).fillMaxWidth().arvioDpadFocusGroup().clipToBounds()
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithCache {
+                val fade = Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = 16.dp.toPx())
+                onDrawWithContent {
+                    drawContent()
+                    drawRect(fade, blendMode = BlendMode.DstIn)
+                }
+            }.testTag("collection_grid"),
         contentPadding = PaddingValues(
             start = if (isMobile) 20.dp else 42.dp,
-            top = topContentPadding,
+            top = maxOf(topContentPadding, 18.dp),
             end = if (isMobile) 20.dp else 42.dp,
             bottom = 48.dp + focusBleedPadding + LocalBottomBarInset.current
         ),
         verticalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(
             span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
@@ -1100,12 +1114,15 @@ internal fun CollectionItemsGrid(
         if (isLoading && items.isEmpty()) {
             val cardHeight = if (usePosterCards) cardWidth * 1.5f else cardWidth * 9f / 16f
             itemsIndexed((1..gridColumns * 3).toList(), contentType = { _, _ -> "skeleton" }) { _, _ ->
+                Box(Modifier.fillMaxWidth()) {
                 Box(
                     modifier = Modifier
+                        .width(cardWidth)
                         .height(cardHeight)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color.White.copy(alpha = 0.05f))
                 )
+                }
             }
         } else if (items.isEmpty() && !isLoadingMore) {
             item(
@@ -1133,6 +1150,8 @@ internal fun CollectionItemsGrid(
                     }
                 }
 
+                // Grid cells can be wider than Home cards; do not propagate their minimum width.
+                Box(Modifier.fillMaxWidth()) {
                 MediaCard(
                     item = item,
                     width = cardWidth,
@@ -1148,6 +1167,7 @@ internal fun CollectionItemsGrid(
                     onClick = { onItemClick(item) },
                     modifier = Modifier.focusRequester(itemFocusRequester).testTag("collection_item_$index")
                 )
+                }
             }
         }
 
@@ -1170,6 +1190,7 @@ internal fun CollectionItemsGrid(
                 }
             }
         }
+    }
     }
     }
 }
