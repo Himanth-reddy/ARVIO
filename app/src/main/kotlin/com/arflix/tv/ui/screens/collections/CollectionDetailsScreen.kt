@@ -28,15 +28,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -60,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.tv.foundation.lazy.grid.TvGridCells
+import androidx.tv.foundation.PivotOffsets
 import androidx.tv.foundation.lazy.grid.TvLazyVerticalGrid
 import androidx.tv.foundation.lazy.grid.itemsIndexed
 import androidx.tv.foundation.lazy.grid.rememberTvLazyGridState
@@ -733,7 +729,7 @@ fun CollectionDetailsScreen(
                         CollectionTab.MOVIES -> moviesGridState
                         CollectionTab.SERIES -> seriesGridState
                     }
-                    // The tab bar is the grid's only header item.
+                    // Spotlight and tabs share the grid's only header item.
                     try {
                         currentGridState.scrollToItem(savedIndex + 1)
                     } catch (e: CancellationException) {
@@ -1073,24 +1069,16 @@ internal fun CollectionItemsGrid(
     Box(Modifier.fillMaxSize().background(appBackgroundDark())) {
         CollectionBackdrop(catalog, previewItem, isMobile,
             collectionSpotlightHeight(isMobile, compact) + 150.dp)
-    Column(Modifier.fillMaxSize()) {
-        CollectionSpotlight(catalog, previewItem, isMobile, compact, onBack,
-            providerLogos["${previewItem?.mediaType}_${previewItem?.id}"] ?: previewItem?.primaryNetworkLogo)
         TvLazyVerticalGrid(
         columns = TvGridCells.Fixed(gridColumns),
         state = gridState,
-        modifier = Modifier.weight(1f).fillMaxWidth().arvioDpadFocusGroup().clipToBounds()
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithCache {
-                val fade = Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = 16.dp.toPx())
-                onDrawWithContent {
-                    drawContent()
-                    drawRect(fade, blendMode = BlendMode.DstIn)
-                }
-            }.testTag("collection_grid"),
+        // Keep the hero visible on the first row; deeper rows scroll over its area.
+        pivotOffsets = PivotOffsets(parentFraction = 0.55f),
+        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup().clipToBounds()
+            .testTag("collection_grid"),
         contentPadding = PaddingValues(
             start = if (isMobile) 20.dp else 42.dp,
-            top = maxOf(topContentPadding, 18.dp),
+            top = topContentPadding,
             end = if (isMobile) 20.dp else 42.dp,
             bottom = 48.dp + focusBleedPadding + LocalBottomBarInset.current
         ),
@@ -1099,8 +1087,16 @@ internal fun CollectionItemsGrid(
     ) {
         item(
             span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
-            contentType = "tabs"
+            contentType = "header"
         ) {
+            Column {
+                CollectionSpotlight(
+                    catalog, previewItem, isMobile, compact, onBack,
+                    providerLogoUrl = providerLogos["${previewItem?.mediaType}_${previewItem?.id}"]
+                        ?: previewItem?.primaryNetworkLogo,
+                    clearLogoUrl = cardLogoUrls["${previewItem?.mediaType}_${previewItem?.id}"],
+                    horizontalInset = 0.dp
+                )
             CollectionTabBar(
                 hasMovies = hasMovies,
                 hasSeries = hasSeries,
@@ -1110,6 +1106,7 @@ internal fun CollectionItemsGrid(
                 isSportsCollection = isSportsCollection,
                 onTabSelected = onTabSelected
             )
+            }
         }
         if (isLoading && items.isEmpty()) {
             val cardHeight = if (usePosterCards) cardWidth * 1.5f else cardWidth * 9f / 16f
@@ -1190,7 +1187,6 @@ internal fun CollectionItemsGrid(
                 }
             }
         }
-    }
     }
     }
 }

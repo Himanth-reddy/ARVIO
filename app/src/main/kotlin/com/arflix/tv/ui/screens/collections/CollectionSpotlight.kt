@@ -20,6 +20,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
@@ -27,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -114,7 +118,7 @@ internal fun CollectionBackdrop(catalog: CatalogConfig?, item: MediaItem?, isMob
     }
 }
 
-/** Fixed-size, non-interactive preview: changing focus never moves the grid below it. */
+/** Stable-size preview in the grid header, with artwork drawn separately behind the cards. */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 internal fun CollectionSpotlight(
@@ -123,10 +127,12 @@ internal fun CollectionSpotlight(
     isMobile: Boolean,
     compact: Boolean,
     onBack: () -> Unit,
-    providerLogoUrl: String? = item?.primaryNetworkLogo
+    providerLogoUrl: String? = item?.primaryNetworkLogo,
+    clearLogoUrl: String? = null,
+    horizontalInset: Dp = if (isMobile) 20.dp else 42.dp
 ) {
     val context = LocalContext.current
-    val inset = if (isMobile) 20.dp else 42.dp
+    val inset = horizontalInset
     val height = collectionSpotlightHeight(isMobile, compact)
     Box(Modifier.fillMaxWidth().height(height).testTag("collection_spotlight")) {
         Column(
@@ -144,11 +150,13 @@ internal fun CollectionSpotlight(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             val textWidth = if (isMobile) 1f else 0.62f
-            Text(item?.title ?: catalog?.title.orEmpty(),
-                modifier = Modifier.fillMaxWidth(textWidth).testTag("collection_spotlight_title"),
-                color = Color.White, fontSize = if (isMobile || compact) 23.sp else 28.sp,
-                fontWeight = FontWeight.Bold, letterSpacing = 0.sp, lineHeight = 32.sp,
-                maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
+            CollectionTitle(
+                title = item?.title ?: catalog?.title.orEmpty(),
+                logoUrl = clearLogoUrl,
+                isMobile = isMobile,
+                compact = compact,
+                modifier = Modifier.fillMaxWidth(textWidth)
+            )
             val facts = listOfNotNull(
                 item?.year?.takeIf(String::isNotBlank),
                 item?.duration?.takeIf(String::isNotBlank),
@@ -193,6 +201,47 @@ internal fun CollectionSpotlight(
                 modifier = Modifier.fillMaxWidth(textWidth).testTag("collection_spotlight_overview"),
                 color = Color(0xFFC4C8CE), fontSize = 13.sp, lineHeight = 18.sp, letterSpacing = 0.sp,
                 maxLines = if (isMobile && !compact) 3 else 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+internal fun CollectionTitle(
+    title: String,
+    logoUrl: String?,
+    isMobile: Boolean,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val height = if (compact) 38.dp else 60.dp
+    val url = logoUrl?.takeIf(String::isNotBlank)
+    var logoReady by remember(title, url) { mutableStateOf(false) }
+    val request = remember(url, context, density, height) {
+        ImageRequest.Builder(context).data(url)
+            .size(with(density) { 280.dp.roundToPx() }, with(density) { height.roundToPx() })
+            .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
+            .allowRgb565(false).crossfade(false).build()
+    }
+    // Keep the same slot during loading/failure so artwork cannot move the cards.
+    Box(modifier.height(height), contentAlignment = Alignment.CenterStart) {
+        if (url != null) {
+            AsyncImage(
+                model = request,
+                contentDescription = title,
+                contentScale = ContentScale.Fit,
+                alignment = Alignment.CenterStart,
+                modifier = Modifier.width(280.dp).fillMaxHeight().testTag("collection_clearlogo"),
+                onSuccess = { logoReady = true },
+                onError = { logoReady = false }
+            )
+        }
+        if (!logoReady) {
+            Text(title, modifier = Modifier.fillMaxWidth().testTag("collection_spotlight_title"),
+                color = Color.White, fontSize = if (isMobile || compact) 23.sp else 28.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 0.sp, lineHeight = 30.sp,
+                maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

@@ -197,6 +197,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
@@ -292,6 +294,11 @@ val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null
 
 private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete"
 private const val PRIVACY_POLICY_URL = "https://arvio.tv/privacy"
+
+private fun isRepeatedSettingsSelect(event: androidx.compose.ui.input.key.KeyEvent): Boolean =
+    event.type == KeyEventType.KeyDown &&
+        (event.key == Key.Enter || event.key == Key.DirectionCenter) &&
+        event.nativeKeyEvent.repeatCount > 0
 
 /**
  * Pseudo playlist id used for the Stalker/Ministra portal source. Stalker
@@ -500,7 +507,7 @@ fun Modifier.settingsFocusSlot(index: Int): Modifier {
         DisposableEffect(tracker, index) {
             onDispose { if (tracker.coordinates[index] === owner[0]) tracker.coordinates.remove(index) }
         }
-        return this.onGloballyPositioned {
+        return this.testTag("settings-focus-$index").onGloballyPositioned {
             owner[0] = it
             tracker.coordinates[index] = it
         }
@@ -613,7 +620,6 @@ fun SettingsScreen(
     var pluginsEnterTrigger by remember { mutableIntStateOf(-1) }
     var pluginsModalOpen by remember { mutableStateOf(false) }
     var activeZone by remember { mutableStateOf(if (arrivesAtTopLevel) Zone.SIDEBAR else Zone.CONTENT) }
-    var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
 
     // Sub-focus for stream integration rows: 0 = toggle, 1 = up, 2 = down, 3 = configure
     var integrationActionIndex by remember { mutableIntStateOf(0) }
@@ -717,6 +723,15 @@ fun SettingsScreen(
         StalkerCatalogKind.SERIES -> uiState.iptvStalkerSeriesCategories
         null -> emptyList()
     }
+    val orderedLiveGroups = remember(
+        uiState.iptvSelectedPlaylistId, uiState.iptvAvailableGroups, uiState.iptvGroupOrder
+    ) {
+        orderedIptvGroups(
+            uiState.iptvSelectedPlaylistId.orEmpty(),
+            uiState.iptvAvailableGroups,
+            uiState.iptvGroupOrder
+        )
+    }
 
     val sectionMaxIndex: (String) -> Int = { section ->
         when (section) {
@@ -726,11 +741,7 @@ fun SettingsScreen(
                     // Tab bar + (bulk-toggle row) + category rows.
                     lastStalkerCategoryIndex(iptvCatalogCategories.size)
                 } else {
-                val groups = orderedIptvGroups(
-                    playlistId = uiState.iptvSelectedPlaylistId.orEmpty(),
-                    availableGroups = uiState.iptvAvailableGroups,
-                    groupOrder = uiState.iptvGroupOrder
-                )
+                val groups = orderedLiveGroups
                 // (Tab bar) + reset row + (bulk-toggle row) + category rows.
                 groups.size + (firstIptvGroupIndex(groups, iptvTabBarVisible) - 1)
                 }
@@ -805,7 +816,6 @@ fun SettingsScreen(
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
-        suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
 
     LaunchedEffect(sections.size) {
@@ -1058,6 +1068,9 @@ fun SettingsScreen(
                     if (isTouchDevice) return@onPreviewKeyEvent false
                     if (hasBlockingModal) return@onPreviewKeyEvent false
 
+                // One physical OK press is one action, even when a remote repeats it.
+                if (isRepeatedSettingsSelect(event)) return@onPreviewKeyEvent true
+
                 if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
                     dpadRepeatGate.reset()
                 }
@@ -1103,11 +1116,7 @@ fun SettingsScreen(
                             return@handler false
                         }
                         val heldPlaylistId = uiState.iptvSelectedPlaylistId.orEmpty()
-                        val heldGroups = orderedIptvGroups(
-                            playlistId = heldPlaylistId,
-                            availableGroups = uiState.iptvAvailableGroups,
-                            groupOrder = uiState.iptvGroupOrder
-                        )
+                        val heldGroups = orderedLiveGroups
                         val heldFirstIndex = firstIptvGroupIndex(heldGroups, iptvTabBarVisible)
                         if (heldGroup !in heldGroups || contentFocusIndex - heldFirstIndex !in heldGroups.indices) {
                             // The group is gone (the playlist reloaded) or the focus is not on a
@@ -1143,11 +1152,7 @@ fun SettingsScreen(
                                 // no column to keep.
                                 iptvCatalogKind != null -> 0
                                 else -> {
-                                    val groups = orderedIptvGroups(
-                                        playlistId = uiState.iptvSelectedPlaylistId.orEmpty(),
-                                        availableGroups = uiState.iptvAvailableGroups,
-                                        groupOrder = uiState.iptvGroupOrder
-                                    )
+                                    val groups = orderedLiveGroups
                                     keptIptvActionIndex(
                                         actionIndex = iptvActionIndex,
                                         targetFocusIndex = targetIndex,
@@ -1279,11 +1284,7 @@ fun SettingsScreen(
                                     } else if (currentSection == "iptv" && showIptvCategoriesSettings &&
                                         iptvCatalogKind == null &&
                                         contentFocusIndex >= firstIptvGroupIndex(
-                                            orderedIptvGroups(
-                                                uiState.iptvSelectedPlaylistId.orEmpty(),
-                                                uiState.iptvAvailableGroups,
-                                                uiState.iptvGroupOrder
-                                            ),
+                                            orderedLiveGroups,
                                             iptvTabBarVisible
                                         ) &&
                                         iptvActionIndex < 1
@@ -1489,11 +1490,7 @@ fun SettingsScreen(
                                                 }
                                             } else if (showIptvCategoriesSettings) {
                                                 val playlistId = uiState.iptvSelectedPlaylistId.orEmpty()
-                                                val orderedGroups = orderedIptvGroups(
-                                                    playlistId = playlistId,
-                                                    availableGroups = uiState.iptvAvailableGroups,
-                                                    groupOrder = uiState.iptvGroupOrder
-                                                )
+                                                val orderedGroups = orderedLiveGroups
                                                 val tabOffset = if (iptvTabBarVisible) 1 else 0
                                                 val firstGroupIdx = firstIptvGroupIndex(orderedGroups, iptvTabBarVisible)
                                                 val hasBulkToggle = orderedGroups.isNotEmpty()
@@ -2006,6 +2003,7 @@ fun SettingsScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxSize()
+                        .testTag("settings-content")
                         .onGloballyPositioned { focusTracker.viewport = it }
                         .verticalScroll(scrollState)
                         .padding(start = 28.dp)
@@ -3279,6 +3277,8 @@ internal fun ModalScrim(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.72f))
+            // An OK held while opening a dialog must not select its first option.
+            .onPreviewKeyEvent(::isRepeatedSettingsSelect)
             .clickable(
                 interactionSource = scrimInteraction,
                 indication = null,
@@ -6396,10 +6396,6 @@ private fun UnknownSourcesModal(
     var focusedIndex by remember { mutableIntStateOf(1) }
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(
@@ -6408,6 +6404,7 @@ private fun UnknownSourcesModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        LaunchedEffect(focusRequester) { focusRequester.requestFocus() }
         BackHandler {
             onDismiss()
         }
@@ -12358,9 +12355,6 @@ private fun SubtitlePickerModal(
             listState.animateScrollToItem(safeIndex)
         }
     }
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -12370,6 +12364,9 @@ private fun SubtitlePickerModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        LaunchedEffect(focusRequester) {
+            focusRequester.requestFocus()
+        }
         BackHandler {
             onDismiss()
         }
@@ -12485,10 +12482,6 @@ private fun UiModeWarningDialog(
     var focusedIndex by remember { mutableIntStateOf(0) } // 0 = Confirm, 1 = Cancel
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(
@@ -12497,6 +12490,7 @@ private fun UiModeWarningDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        LaunchedEffect(focusRequester) { focusRequester.requestFocus() }
         BackHandler {
             onDismiss()
         }
@@ -12734,18 +12728,29 @@ private fun IptvCategoriesSettings(
         else orderedGroups.all { com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, it) in hiddenGroups }
     }
 
-    LaunchedEffect(isMobile, focusedIndex, orderedGroups.size) {
+    LaunchedEffect(isMobile, focusedIndex, orderedGroups.size, heldGroup, firstGroupIndex) {
         if (!isMobile && focusedIndex >= firstGroupIndex && orderedGroups.isNotEmpty()) {
             val row = (focusedIndex - firstGroupIndex).coerceIn(0, orderedGroups.lastIndex)
-            // Keep the focused row in the middle rather than flush against the top
-            // edge: while a group is being moved, the neighbours above it are what
-            // tell the viewer where the group has got to.
             val info = categoryListState.layoutInfo
-            val centering = centeredScrollOffset(
-                viewportSize = info.viewportEndOffset - info.viewportStartOffset,
-                itemSize = info.visibleItemsInfo.firstOrNull()?.size ?: 0
-            )
-            categoryListState.animateScrollToItem(row, centering)
+            val item = info.visibleItemsInfo.firstOrNull { it.index == row }
+            if (item != null) {
+                // Only held/reordered groups need centering. Normal navigation
+                // reveals overflow without moving rows that are already visible.
+                val delta = settingsCategoryScrollDelta(
+                    item.offset, item.size,
+                    info.viewportStartOffset, info.viewportEndOffset,
+                    center = heldGroup != null
+                )
+                if (delta != 0f) {
+                    categoryListState.animateScrollBy(delta, tween(100, easing = FastOutSlowInEasing))
+                }
+            } else {
+                val offset = if (heldGroup != null) centeredScrollOffset(
+                    viewportSize = info.viewportEndOffset - info.viewportStartOffset,
+                    itemSize = info.visibleItemsInfo.firstOrNull()?.size ?: 0
+                ) else 0
+                categoryListState.animateScrollToItem(row, offset)
+            }
         }
     }
 
@@ -13474,10 +13479,6 @@ private fun CatalogPackImportDialog(
     var focusedIndex by remember(pendingPack) { mutableIntStateOf(0) } // 0 = Confirm, 1 = Cancel/Dismiss
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
 
-    LaunchedEffect(pendingPack, isLoading, error) {
-        focusRequester.requestFocus()
-    }
-
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(
@@ -13486,6 +13487,7 @@ private fun CatalogPackImportDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        LaunchedEffect(pendingPack, isLoading, error) { focusRequester.requestFocus() }
         BackHandler {
             onDismiss()
         }
@@ -13718,10 +13720,6 @@ private fun CatalogPackDeleteConfirmDialog(
     var focusedIndex by remember { mutableIntStateOf(0) } // 0 = Confirm, 1 = Cancel
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(
@@ -13730,6 +13728,7 @@ private fun CatalogPackDeleteConfirmDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        LaunchedEffect(focusRequester) { focusRequester.requestFocus() }
         BackHandler {
             onDismiss()
         }

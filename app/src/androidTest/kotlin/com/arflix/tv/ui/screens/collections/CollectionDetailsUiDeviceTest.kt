@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.tv.foundation.lazy.grid.rememberTvLazyGridState
@@ -61,7 +62,11 @@ class CollectionDetailsUiDeviceTest {
         if (catalogId != null) assertFalse("Provider fixture must resolve actual artwork", provider?.logoUrl.isNullOrBlank())
         val details = repository.getMovieDetails(page.items.first().id)?.copy(primaryNetworkLogo = provider?.logoUrl)
         val items = page.items.map { if (it.id == details?.id) details else it }.filterNotNull()
+        val logos = items.take(2).mapNotNull { item ->
+            repository.getLogoUrl(item.mediaType, item.id)?.let { "${item.mediaType}_${item.id}" to it }
+        }.toMap()
         var opened: MediaItem? = null
+        var preview: MediaItem? = null
         var nearEnd = false
         val selected = mutableStateOf(CollectionTab.MOVIES)
         compose.runOnUiThread {
@@ -87,15 +92,23 @@ class CollectionDetailsUiDeviceTest {
                 }
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
                     CollectionItemsGrid(catalog, {}, items, columns, cardWidth, posters,
-                        rememberTvLazyGridState(), -1, {}, true, true, emptyMap(), selected.value,
+                        rememberTvLazyGridState(), -1, {}, true, true, logos, selected.value,
                         firstTab, secondTab, false, { selected.value = it }, { opened = it },
-                        { _, _ -> }, {}, {}, { nearEnd = true }, false, false, "", 8.dp)
+                        { _, _ -> }, {}, {}, { nearEnd = true }, false, false, "", 8.dp,
+                        onPreviewItemChanged = { preview = it })
                 }
             }
         }
         compose.mainClock.advanceTimeBy(400)
         compose.waitForIdle()
-        compose.onNodeWithTag("collection_spotlight_title").assertTextEquals(items.first().title)
+        if (logos.containsKey("${items.first().mediaType}_${items.first().id}")) {
+            compose.waitUntil(10000) {
+                compose.onAllNodesWithTag("collection_spotlight_title").fetchSemanticsNodes().isEmpty()
+            }
+            compose.onNodeWithTag("collection_clearlogo").assertContentDescriptionEquals(items.first().title)
+        } else {
+            compose.onNodeWithTag("collection_spotlight_title").assertTextEquals(items.first().title)
+        }
         if (collectionRating(items.first())?.startsWith("IMDb ") == true) {
             compose.onNodeWithContentDescription("IMDb").assertIsDisplayed()
         }
@@ -105,9 +118,11 @@ class CollectionDetailsUiDeviceTest {
         compose.onNodeWithTag("collection_grid").assertIsDisplayed()
         val gridTop = compose.onNodeWithTag("collection_grid").fetchSemanticsNode().boundsInRoot.top
         val heroBottom = compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot.bottom
-        assertTrue("Hero and cards cannot overlap", gridTop >= heroBottom)
+        assertTrue("Grid must extend behind the hero, not start below it", gridTop < heroBottom)
+        val firstCardTop = compose.onNodeWithTag("collection_item_0").fetchSemanticsNode().boundsInRoot.top
+        assertTrue("Initial cards must not overlap hero details", firstCardTop >= heroBottom)
         val backdropBottom = compose.onNodeWithTag("collection_backdrop").fetchSemanticsNode().boundsInRoot.bottom
-        assertTrue("Artwork must continue behind the grid", backdropBottom > gridTop + 100)
+        assertTrue("Artwork must continue behind the cards", backdropBottom > firstCardTop)
         val density = context.resources.displayMetrics.density
         val expectedWidth = collectionGridLayout(context.resources.configuration.screenWidthDp,
             device.isTouchDevice(), posters).cardWidthDp * density
@@ -118,14 +133,21 @@ class CollectionDetailsUiDeviceTest {
             compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
             compose.mainClock.advanceTimeBy(200)
             compose.waitUntil(3000) {
-                compose.onNodeWithTag("collection_spotlight_title").fetchSemanticsNode().config[
-                    androidx.compose.ui.semantics.SemanticsProperties.Text].first().text == items[1].title
+                preview?.id == items[1].id
             }
+            assertTrue("First-row focus must not clip the clearlogo header",
+                compose.onNodeWithTag("collection_spotlight").getUnclippedBoundsInRoot().top.value >= 0)
             assertEquals(gridTop, compose.onNodeWithTag("collection_grid").fetchSemanticsNode().boundsInRoot.top)
             compose.onRoot().performKeyInput { pressKey(Key.Enter) }
             compose.runOnIdle { assertEquals(items[1].id, opened?.id) }
             repeat(14) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
             compose.runOnIdle { assertTrue("Pagination must remain reachable", nearEnd) }
+            compose.onNodeWithTag("collection_spotlight").assertIsNotDisplayed()
+            val visibleCards = compose.onAllNodes(SemanticsMatcher("collection card") {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)
+                    ?.startsWith("collection_item_") == true
+            }).fetchSemanticsNodes().map { it.boundsInRoot }.filter { it.height > 0 }
+            assertTrue("Cards must scroll through the former hero area", visibleCards.any { it.top < heroBottom })
             Thread.sleep(1500)
             val scrolled = File(context.getExternalFilesDir(null), "collection-blended-scrolled-${if (posters) "poster" else "landscape"}.png")
             scrolled.outputStream().use {
@@ -146,7 +168,7 @@ class CollectionDetailsUiDeviceTest {
         compose.waitForIdle()
         val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
         // The old header's rectangular edge caused a visible colour step across this seam.
-        val seamY = gridTop.toInt()
+        val seamY = heroBottom.toInt().coerceIn(1, screenshot.height - 1)
         var seamDifference = 0L
         val startX = screenshot.width * 3 / 4
         for (x in startX until screenshot.width) {
