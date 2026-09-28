@@ -127,6 +127,8 @@ fun MediaCard(
     // behavior (landscape uses backdrop art, poster uses image).
     val isCollectionTile = item.status?.startsWith("collection:") == true
     val isChannelLogo = item.status?.startsWith("iptv:") == true
+    val isProviderLogo = item.status?.startsWith("collection:collection_service_") == true &&
+        item.image.startsWith("https://image.tmdb.org/")
     val continueWatchingArtwork = item.episodeStill
         ?.takeIf { showProgress && isLandscape && it.isNotBlank() }
     val baseImageUrl = if (isCollectionTile) {
@@ -241,7 +243,7 @@ fun MediaCard(
                               else Modifier.background(missingArtworkBrush)),
                     contentAlignment = Alignment.Center
                 ) {
-                    if ((!isChannelLogo || imageRequest == null || channelLogoFailed) &&
+                    if (!isProviderLogo && (!isChannelLogo || imageRequest == null || channelLogoFailed) &&
                         !(showCollectionTitleOverlay && item.status?.startsWith("collection:custom_") == true)) {
                         Text(
                             text = item.title,
@@ -257,7 +259,7 @@ fun MediaCard(
                     AsyncImage(
                         model = imageRequest,
                         contentDescription = item.title,
-                        contentScale = if (isChannelLogo) ContentScale.Fit else ContentScale.Crop,
+                        contentScale = if (isChannelLogo || isProviderLogo) ContentScale.Fit else ContentScale.Crop,
                         onError = {
                             artworkIsOpaque = false
                             if (isChannelLogo) channelLogoFailed = true
@@ -269,7 +271,8 @@ fun MediaCard(
                                 it.result.drawable.opacity == android.graphics.PixelFormat.OPAQUE
                         },
                         modifier = Modifier.fillMaxSize().then(
-                            if (isChannelLogo) Modifier.padding(
+                            if (isProviderLogo) Modifier.padding(horizontal = width * 0.22f, vertical = 24.dp)
+                            else if (isChannelLogo) Modifier.padding(
                                 horizontal = width * 0.1f,
                                 vertical = (width / aspectRatio) * 0.12f
                             ) else Modifier

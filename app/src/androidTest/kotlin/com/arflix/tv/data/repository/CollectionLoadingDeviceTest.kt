@@ -26,6 +26,34 @@ import org.junit.runner.RunWith
 /** Opt-in live metadata/artwork check. Does not change profiles or start playback. */
 @RunWith(AndroidJUnit4::class)
 class CollectionLoadingDeviceTest {
+    @Test fun builtInCollectionsAndCoversAreAvailable() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("collectionLive") == "true")
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val repository = EntryPointAccessors.fromApplication(context,
+            RepositoryAccessEntryPoint::class.java).mediaRepository()
+        val imageLoader = ImageLoader.Builder(context).build()
+        val catalogs = repository.getDefaultCatalogConfigs().filter { it.kind == CatalogKind.COLLECTION }
+        val timings = mutableListOf<Long>()
+        try {
+            for (catalog in catalogs) {
+                val start = SystemClock.elapsedRealtime()
+                val first = repository.loadCollectionCatalogPage(catalog, 0, 4)
+                timings += SystemClock.elapsedRealtime() - start
+                assertTrue("${catalog.title}: must resolve real titles", first.items.isNotEmpty())
+                val cover = imageLoader.execute(ImageRequest.Builder(context).data(catalog.collectionCoverImageUrl)
+                    .size(400, 240).allowHardware(false).build())
+                assertTrue("${catalog.title}: cover must decode", cover is SuccessResult)
+            }
+            instrumentation.sendStatus(0, Bundle().apply {
+                putString("stream", "BUILTIN_COLLECTIONS count=${catalogs.size} allTitles=true allCovers=true " +
+                    "medianMetadata=${timings.sorted()[timings.size / 2]}ms slowestMetadata=${timings.maxOrNull()}ms\n")
+            })
+        } finally {
+            imageLoader.shutdown()
+        }
+    }
+
     @Test fun importedListCardsAndArtworkLoadAndReopen() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("collectionLive") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()

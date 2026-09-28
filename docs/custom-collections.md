@@ -40,7 +40,37 @@ Run the collection regression tests with:
 
 `CollectionLoadingBenchmarkTest` includes a deterministic cold/warm request-count
 benchmark. Set `ARVIO_LIVE_COLLECTION_BENCHMARK=1` to additionally measure two public
-lists from the bundled Kaptain pack (requires the configured TMDB key). JVM timings
+lists from the attributed Kaptain import example (requires the configured TMDB key). JVM timings
 exclude image decoding and UI rendering. The opt-in Android instrumentation test
 `CollectionLoadingDeviceTest`, with argument `collectionLive=true`, measures actual
 repository loading, poster downloads/decoding, warm reloads and pagination.
+
+## Built-in Collections and Reuse
+
+ARVIO's built-in collections use ARVIO-authored TMDB queries and TMDB collection
+identifiers, not a repackaged third-party collection export. Service identities
+are retained during upgrades; imported packs remain user-managed and keep their
+own names and sources. Disabling the built-in set also hides newly added defaults.
+
+No explicit reuse license was found on `ImKaptain/Kaptain-Collection` or
+`ImKaptain/nuvio-art` when checked on 2026-09-28. The existing attributed example
+file has not been renamed or stripped of its credits and is not bundled as an
+app default. Obtain the creator's permission before redistributing that pack or
+its artwork; public access is not a substitute for permission.
+
+The collection detail screen has a bounded artwork preview of the focused title.
+Ratings identify their source, and budgets are shown in USD only for movies with
+a known positive budget. Missing figures are omitted, not estimated. Preview
+artwork waits briefly for focus to settle; the grid's focus feedback is immediate.
+
+## Collection Credits
+
+The existing `collections/kaptain-arvio-trimmed.json` import example originates
+from **Kaptain (ImKaptain)**. Credit for the original collection curation belongs
+to [Kaptain Collection](https://github.com/ImKaptain/Kaptain-Collection), and
+associated artwork is credited to [nuvio-art](https://github.com/ImKaptain/nuvio-art).
+The example retains its original source references. This credit is not a claim
+of permission, endorsement, or ownership by ARVIO.
+
+The replacement built-in set is independently authored for ARVIO and uses TMDB
+metadata and artwork, not the Kaptain pack.

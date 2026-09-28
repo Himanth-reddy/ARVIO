@@ -144,6 +144,7 @@ class CatalogRepository @Inject constructor(
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .toSet()
+                .let(ArvioCollections::preserveDisabledDefaults)
         } catch (e: Exception) {
             AppLogger.e("CatalogRepository", "Error fetching data, returning empty set", e)
             emptySet()
@@ -859,12 +860,13 @@ class CatalogRepository @Inject constructor(
     suspend fun isBuiltInCollectionsEnabled(): Boolean =
         !getHiddenPreinstalledCatalogIdsForActiveProfile().containsAll(builtInCollectionIds())
 
-    /** Shows or hides ARVIO's built-in collection rails (Services / Genres / Franchises). */
+    /** Preserve the global choice when future updates add built-in collections. */
     suspend fun setBuiltInCollectionsEnabled(enabled: Boolean) {
         val ids = builtInCollectionIds()
         val hidden = getHiddenPreinstalledCatalogIdsForActiveProfile().toSet()
         setHiddenPreinstalledCatalogIdsForActiveProfile(
-            (if (enabled) hidden - ids else hidden + ids).toList()
+            (if (enabled) hidden - ids - ArvioCollections.DISABLED_MARKER
+             else hidden + ids + ArvioCollections.DISABLED_MARKER).toList()
         )
         ensurePreinstalledDefaults(MediaRepository.buildPreinstalledDefaults())
     }

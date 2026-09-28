@@ -1,13 +1,12 @@
 package com.arflix.tv.ui.screens.collections
 
-import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,7 +30,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -40,6 +38,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,7 +57,6 @@ import androidx.tv.foundation.lazy.grid.TvGridCells
 import androidx.tv.foundation.lazy.grid.TvLazyVerticalGrid
 import androidx.tv.foundation.lazy.grid.itemsIndexed
 import androidx.tv.foundation.lazy.grid.rememberTvLazyGridState
-import coil.compose.AsyncImage
 import com.arflix.tv.R
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogKind
@@ -639,35 +637,12 @@ fun CollectionDetailsScreen(
         rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
     val configuration = LocalConfiguration.current
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val cardWidth = if (usePosterCards) {
-        if (isMobile) 138.dp else when {
-            configuration.screenWidthDp >= 2200 -> 196.dp
-            configuration.screenWidthDp >= 1600 -> 184.dp
-            else -> 172.dp
-        }
-    } else if (isMobile) 220.dp else 260.dp
-    val gridColumns = if (isMobile) {
-        if (isLandscape) {
-            if (usePosterCards) 4 else 3
-        } else if (usePosterCards) {
-            3
-        } else {
-            2
-        }
-    } else if (usePosterCards) {
-        when {
-            configuration.screenWidthDp >= 2200 -> 8
-            configuration.screenWidthDp >= 1600 -> 7
-            else -> 5
-        }
-    } else {
-        when {
-            configuration.screenWidthDp >= 2200 -> 6
-            configuration.screenWidthDp >= 1600 -> 5
-            else -> 4
-        }
-    }
+    val horizontalInset = if (isMobile) 20 else 42
+    val gap = if (usePosterCards) 18 else 14
+    val availableWidth = (configuration.screenWidthDp - horizontalInset * 2).coerceAtLeast(160)
+    val minCardWidth = if (usePosterCards) { if (isMobile) 106 else 128 } else { if (isMobile) 160 else 220 }
+    val gridColumns = ((availableWidth + gap) / (minCardWidth + gap)).coerceIn(1, 8)
+    val cardWidth = ((availableWidth - gap * (gridColumns - 1)).toFloat() / gridColumns).dp
 
     val initialTab = when {
         uiState.supportsMovies -> CollectionTab.MOVIES
@@ -733,9 +708,9 @@ fun CollectionDetailsScreen(
                         CollectionTab.MOVIES -> moviesGridState
                         CollectionTab.SERIES -> seriesGridState
                     }
-                    // Grid has 2 header items (tab bar + spacer) before the media cards
+                    // The tab bar is the grid's only header item.
                     try {
-                        currentGridState.scrollToItem(savedIndex + 2)
+                        currentGridState.scrollToItem(savedIndex + 1)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
@@ -787,7 +762,6 @@ fun CollectionDetailsScreen(
                 }
             }
     ) {
-        CollectionBackdrop(catalog = uiState.catalog)
         val activeTab = selectedTab
         val items = if (activeTab == CollectionTab.MOVIES) {
             uiState.movieItems
@@ -810,6 +784,8 @@ fun CollectionDetailsScreen(
             seriesGridState
         }
         CollectionItemsGrid(
+            catalog = uiState.catalog,
+            onBack = onBack,
             items = items,
             gridColumns = gridColumns,
             cardWidth = cardWidth,
@@ -877,63 +853,6 @@ fun CollectionDetailsScreen(
 }
 
 @Composable
-private fun CollectionBackdrop(catalog: CatalogConfig?) {
-    val accent = collectionAccentColor(catalog?.collectionGroup)
-    val backdrop = catalog?.collectionHeroImageUrl
-        ?.takeIf { it.isNotBlank() }
-        ?: catalog?.collectionCoverImageUrl?.takeIf { it.isNotBlank() }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (backdrop != null) {
-            AsyncImage(
-                model = backdrop,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                alpha = 0.2f
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            accent.copy(alpha = 0.32f),
-                            accent.copy(alpha = 0.1f),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            appBackgroundDark().copy(alpha = 0.62f),
-                            accent.copy(alpha = 0.12f),
-                            appBackgroundDark().copy(alpha = 0.88f),
-                            appBackgroundDark()
-                        )
-                    )
-                )
-        )
-    }
-}
-
-private fun collectionAccentColor(group: CollectionGroupKind?): Color = when (group) {
-    CollectionGroupKind.FEATURED -> Color(0xFFE6A23C)
-    CollectionGroupKind.SERVICE -> Color(0xFF1AA7EC)
-    CollectionGroupKind.GENRE -> Color(0xFFC65D3B)
-    CollectionGroupKind.DECADE -> Color(0xFFB98B32)
-    CollectionGroupKind.FRANCHISE -> Color(0xFF2F9C95)
-    CollectionGroupKind.NETWORK -> Color(0xFF4F9D69)
-    null -> Color.White
-}
-
-@Composable
 private fun CollectionTabBar(
     hasMovies: Boolean,
     hasSeries: Boolean,
@@ -949,8 +868,7 @@ private fun CollectionTabBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .arvioDpadFocusGroup()
-            .padding(start = 42.dp, end = 42.dp),
+            .arvioDpadFocusGroup(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (isSportsCollection) {
@@ -1020,7 +938,6 @@ private fun CollectionTabChip(
             .onPreviewKeyEvent { event ->
                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp
             }
-            .focusable()
             .clickable(onClick = onClick)
             .padding(horizontal = 22.dp, vertical = 10.dp)
     ) {
@@ -1029,7 +946,7 @@ private fun CollectionTabChip(
             style = ArflixTypography.sectionTitle.copy(
                 fontSize = 14.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                letterSpacing = 0.4.sp
+                letterSpacing = 0.sp
             ),
             color = fg
         )
@@ -1037,7 +954,9 @@ private fun CollectionTabChip(
 }
 
 @Composable
-private fun CollectionItemsGrid(
+internal fun CollectionItemsGrid(
+    catalog: CatalogConfig?,
+    onBack: () -> Unit,
     items: List<MediaItem>,
     gridColumns: Int,
     cardWidth: androidx.compose.ui.unit.Dp,
@@ -1063,6 +982,18 @@ private fun CollectionItemsGrid(
     emptyMessage: String,
     topContentPadding: androidx.compose.ui.unit.Dp
 ) {
+    val isMobile = LocalDeviceType.current.isTouchDevice()
+    val compact = LocalConfiguration.current.screenHeightDp < 480
+    var focusedKey by rememberSaveable(catalog?.id, selectedTab) { mutableStateOf<String?>(null) }
+    var previewKey by remember(catalog?.id, selectedTab) { mutableStateOf<String?>(null) }
+    LaunchedEffect(focusedKey) {
+        // Focus feedback stays immediate; only expensive artwork waits for rapid navigation to settle.
+        delay(100)
+        previewKey = focusedKey
+    }
+    val previewItem = remember(items, previewKey) {
+        items.firstOrNull { "${it.mediaType}-${it.id}" == previewKey } ?: items.firstOrNull()
+    }
     val cardContentType = if (usePosterCards) "poster_card" else "landscape_card"
     val focusBleedPadding = if (usePosterCards) 10.dp else 6.dp
     val latestItems by rememberUpdatedState(items)
@@ -1073,7 +1004,7 @@ private fun CollectionItemsGrid(
     LaunchedEffect(gridState) {
         try {
             snapshotFlow {
-                gridState.layoutInfo.visibleItemsInfo.mapNotNull { latestItems.getOrNull(it.index - 2) }
+                gridState.layoutInfo.visibleItemsInfo.mapNotNull { latestItems.getOrNull(it.index - 1) }
             }.distinctUntilChanged().collect { latestOnVisibleDetailsChanged(it) }
         } finally {
             latestOnVisibleDetailsChanged(emptyList())
@@ -1088,7 +1019,7 @@ private fun CollectionItemsGrid(
             val last = layout.visibleItemsInfo.lastOrNull()?.index ?: 0
             val mediaIndexes = layout.visibleItemsInfo
                 .asSequence()
-                .map { it.index - 2 }
+                .map { it.index - 1 }
                 .filter { it >= 0 }
                 .toList()
             Triple(last, layout.totalItemsCount, mediaIndexes)
@@ -1106,14 +1037,16 @@ private fun CollectionItemsGrid(
         }
     }
 
-    TvLazyVerticalGrid(
+    Column(Modifier.fillMaxSize()) {
+        CollectionSpotlight(catalog, previewItem, isMobile, compact, onBack)
+        TvLazyVerticalGrid(
         columns = TvGridCells.Fixed(gridColumns),
         state = gridState,
-        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup().clipToBounds(),
+        modifier = Modifier.weight(1f).fillMaxWidth().arvioDpadFocusGroup().clipToBounds().testTag("collection_grid"),
         contentPadding = PaddingValues(
-            start = 42.dp,
+            start = if (isMobile) 20.dp else 42.dp,
             top = topContentPadding,
-            end = 42.dp,
+            end = if (isMobile) 20.dp else 42.dp,
             bottom = 48.dp + focusBleedPadding + LocalBottomBarInset.current
         ),
         verticalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp),
@@ -1133,20 +1066,13 @@ private fun CollectionItemsGrid(
                 onTabSelected = onTabSelected
             )
         }
-        item(
-            span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
-            contentType = "tabs_gap"
-        ) {
-            Box(modifier = Modifier.height(6.dp))
-        }
-
         if (isLoading && items.isEmpty()) {
             val cardHeight = if (usePosterCards) cardWidth * 1.5f else cardWidth * 9f / 16f
             itemsIndexed((1..gridColumns * 3).toList(), contentType = { _, _ -> "skeleton" }) { _, _ ->
                 Box(
                     modifier = Modifier
                         .height(cardHeight)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Color.White.copy(alpha = 0.05f))
                 )
             }
@@ -1184,11 +1110,12 @@ private fun CollectionItemsGrid(
                     showTitle = true,
                     titleMaxLines = if (usePosterCards) 2 else 1,
                     onFocused = {
+                        focusedKey = "${item.mediaType}-${item.id}"
                         onItemFocused(item, index)
                         if (items.size > 10 && index >= items.size - 2) onNearEnd()
                     },
                     onClick = { onItemClick(item) },
-                    modifier = Modifier.focusRequester(itemFocusRequester)
+                    modifier = Modifier.focusRequester(itemFocusRequester).testTag("collection_item_$index")
                 )
             }
         }
@@ -1212,6 +1139,7 @@ private fun CollectionItemsGrid(
                 }
             }
         }
+    }
     }
 }
 
