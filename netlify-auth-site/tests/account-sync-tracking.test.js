@@ -72,3 +72,32 @@ test("a missing Trakt token from a stale snapshot cannot erase cloud auth", () =
   const result = _test.preserveTraktTokens(existing, { traktTokens: {} });
   assert.equal(result.traktTokens.profile.accessToken, "token");
 });
+
+test("newer MDBList OAuth credential survives stale device push", () => {
+  const existing = {
+    payload: {
+      mdbListSyncByProfile: {
+        profile: {
+          mdbListAccessToken: "cloud-access-token",
+          mdbListRefreshToken: "cloud-refresh-token",
+          mdbListTokenExpiresAt: 999999,
+          mdbListCredentialUpdatedAt: 300
+        }
+      }
+    }
+  };
+  const incoming = {
+    mdbListSyncByProfile: {
+      profile: {
+        mdbListAccessToken: "stale-access-token",
+        mdbListCredentialUpdatedAt: 150
+      }
+    }
+  };
+
+  const result = _test.preserveTrackingRouting(existing, incoming);
+  assert.equal(result.mdbListSyncByProfile.profile.mdbListAccessToken, "cloud-access-token");
+  assert.equal(result.mdbListSyncByProfile.profile.mdbListRefreshToken, "cloud-refresh-token");
+  assert.equal(result.mdbListSyncByProfile.profile.mdbListTokenExpiresAt, 999999);
+  assert.equal(result.mdbListSyncByProfile.profile.mdbListCredentialUpdatedAt, 300);
+});

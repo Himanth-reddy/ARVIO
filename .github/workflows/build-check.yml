@@ -136,6 +136,7 @@ jobs:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
           TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+          MDBLIST_CLIENT_ID: ${{ secrets.MDBLIST_CLIENT_ID }}
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
@@ -148,6 +149,7 @@ jobs:
             "TMDB_API_KEY=$TMDB_API_KEY" \
             "TRAKT_CLIENT_ID=$TRAKT_CLIENT_ID" \
             "TRAKT_CLIENT_SECRET=$TRAKT_CLIENT_SECRET" \
+            "MDBLIST_CLIENT_ID=${MDBLIST_CLIENT_ID:-}" \
             "TELEGRAM_API_ID=$TELEGRAM_API_ID" \
             "TELEGRAM_API_HASH=$TELEGRAM_API_HASH" \
             > secrets.properties

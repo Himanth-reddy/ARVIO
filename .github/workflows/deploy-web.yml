@@ -71,6 +71,7 @@ jobs:
 
       - name: Build Netlify bundle
         env:
+          NEXT_PUBLIC_MDBLIST_CLIENT_ID: ${{ secrets.MDBLIST_CLIENT_ID }}
           NEXT_PUBLIC_TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           NEXT_PUBLIC_TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: npx --yes netlify-cli@25.6.0 build --context production

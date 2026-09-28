@@ -99,6 +99,15 @@ class SyncProviderStore @Inject constructor(
     private fun mdbListKey() = profileManager.profileStringKey("mdblist_api_key")
     private fun mdbListKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "mdblist_api_key")
+    private fun mdbListAccessTokenKey() = profileManager.profileStringKey("mdblist_access_token")
+    private fun mdbListAccessTokenKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "mdblist_access_token")
+    private fun mdbListRefreshTokenKey() = profileManager.profileStringKey("mdblist_refresh_token")
+    private fun mdbListRefreshTokenKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "mdblist_refresh_token")
+    private fun mdbListTokenExpiresAtKey() = profileManager.profileLongKey("mdblist_token_expires_at")
+    private fun mdbListTokenExpiresAtKeyFor(profileId: String) =
+        profileManager.profileLongKeyFor(profileId, "mdblist_token_expires_at")
     private fun traktAccessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun watchlistReadModeKey() = profileManager.profileStringKey("tracking_watchlist_read_mode_v2")
     private fun continueWatchingReadModeKey() = profileManager.profileStringKey("tracking_continue_read_mode_v2")
@@ -138,13 +147,17 @@ class SyncProviderStore @Inject constructor(
     }
 
     suspend fun setProvider(provider: SyncProvider) {
+        setProvider(provider, profileManager.getProfileIdSync())
+    }
+
+    suspend fun setProvider(provider: SyncProvider, profileId: String) {
         context.settingsDataStore.edit { prefs ->
             if (provider == SyncProvider.NONE) {
-                prefs.remove(providerKey())
+                prefs.remove(providerKeyFor(profileId))
             } else {
-                prefs[providerKey()] = provider.toStorage()
+                prefs[providerKeyFor(profileId)] = provider.toStorage()
             }
-            prefs[trackingUpdatedAtKey()] = System.currentTimeMillis()
+            prefs[trackingUpdatedAtKeyFor(profileId)] = System.currentTimeMillis()
         }
     }
 
@@ -153,7 +166,7 @@ class SyncProviderStore @Inject constructor(
         val credentials = context.traktDataStore.data.first()
         val hasTrakt = !credentials[traktAccessTokenKey()].isNullOrBlank()
         val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKey()], SIMKL_TOKEN_ALIAS).isNullOrBlank()
-        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
+        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank() || !credentials[mdbListAccessTokenKey()].isNullOrBlank()
         val fallback = defaultTrackingReadMode(
             hasTrakt = hasTrakt,
             hasSimkl = hasSimkl,
@@ -176,26 +189,34 @@ class SyncProviderStore @Inject constructor(
     }
 
     suspend fun setReadMode(feature: TrackingFeature, mode: TrackingReadMode) {
+        setReadMode(feature, mode, profileManager.getProfileIdSync())
+    }
+
+    suspend fun setReadMode(feature: TrackingFeature, mode: TrackingReadMode, profileId: String) {
         context.settingsDataStore.edit { prefs ->
             val key = when (feature) {
-                TrackingFeature.WATCHLIST -> watchlistReadModeKey()
-                TrackingFeature.CONTINUE_WATCHING -> continueWatchingReadModeKey()
-                TrackingFeature.WATCHED -> watchedReadModeKey()
+                TrackingFeature.WATCHLIST -> watchlistReadModeKeyFor(profileId)
+                TrackingFeature.CONTINUE_WATCHING -> continueWatchingReadModeKeyFor(profileId)
+                TrackingFeature.WATCHED -> watchedReadModeKeyFor(profileId)
             }
             if (mode == TrackingReadMode.AUTO) prefs.remove(key) else prefs[key] = mode.toStorage()
-            prefs[trackingUpdatedAtKey()] = System.currentTimeMillis()
+            prefs[trackingUpdatedAtKeyFor(profileId)] = System.currentTimeMillis()
         }
     }
 
     suspend fun setWriteTarget(provider: SyncProvider, enabled: Boolean) {
+        setWriteTarget(provider, enabled, profileManager.getProfileIdSync())
+    }
+
+    suspend fun setWriteTarget(provider: SyncProvider, enabled: Boolean, profileId: String) {
         context.settingsDataStore.edit { prefs ->
             when (provider) {
-                SyncProvider.TRAKT -> prefs[writeToTraktKey()] = enabled
-                SyncProvider.SIMKL -> prefs[writeToSimklKey()] = enabled
+                SyncProvider.TRAKT -> prefs[writeToTraktKeyFor(profileId)] = enabled
+                SyncProvider.SIMKL -> prefs[writeToSimklKeyFor(profileId)] = enabled
                 else -> Unit
             }
             if (provider == SyncProvider.TRAKT || provider == SyncProvider.SIMKL) {
-                prefs[trackingUpdatedAtKey()] = System.currentTimeMillis()
+                prefs[trackingUpdatedAtKeyFor(profileId)] = System.currentTimeMillis()
             }
         }
     }
@@ -219,7 +240,7 @@ class SyncProviderStore @Inject constructor(
     suspend fun writeProviders(): Set<SyncProvider> {
         val preferences = getTrackingPreferences()
         val credentials = context.traktDataStore.data.first()
-        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
+        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank() || !credentials[mdbListAccessTokenKey()].isNullOrBlank()
         return buildSet {
             if (preferences.writeToTrakt == true) add(SyncProvider.TRAKT)
             if (preferences.writeToSimkl == true) add(SyncProvider.SIMKL)
@@ -228,19 +249,30 @@ class SyncProviderStore @Inject constructor(
     }
 
     suspend fun onProviderConnected(provider: SyncProvider) {
+        onProviderConnected(provider, profileManager.getProfileIdSync())
+    }
+
+    suspend fun onProviderConnected(provider: SyncProvider, profileId: String) {
         val settings = context.settingsDataStore.data.first()
         val credentials = context.traktDataStore.data.first()
-        val hasTrakt = !credentials[traktAccessTokenKey()].isNullOrBlank()
-        val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKey()], SIMKL_TOKEN_ALIAS).isNullOrBlank()
-        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
-        val currentProvider = SyncProvider.fromStorage(settings[providerKey()])
+        val hasTrakt = !credentials[profileManager.profileStringKeyFor(profileId, "trakt_access_token")].isNullOrBlank()
+        val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKeyFor(profileId)], SIMKL_TOKEN_ALIAS).isNullOrBlank()
+        val hasMdbList = !credentials[mdbListKeyFor(profileId)].isNullOrBlank() || !credentials[mdbListAccessTokenKeyFor(profileId)].isNullOrBlank()
+        val currentProvider = SyncProvider.fromStorage(settings[providerKeyFor(profileId)])
+        val connected = when (provider) {
+            SyncProvider.TRAKT -> hasTrakt
+            SyncProvider.SIMKL -> hasSimkl
+            SyncProvider.MDBLIST -> hasMdbList
+            SyncProvider.NONE -> false
+        }
+        if (!connected) return
         val currentProviderStillConnected = when (currentProvider) {
             SyncProvider.TRAKT -> hasTrakt
             SyncProvider.SIMKL -> hasSimkl
             SyncProvider.MDBLIST -> hasMdbList
             SyncProvider.NONE -> false
         }
-        if (!currentProviderStillConnected) setProvider(provider)
+        if (!currentProviderStillConnected) setProvider(provider, profileId)
 
         val replacement = defaultTrackingReadMode(
             hasTrakt = hasTrakt,
@@ -248,9 +280,9 @@ class SyncProviderStore @Inject constructor(
             hasMdbList = hasMdbList,
             preferredProvider = currentProvider.takeIf { currentProviderStillConnected } ?: provider
         )
-        val storedWatchlistMode = TrackingReadMode.fromStorage(settings[watchlistReadModeKey()])
-        val storedContinueMode = TrackingReadMode.fromStorage(settings[continueWatchingReadModeKey()])
-        val storedWatchedMode = TrackingReadMode.fromStorage(settings[watchedReadModeKey()])
+        val storedWatchlistMode = TrackingReadMode.fromStorage(settings[watchlistReadModeKeyFor(profileId)])
+        val storedContinueMode = TrackingReadMode.fromStorage(settings[continueWatchingReadModeKeyFor(profileId)])
+        val storedWatchedMode = TrackingReadMode.fromStorage(settings[watchedReadModeKeyFor(profileId)])
         fun repaired(mode: TrackingReadMode) = repairUnavailableTrackingReadMode(
             mode = mode,
             hasTrakt = hasTrakt,
@@ -259,32 +291,36 @@ class SyncProviderStore @Inject constructor(
             replacement = replacement
         )
         repaired(storedWatchlistMode).takeIf { it != storedWatchlistMode }
-            ?.let { setReadMode(TrackingFeature.WATCHLIST, it) }
+            ?.let { setReadMode(TrackingFeature.WATCHLIST, it, profileId) }
         repaired(storedContinueMode).takeIf { it != storedContinueMode }
-            ?.let { setReadMode(TrackingFeature.CONTINUE_WATCHING, it) }
+            ?.let { setReadMode(TrackingFeature.CONTINUE_WATCHING, it, profileId) }
         repaired(storedWatchedMode).takeIf { it != storedWatchedMode }
-            ?.let { setReadMode(TrackingFeature.WATCHED, it) }
-        if (provider == SyncProvider.TRAKT) setWriteTarget(SyncProvider.TRAKT, true)
-        if (provider == SyncProvider.SIMKL) setWriteTarget(SyncProvider.SIMKL, true)
+            ?.let { setReadMode(TrackingFeature.WATCHED, it, profileId) }
+        if (provider == SyncProvider.TRAKT) setWriteTarget(SyncProvider.TRAKT, true, profileId)
+        if (provider == SyncProvider.SIMKL) setWriteTarget(SyncProvider.SIMKL, true, profileId)
     }
 
     suspend fun onProviderDisconnected(provider: SyncProvider) {
-        setWriteTarget(provider, false)
+        onProviderDisconnected(provider, profileManager.getProfileIdSync())
+    }
+
+    suspend fun onProviderDisconnected(provider: SyncProvider, profileId: String) {
+        setWriteTarget(provider, false, profileId)
         val credentials = context.traktDataStore.data.first()
-        val hasTrakt = !credentials[traktAccessTokenKey()].isNullOrBlank()
-        val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKey()], SIMKL_TOKEN_ALIAS).isNullOrBlank()
-        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
+        val hasTrakt = !credentials[profileManager.profileStringKeyFor(profileId, "trakt_access_token")].isNullOrBlank()
+        val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKeyFor(profileId)], SIMKL_TOKEN_ALIAS).isNullOrBlank()
+        val hasMdbList = !credentials[mdbListKeyFor(profileId)].isNullOrBlank() || !credentials[mdbListAccessTokenKeyFor(profileId)].isNullOrBlank()
         val settings = context.settingsDataStore.data.first()
         val replacement = defaultTrackingReadMode(
             hasTrakt = hasTrakt,
             hasSimkl = hasSimkl,
             hasMdbList = hasMdbList,
-            preferredProvider = SyncProvider.fromStorage(settings[providerKey()])
+            preferredProvider = SyncProvider.fromStorage(settings[providerKeyFor(profileId)])
         )
         val current = TrackingPreferences(
-            watchlistReadMode = TrackingReadMode.fromStorage(settings[watchlistReadModeKey()]),
-            continueWatchingReadMode = TrackingReadMode.fromStorage(settings[continueWatchingReadModeKey()]),
-            watchedReadMode = TrackingReadMode.fromStorage(settings[watchedReadModeKey()])
+            watchlistReadMode = TrackingReadMode.fromStorage(settings[watchlistReadModeKeyFor(profileId)]),
+            continueWatchingReadMode = TrackingReadMode.fromStorage(settings[continueWatchingReadModeKeyFor(profileId)]),
+            watchedReadMode = TrackingReadMode.fromStorage(settings[watchedReadModeKeyFor(profileId)])
         )
         val affected = when (provider) {
             SyncProvider.TRAKT -> setOf(TrackingReadMode.TRAKT, TrackingReadMode.BOTH)
@@ -292,11 +328,11 @@ class SyncProviderStore @Inject constructor(
             SyncProvider.MDBLIST -> setOf(TrackingReadMode.MDBLIST)
             SyncProvider.NONE -> emptySet()
         }
-        if (current.watchlistReadMode in affected) setReadMode(TrackingFeature.WATCHLIST, replacement)
-        if (current.continueWatchingReadMode in affected) setReadMode(TrackingFeature.CONTINUE_WATCHING, replacement)
-        if (current.watchedReadMode in affected) setReadMode(TrackingFeature.WATCHED, replacement)
+        if (current.watchlistReadMode in affected) setReadMode(TrackingFeature.WATCHLIST, replacement, profileId)
+        if (current.continueWatchingReadMode in affected) setReadMode(TrackingFeature.CONTINUE_WATCHING, replacement, profileId)
+        if (current.watchedReadMode in affected) setReadMode(TrackingFeature.WATCHED, replacement, profileId)
         if (provider == SyncProvider.SIMKL) {
-            setSimklWatermark(null)
+            context.traktDataStore.edit { it.remove(simklWatermarkKeyFor(profileId)) }
         }
         setProvider(
             when {
@@ -304,7 +340,8 @@ class SyncProviderStore @Inject constructor(
                 hasSimkl -> SyncProvider.SIMKL
                 hasMdbList -> SyncProvider.MDBLIST
                 else -> SyncProvider.NONE
-            }
+            },
+            profileId
         )
     }
 
@@ -361,23 +398,158 @@ class SyncProviderStore @Inject constructor(
         }
     }
 
-    suspend fun getMdbListApiKey(): String? {
-        val prefs = context.traktDataStore.data.first()
-        return prefs[mdbListKey()]?.trim()?.takeIf { it.isNotEmpty() }
+    sealed interface MdbListCredential {
+        data class OAuth(
+            val accessToken: String,
+            val refreshToken: String? = null,
+            val expiresAt: Long? = null
+        ) : MdbListCredential
+
+        data class ApiKey(
+            val apiKey: String
+        ) : MdbListCredential
     }
 
-    suspend fun setMdbListApiKey(apiKey: String?) {
+    suspend fun getMdbListCredential(profileId: String? = null): MdbListCredential? {
+        val prefs = context.traktDataStore.data.first()
+        val accessKey = if (profileId != null) mdbListAccessTokenKeyFor(profileId) else mdbListAccessTokenKey()
+        val token = prefs[accessKey]?.trim()?.takeIf { it.isNotEmpty() }
+        if (token != null) {
+            val refreshKey = if (profileId != null) mdbListRefreshTokenKeyFor(profileId) else mdbListRefreshTokenKey()
+            val expiresKey = if (profileId != null) mdbListTokenExpiresAtKeyFor(profileId) else mdbListTokenExpiresAtKey()
+            return MdbListCredential.OAuth(
+                accessToken = token,
+                refreshToken = prefs[refreshKey]?.trim()?.takeIf { it.isNotEmpty() },
+                expiresAt = prefs[expiresKey]
+            )
+        }
+        val legacyKey = if (profileId != null) mdbListKeyFor(profileId) else mdbListKey()
+        val key = prefs[legacyKey]?.trim()?.takeIf { it.isNotEmpty() }
+        return key?.let { MdbListCredential.ApiKey(it) }
+    }
+
+    suspend fun getMdbListAuthToken(profileId: String? = null): String? {
+        val prefs = context.traktDataStore.data.first()
+        val accessKey = if (profileId != null) mdbListAccessTokenKeyFor(profileId) else mdbListAccessTokenKey()
+        val token = prefs[accessKey]?.trim()?.takeIf { it.isNotEmpty() }
+        if (token != null) return token
+        val legacyKey = if (profileId != null) mdbListKeyFor(profileId) else mdbListKey()
+        return prefs[legacyKey]?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    suspend fun getMdbListAccessToken(profileId: String? = null): String? {
+        val prefs = context.traktDataStore.data.first()
+        val accessKey = if (profileId != null) mdbListAccessTokenKeyFor(profileId) else mdbListAccessTokenKey()
+        return prefs[accessKey]?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    suspend fun getMdbListRefreshToken(profileId: String? = null): String? {
+        val prefs = context.traktDataStore.data.first()
+        val refreshKey = if (profileId != null) mdbListRefreshTokenKeyFor(profileId) else mdbListRefreshTokenKey()
+        return prefs[refreshKey]?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    suspend fun getMdbListTokenExpiresAt(profileId: String? = null): Long? {
+        val prefs = context.traktDataStore.data.first()
+        val expiresKey = if (profileId != null) mdbListTokenExpiresAtKeyFor(profileId) else mdbListTokenExpiresAtKey()
+        return prefs[expiresKey]
+    }
+
+    suspend fun getMdbListApiKey(profileId: String? = null): String? {
+        val prefs = context.traktDataStore.data.first()
+        val legacyKey = if (profileId != null) mdbListKeyFor(profileId) else mdbListKey()
+        return prefs[legacyKey]?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    suspend fun setMdbListOAuthTokens(
+        accessToken: String?,
+        refreshToken: String?,
+        expiresInSeconds: Long?,
+        profileId: String? = null,
+        expected: MdbListCredential.OAuth? = null
+    ): Boolean {
         val updatedAt = System.currentTimeMillis()
+        val expiresAt = expiresInSeconds?.let { updatedAt + (it * 1000L) }
+        val accessKey = if (profileId != null) mdbListAccessTokenKeyFor(profileId) else mdbListAccessTokenKey()
+        val refreshKey = if (profileId != null) mdbListRefreshTokenKeyFor(profileId) else mdbListRefreshTokenKey()
+        val expiresKey = if (profileId != null) mdbListTokenExpiresAtKeyFor(profileId) else mdbListTokenExpiresAtKey()
+        val legacyKey = if (profileId != null) mdbListKeyFor(profileId) else mdbListKey()
+        val updatedKey = if (profileId != null) mdbListCredentialUpdatedAtKeyFor(profileId) else mdbListCredentialUpdatedAtKey()
+
+        var applied = false
+        context.traktDataStore.edit { prefs ->
+            // A refresh must not overwrite a disconnect, cloud restore, or another login.
+            if (expected != null && (prefs[accessKey] != expected.accessToken ||
+                    prefs[refreshKey] != expected.refreshToken || prefs[expiresKey] != expected.expiresAt)) {
+                return@edit
+            }
+            applied = true
+            val cleanAccess = accessToken?.trim().orEmpty()
+            val cleanRefresh = refreshToken?.trim().orEmpty()
+            if (cleanAccess.isEmpty()) {
+                prefs.remove(accessKey)
+                prefs.remove(refreshKey)
+                prefs.remove(expiresKey)
+            } else {
+                prefs[accessKey] = cleanAccess
+                if (cleanRefresh.isNotEmpty()) {
+                    prefs[refreshKey] = cleanRefresh
+                } else prefs.remove(refreshKey)
+                if (expiresAt != null) {
+                    prefs[expiresKey] = expiresAt
+                } else prefs.remove(expiresKey)
+                prefs.remove(legacyKey)
+            }
+        }
+        if (applied) context.settingsDataStore.edit { prefs ->
+            prefs[updatedKey] = updatedAt
+        }
+        return applied
+    }
+
+    suspend fun setMdbListApiKey(apiKey: String?, profileId: String? = null) {
+        val updatedAt = System.currentTimeMillis()
+        val accessKey = if (profileId != null) mdbListAccessTokenKeyFor(profileId) else mdbListAccessTokenKey()
+        val refreshKey = if (profileId != null) mdbListRefreshTokenKeyFor(profileId) else mdbListRefreshTokenKey()
+        val expiresKey = if (profileId != null) mdbListTokenExpiresAtKeyFor(profileId) else mdbListTokenExpiresAtKey()
+        val legacyKey = if (profileId != null) mdbListKeyFor(profileId) else mdbListKey()
+        val updatedKey = if (profileId != null) mdbListCredentialUpdatedAtKeyFor(profileId) else mdbListCredentialUpdatedAtKey()
+
         context.traktDataStore.edit { prefs ->
             val trimmed = apiKey?.trim().orEmpty()
             if (trimmed.isEmpty()) {
-                prefs.remove(mdbListKey())
+                prefs.remove(legacyKey)
+                prefs.remove(accessKey)
+                prefs.remove(refreshKey)
+                prefs.remove(expiresKey)
             } else {
-                prefs[mdbListKey()] = trimmed
+                prefs[legacyKey] = trimmed
+                prefs.remove(accessKey)
+                prefs.remove(refreshKey)
+                prefs.remove(expiresKey)
             }
         }
         context.settingsDataStore.edit { prefs ->
-            prefs[mdbListCredentialUpdatedAtKey()] = updatedAt
+            prefs[updatedKey] = updatedAt
+        }
+    }
+
+    suspend fun clearAllMdbListCredentials(profileId: String? = null) {
+        val updatedAt = System.currentTimeMillis()
+        val accessKey = if (profileId != null) mdbListAccessTokenKeyFor(profileId) else mdbListAccessTokenKey()
+        val refreshKey = if (profileId != null) mdbListRefreshTokenKeyFor(profileId) else mdbListRefreshTokenKey()
+        val expiresKey = if (profileId != null) mdbListTokenExpiresAtKeyFor(profileId) else mdbListTokenExpiresAtKey()
+        val legacyKey = if (profileId != null) mdbListKeyFor(profileId) else mdbListKey()
+        val updatedKey = if (profileId != null) mdbListCredentialUpdatedAtKeyFor(profileId) else mdbListCredentialUpdatedAtKey()
+
+        context.traktDataStore.edit { prefs ->
+            prefs.remove(legacyKey)
+            prefs.remove(accessKey)
+            prefs.remove(refreshKey)
+            prefs.remove(expiresKey)
+        }
+        context.settingsDataStore.edit { prefs ->
+            prefs[updatedKey] = updatedAt
         }
     }
 
@@ -393,7 +565,12 @@ class SyncProviderStore @Inject constructor(
         val migrationUpdatedAt = System.currentTimeMillis()
         profileIds.forEach { profileId ->
             val provider = SyncProvider.fromStorage(settingsPrefs[providerKeyFor(profileId)])
-            val key = traktPrefs[mdbListKeyFor(profileId)]?.trim()?.takeIf { it.isNotEmpty() }
+            val legacyKey = traktPrefs[mdbListKeyFor(profileId)]?.trim()?.takeIf { it.isNotEmpty() }
+            val oAuthAccessToken = traktPrefs[mdbListAccessTokenKeyFor(profileId)]?.trim()?.takeIf { it.isNotEmpty() }
+            val oAuthRefreshToken = traktPrefs[mdbListRefreshTokenKeyFor(profileId)]?.trim()?.takeIf { it.isNotEmpty() }
+            val oAuthExpiresAt = traktPrefs[mdbListTokenExpiresAtKeyFor(profileId)]
+            val hasMdbListCred = legacyKey != null || oAuthAccessToken != null
+
             val simklToken = SecureStorage.decrypt(
                 traktPrefs[simklAccessTokenKeyFor(profileId)],
                 SIMKL_TOKEN_ALIAS
@@ -420,11 +597,11 @@ class SyncProviderStore @Inject constructor(
                 }
             val mdbListCredentialUpdatedAt = settingsPrefs[mdbListCredentialUpdatedAtKeyFor(profileId)]
                 ?.takeIf { it > 0L }
-                ?: key?.let {
+                ?: (if (hasMdbListCred) {
                     migratedMdbListProfiles += profileId
                     migrationUpdatedAt
-                }
-            if (provider != SyncProvider.NONE || key != null || simklToken != null ||
+                } else null)
+            if (provider != SyncProvider.NONE || hasMdbListCred || simklToken != null ||
                 watchlistMode != TrackingReadMode.AUTO || continueMode != TrackingReadMode.AUTO ||
                 watchedMode != TrackingReadMode.AUTO || writeTrakt != null || writeSimkl != null ||
                 updatedAt != null || simklCredentialUpdatedAt != null ||
@@ -432,7 +609,10 @@ class SyncProviderStore @Inject constructor(
             ) {
                 out[profileId] = ProfileSyncSelection(
                     provider = provider,
-                    mdbListApiKey = key,
+                    mdbListApiKey = legacyKey,
+                    mdbListAccessToken = oAuthAccessToken,
+                    mdbListRefreshToken = oAuthRefreshToken,
+                    mdbListTokenExpiresAt = oAuthExpiresAt,
                     simklAccessToken = simklToken,
                     watchlistReadMode = watchlistMode,
                     continueWatchingReadMode = continueMode,
@@ -497,11 +677,15 @@ class SyncProviderStore @Inject constructor(
             )
         }
         val mdbListValuesToApply = values.filter { (profileId, selection) ->
+            val incomingHasCred = !selection.mdbListApiKey.isNullOrBlank() ||
+                !selection.mdbListAccessToken.isNullOrBlank()
+            val localHasCred = !localCredentials[mdbListKeyFor(profileId)].isNullOrBlank() ||
+                !localCredentials[mdbListAccessTokenKeyFor(profileId)].isNullOrBlank()
             shouldApplyCloudCredential(
                 incomingUpdatedAt = selection.mdbListCredentialUpdatedAt,
                 localUpdatedAt = localSettings[mdbListCredentialUpdatedAtKeyFor(profileId)],
-                incomingHasCredential = !selection.mdbListApiKey.isNullOrBlank(),
-                localHasCredential = !localCredentials[mdbListKeyFor(profileId)].isNullOrBlank()
+                incomingHasCredential = incomingHasCred,
+                localHasCredential = localHasCred
             )
         }
         if (preferenceValuesToApply.isEmpty() && simklValuesToApply.isEmpty() &&
@@ -539,11 +723,35 @@ class SyncProviderStore @Inject constructor(
         }
         context.traktDataStore.edit { prefs ->
             mdbListValuesToApply.forEach { (profileId, selection) ->
-                val key = selection.mdbListApiKey?.trim().orEmpty()
-                if (key.isEmpty()) {
+                val apiKey = selection.mdbListApiKey?.trim().orEmpty()
+                val accessToken = selection.mdbListAccessToken?.trim().orEmpty()
+                val refreshToken = selection.mdbListRefreshToken?.trim().orEmpty()
+                val expiresAt = selection.mdbListTokenExpiresAt
+
+                if (accessToken.isNotEmpty()) {
+                    prefs[mdbListAccessTokenKeyFor(profileId)] = accessToken
+                    if (refreshToken.isNotEmpty()) {
+                        prefs[mdbListRefreshTokenKeyFor(profileId)] = refreshToken
+                    } else {
+                        prefs.remove(mdbListRefreshTokenKeyFor(profileId))
+                    }
+                    if (expiresAt != null && expiresAt > 0L) {
+                        prefs[mdbListTokenExpiresAtKeyFor(profileId)] = expiresAt
+                    } else {
+                        prefs.remove(mdbListTokenExpiresAtKeyFor(profileId))
+                    }
                     prefs.remove(mdbListKeyFor(profileId))
+                } else if (apiKey.isNotEmpty()) {
+                    prefs[mdbListKeyFor(profileId)] = apiKey
+                    prefs.remove(mdbListAccessTokenKeyFor(profileId))
+                    prefs.remove(mdbListRefreshTokenKeyFor(profileId))
+                    prefs.remove(mdbListTokenExpiresAtKeyFor(profileId))
                 } else {
-                    prefs[mdbListKeyFor(profileId)] = key
+                    // Complete disconnect in cloud: clear both API key and OAuth tokens
+                    prefs.remove(mdbListKeyFor(profileId))
+                    prefs.remove(mdbListAccessTokenKeyFor(profileId))
+                    prefs.remove(mdbListRefreshTokenKeyFor(profileId))
+                    prefs.remove(mdbListTokenExpiresAtKeyFor(profileId))
                 }
             }
             simklValuesToApply.forEach { (profileId, selection) ->
@@ -561,6 +769,9 @@ class SyncProviderStore @Inject constructor(
     data class ProfileSyncSelection(
         val provider: SyncProvider,
         val mdbListApiKey: String? = null,
+        val mdbListAccessToken: String? = null,
+        val mdbListRefreshToken: String? = null,
+        val mdbListTokenExpiresAt: Long? = null,
         val simklAccessToken: String? = null,
         val watchlistReadMode: TrackingReadMode? = null,
         val continueWatchingReadMode: TrackingReadMode? = null,

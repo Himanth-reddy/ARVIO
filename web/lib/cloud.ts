@@ -1055,6 +1055,9 @@ export interface CloudTrackingSelection {
   provider: CloudTrackingProvider;
   traktToken: TraktToken | null;
   mdbListApiKey: string | null;
+  mdbListAccessToken?: string | null;
+  mdbListRefreshToken?: string | null;
+  mdbListTokenExpiresAt?: number | null;
   simklToken: SimklToken | null;
   trackingPreferences?: TrackingPreferences;
   changedDomains?: CloudTrackingDomain[];
@@ -1125,6 +1128,9 @@ export async function pullCloudTrackingSelection(
       provider: "NONE",
       traktToken: null,
       mdbListApiKey: null,
+      mdbListAccessToken: null,
+      mdbListRefreshToken: null,
+      mdbListTokenExpiresAt: null,
       simklToken: null,
       trackingPreferences: {
         watchlistReadMode: "auto",
@@ -1144,12 +1150,21 @@ export async function pullCloudTrackingSelection(
   const simklToken = readCloudSimklToken(root, profileId);
   const rawMdbListKey = selection.mdbListApiKey ?? selection.mdblistApiKey;
   const mdbListApiKey = typeof rawMdbListKey === "string" ? rawMdbListKey.trim() || null : null;
+  const rawMdbListAccessToken = selection.mdbListAccessToken;
+  const mdbListAccessToken = typeof rawMdbListAccessToken === "string" ? rawMdbListAccessToken.trim() || null : null;
+  const rawMdbListRefreshToken = selection.mdbListRefreshToken;
+  const mdbListRefreshToken = typeof rawMdbListRefreshToken === "string" ? rawMdbListRefreshToken.trim() || null : null;
+  const rawMdbListTokenExpiresAt = selection.mdbListTokenExpiresAt;
+  const mdbListTokenExpiresAt = typeof rawMdbListTokenExpiresAt === "number" && rawMdbListTokenExpiresAt > 0
+    ? rawMdbListTokenExpiresAt
+    : null;
+  const hasMdbList = Boolean(mdbListApiKey || mdbListAccessToken);
   const explicitProvider = normalizeCloudTrackingProvider(selection.provider);
   const inferredProvider: CloudTrackingProvider = traktToken
     ? "TRAKT"
     : simklToken
       ? "SIMKL"
-      : mdbListApiKey
+      : hasMdbList
         ? "MDBLIST"
         : "NONE";
   const requestedProvider = explicitProvider ?? inferredProvider;
@@ -1157,10 +1172,10 @@ export async function pullCloudTrackingSelection(
     ? "TRAKT"
     : requestedProvider === "SIMKL" && simklToken
       ? "SIMKL"
-      : requestedProvider === "MDBLIST" && mdbListApiKey
+      : requestedProvider === "MDBLIST" && hasMdbList
         ? "MDBLIST"
         : "NONE";
-  const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(mdbListApiKey));
+  const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(hasMdbList));
   const defaultMode: TrackingReadMode = provider === "TRAKT"
       ? "trakt"
       : provider === "SIMKL"
@@ -1171,7 +1186,7 @@ export async function pullCloudTrackingSelection(
         ? "trakt"
         : simklToken
           ? "simkl"
-          : mdbListApiKey
+          : hasMdbList
             ? "mdblist"
             : "auto";
   const trackingPreferences: TrackingPreferences = {
@@ -1192,6 +1207,9 @@ export async function pullCloudTrackingSelection(
     provider,
     traktToken,
     mdbListApiKey,
+    mdbListAccessToken,
+    mdbListRefreshToken,
+    mdbListTokenExpiresAt,
     simklToken,
     trackingPreferences,
     hasCloudState,
@@ -1287,6 +1305,19 @@ export async function saveCloudTrackingSelection(
       const key = selection.mdbListApiKey?.trim();
       if (key) nextSelection.mdbListApiKey = key;
       else delete nextSelection.mdbListApiKey;
+
+      const accessToken = selection.mdbListAccessToken?.trim();
+      if (accessToken) nextSelection.mdbListAccessToken = accessToken;
+      else delete nextSelection.mdbListAccessToken;
+
+      const refreshToken = selection.mdbListRefreshToken?.trim();
+      if (refreshToken) nextSelection.mdbListRefreshToken = refreshToken;
+      else delete nextSelection.mdbListRefreshToken;
+
+      const expiresAt = selection.mdbListTokenExpiresAt;
+      if (typeof expiresAt === "number" && expiresAt > 0) nextSelection.mdbListTokenExpiresAt = expiresAt;
+      else delete nextSelection.mdbListTokenExpiresAt;
+
       nextSelection.mdbListCredentialUpdatedAt = updatedAt;
     }
     if (writeSimklCredential) {
