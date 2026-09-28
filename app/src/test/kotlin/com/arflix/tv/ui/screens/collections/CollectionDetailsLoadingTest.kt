@@ -243,6 +243,12 @@ class CollectionDetailsLoadingTest {
         assertTrue(model.uiState.value.isLoadingMovies)
         assertNull(model.uiState.value.error)
         coVerify(exactly = 1) { media.loadCollectionCatalogPage(any(), any(), any(), any(), any()) }
+        coEvery { media.loadCollectionCatalogPage(any(), any(), any(), any(), any()) } returns page(listOf(item(1)))
+        model.load("first")
+        advanceUntilIdle()
+        assertFalse(model.uiState.value.isLoadingMovies)
+        assertEquals(listOf(1), model.uiState.value.movieItems.map { it.id })
+        coVerify(exactly = 2) { media.loadCollectionCatalogPage(any(), any(), any(), any(), any()) }
     }
 
     @Test fun newCollectionRejectsLateInitialCallbacksAndFinalResults() = runTest {

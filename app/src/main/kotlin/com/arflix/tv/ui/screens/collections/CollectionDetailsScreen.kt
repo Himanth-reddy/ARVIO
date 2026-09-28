@@ -170,7 +170,8 @@ class CollectionDetailsViewModel @Inject constructor(
         val normalizedCatalogId = normalizeCatalogId(catalogId)
         // Preserve partial and paginated data when composition is recreated during a load.
         if (loadedCatalogId == normalizedCatalogId &&
-            (loadJob?.isActive == true || _uiState.value.catalog != null)
+            (loadJob?.isActive == true || (_uiState.value.catalog != null &&
+                !_uiState.value.isLoadingMovies && !_uiState.value.isLoadingSeries))
         ) return
         loadGeneration += 1
         val generation = loadGeneration
