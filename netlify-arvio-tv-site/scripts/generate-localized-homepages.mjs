@@ -34,6 +34,8 @@ const locales = {
 };
 
 const copy = [
+  ["Media kit", "Kit de imprensa", "Kit de prensa"],
+  ["Guides", "Guias", "Guías"],
   ["ARVIO 2.0.", "ARVIO 2.0.", "ARVIO 2.0."],
   ["On your screen.", "Na sua tela.", "En tu pantalla."],
   ["Explore the actual app on TV, mobile, tablet and the web. Open a screenshot to see it in full.", "Explore o aplicativo real na TV, no celular, no tablet e na web. Abra uma captura para vê-la por inteiro.", "Explora la aplicación real en TV, móvil, tableta y web. Abre una captura para verla completa."],

@@ -5,8 +5,8 @@ const vm = require('node:vm');
 const path = require('node:path');
 const code = fs.readFileSync(path.join(__dirname, '../../netlify-arvio-tv-site/assets/premium-journey.js'), 'utf8');
 const id = '38b5a038-5e30-4325-81ad-a2e6d000de18';
-function run({ url = 'https://arvio.tv/premium/?lang=es-ES', referrer = '', navigator = {}, fetchFails = false } = {}) {
-  const links = ['/premium/?lang=es-ES', 'https://web.arvio.tv/?intent=trial', 'https://ko-fi.com/arvio/tiers', 'https://github.com/ProdigyV21/ARVIO'].map(href => ({
+function run({ url = 'https://arvio.tv/premium/?lang=es-ES', referrer = '', navigator = {}, fetchFails = false, destinations = ['/premium/?lang=es-ES', 'https://web.arvio.tv/?intent=trial', 'https://ko-fi.com/arvio/tiers', 'https://github.com/ProdigyV21/ARVIO'] } = {}) {
+  const links = destinations.map(href => ({
     href: new URL(href, url).href, dataset: {}, closest(selector) { return selector === 'a[href]' ? this : null; }
   }));
   const events = [], listeners = {};
@@ -25,6 +25,20 @@ test('Premium landing preserves language and carries journey only to first-party
   assert.equal(new URL(result.links[1].href).searchParams.get('intent'), 'trial');
   assert.equal(result.links[2].href, 'https://ko-fi.com/arvio/tiers');
   assert.equal(result.links[3].href, 'https://github.com/ProdigyV21/ARVIO');
+});
+test('Guide navigation retains the campaign without decorating anchors, downloads or external links', () => {
+  const result = run({ url: 'https://arvio.tv/arvio-web/?utm_source=reddit&utm_campaign=setup_guides',
+    destinations: ['/guides/', '/premium/', '#setup', '/media-kit/arvio-media-kit.zip', '/assets/example.webp', '/go/premium/', 'https://example.org/'] });
+  for (const link of result.links.slice(0, 2)) {
+    const url = new URL(link.href);
+    assert.equal(url.searchParams.get('utm_source'), 'reddit');
+    assert.equal(url.searchParams.get('utm_campaign'), 'setup_guides');
+    assert.equal(url.searchParams.get('arvio_journey'), id);
+  }
+  for (const link of result.links.slice(2)) assert.equal(new URL(link.href).searchParams.has('arvio_journey'), false);
+  const next = run({ url: result.links[1].href });
+  assert.equal(next.events[0].metadata.source, 'reddit');
+  assert.equal(next.events[0].journey_id, id);
 });
 test('Homepage visits are not counted as Premium landing visits; outbound clicks are deduplicated', () => {
   const result = run({ url: 'https://arvio.tv/' });

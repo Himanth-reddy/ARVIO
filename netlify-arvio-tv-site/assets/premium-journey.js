@@ -35,7 +35,9 @@
     let url;
     try { url = new URL(link.href, here); } catch { return null; }
     if (!['https:', 'http:'].includes(url.protocol)) return null;
-    if (url.origin === here.origin && /\/premium\/?$/.test(url.pathname)) return { url, kind: 'internal' };
+    // Carry attribution across content pages, never assets or same-page anchors.
+    if (url.origin === here.origin && url.pathname !== here.pathname &&
+        /\/$/.test(url.pathname) && !/^\/(assets|go)\//.test(url.pathname)) return { url, kind: 'internal' };
     if (url.hostname === 'web.arvio.tv') return { url, kind: 'web_clicked' };
     if (url.hostname === 'ko-fi.com' && /^\/arvio\/tiers\/?$/.test(url.pathname)) return { url, kind: 'membership_clicked' };
     return null;
