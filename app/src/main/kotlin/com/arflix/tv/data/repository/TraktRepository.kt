@@ -81,7 +81,8 @@ class TraktRepository @Inject constructor(
     private val mdbListRepository: MdbListRepository,
     private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
     private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService,
-    private val continueWatchingUpdates: ContinueWatchingUpdates
+    private val continueWatchingUpdates: ContinueWatchingUpdates,
+    @javax.inject.Named("traktAuth") private val traktAuthApi: TraktApi = traktApi
 ) {
     private val gson = Gson()
     private val watchlistHttpClient by lazy { okHttpClient }
@@ -213,13 +214,14 @@ class TraktRepository @Inject constructor(
     private val deviceActivation = TraktDeviceActivation()
 
     suspend fun getDeviceCode(): TraktDeviceCode = deviceActivation.request {
-        traktApi.getDeviceCode(DeviceCodeRequest(clientId))
+        check(clientId.isNotBlank() && clientSecret.isNotBlank()) { "Trakt credentials missing in this APK" }
+        traktAuthApi.getDeviceCode(DeviceCodeRequest(clientId))
     }
 
     suspend fun pollForToken(deviceCode: String): TraktToken {
         val token = requestTraktToken(
             directFallback = {
-                traktApi.pollToken(
+                traktAuthApi.pollToken(
                     TokenPollRequest(
                         code = deviceCode,
                         clientId = clientId,
@@ -244,7 +246,7 @@ class TraktRepository @Inject constructor(
     private suspend fun refreshTraktToken(refreshToken: String): TraktToken {
         return requestTraktToken(
             directFallback = {
-                traktApi.refreshToken(
+                traktAuthApi.refreshToken(
                     RefreshTokenRequest(
                         refreshToken = refreshToken,
                         clientId = clientId,

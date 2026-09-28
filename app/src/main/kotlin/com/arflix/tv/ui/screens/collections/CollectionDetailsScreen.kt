@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -883,13 +885,14 @@ private fun CollectionTabBar(
     moviesTabFocusRequester: FocusRequester,
     seriesTabFocusRequester: FocusRequester,
     isSportsCollection: Boolean,
-    onTabSelected: (CollectionTab) -> Unit
+    onTabSelected: (CollectionTab) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val showMovies = hasMovies || !hasSeries
     val showSeries = hasSeries || !hasMovies
     val onlyOne = showMovies xor showSeries
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .arvioDpadFocusGroup(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1025,6 +1028,10 @@ internal fun CollectionItemsGrid(
     }
     val cardContentType = if (usePosterCards) "poster_card" else "landscape_card"
     val focusBleedPadding = if (usePosterCards) 10.dp else 6.dp
+    val scrollScope = rememberCoroutineScope()
+    var revealJob by remember(gridState) { mutableStateOf<Job?>(null) }
+    var focusedRow by remember(gridState) { mutableStateOf(-1) }
+    val focusBleedPx = with(androidx.compose.ui.platform.LocalDensity.current) { focusBleedPadding.toPx() }
     val latestItems by rememberUpdatedState(items)
     val latestGridColumns by rememberUpdatedState(gridColumns)
     val latestOnVisibleItemsChanged by rememberUpdatedState(onVisibleItemsChanged)
@@ -1069,16 +1076,25 @@ internal fun CollectionItemsGrid(
     Box(Modifier.fillMaxSize().background(appBackgroundDark())) {
         CollectionBackdrop(catalog, previewItem, isMobile,
             collectionSpotlightHeight(isMobile, compact) + 150.dp)
+        Column(Modifier.fillMaxSize().padding(top = topContentPadding)) {
+        CollectionSpotlight(
+            catalog, previewItem, isMobile, compact, onBack,
+            providerLogoUrl = providerLogos["${previewItem?.mediaType}_${previewItem?.id}"]
+                ?: previewItem?.primaryNetworkLogo,
+            clearLogoUrl = cardLogoUrls["${previewItem?.mediaType}_${previewItem?.id}"]
+        )
         TvLazyVerticalGrid(
         columns = TvGridCells.Fixed(gridColumns),
         state = gridState,
-        // Keep the hero visible on the first row; deeper rows scroll over its area.
-        pivotOffsets = PivotOffsets(parentFraction = 0.55f),
-        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup().clipToBounds()
+        // On TV, reveal whole rows ourselves; automatic pivot scrolling follows
+        // the focus scale and fights the row animation. Touch retains native scrolling.
+        userScrollEnabled = isMobile,
+        pivotOffsets = PivotOffsets(parentFraction = 0f),
+        modifier = Modifier.weight(1f).fillMaxWidth().arvioDpadFocusGroup().clipToBounds()
             .testTag("collection_grid"),
         contentPadding = PaddingValues(
             start = if (isMobile) 20.dp else 42.dp,
-            top = topContentPadding,
+            top = focusBleedPadding,
             end = if (isMobile) 20.dp else 42.dp,
             bottom = 48.dp + focusBleedPadding + LocalBottomBarInset.current
         ),
@@ -1089,14 +1105,6 @@ internal fun CollectionItemsGrid(
             span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
             contentType = "header"
         ) {
-            Column {
-                CollectionSpotlight(
-                    catalog, previewItem, isMobile, compact, onBack,
-                    providerLogoUrl = providerLogos["${previewItem?.mediaType}_${previewItem?.id}"]
-                        ?: previewItem?.primaryNetworkLogo,
-                    clearLogoUrl = cardLogoUrls["${previewItem?.mediaType}_${previewItem?.id}"],
-                    horizontalInset = 0.dp
-                )
             CollectionTabBar(
                 hasMovies = hasMovies,
                 hasSeries = hasSeries,
@@ -1104,9 +1112,15 @@ internal fun CollectionItemsGrid(
                 moviesTabFocusRequester = moviesTabFocusRequester,
                 seriesTabFocusRequester = seriesTabFocusRequester,
                 isSportsCollection = isSportsCollection,
-                onTabSelected = onTabSelected
+                onTabSelected = onTabSelected,
+                modifier = Modifier.onFocusChanged { state ->
+                    if (!isMobile && state.hasFocus) {
+                        focusedRow = -1
+                        revealJob?.cancel()
+                        revealJob = scrollScope.launch { gridState.animateScrollToItem(0) }
+                    }
+                }
             )
-            }
         }
         if (isLoading && items.isEmpty()) {
             val cardHeight = if (usePosterCards) cardWidth * 1.5f else cardWidth * 9f / 16f
@@ -1156,7 +1170,33 @@ internal fun CollectionItemsGrid(
                     logoImageUrl = cardLogoUrl,
                     showTitle = true,
                     titleMaxLines = if (usePosterCards) 2 else 1,
+                    titleMinLines = if (usePosterCards) 2 else 1,
                     onFocused = {
+                        // Reveal unscaled rows only. TV's automatic pivot follows the animated
+                        // card bounds and otherwise nudges the grid on every sideways move.
+                        val row = index / gridColumns
+                        if (!isMobile && focusedRow != row) {
+                            focusedRow = row
+                            revealJob?.cancel()
+                            revealJob = scrollScope.launch {
+                                val layout = gridState.layoutInfo
+                                val cell = layout.visibleItemsInfo.firstOrNull { it.index == index + 1 }
+                                if (cell != null) {
+                                    val top = cell.offset.y.toFloat()
+                                    val bottom = top + cell.size.height
+                                    val minTop = layout.viewportStartOffset + focusBleedPx
+                                    val maxBottom = layout.viewportEndOffset - focusBleedPx
+                                    val delta = when {
+                                        top < minTop -> top - minTop
+                                        bottom > maxBottom -> bottom - maxBottom
+                                        else -> 0f
+                                    }
+                                    if (delta != 0f) gridState.animateScrollBy(delta, tween(160))
+                                } else {
+                                    gridState.animateScrollToItem(row * gridColumns + 1, -focusBleedPx.toInt())
+                                }
+                            }
+                        }
                         focusedKey = "${item.mediaType}-${item.id}"
                         onItemFocused(item, index)
                         if (items.size > 10 && index >= items.size - 2) onNearEnd()
@@ -1187,6 +1227,7 @@ internal fun CollectionItemsGrid(
                 }
             }
         }
+    }
     }
     }
 }

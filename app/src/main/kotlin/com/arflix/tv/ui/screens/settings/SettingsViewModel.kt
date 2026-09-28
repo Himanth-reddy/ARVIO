@@ -4584,10 +4584,10 @@ class SettingsViewModel @Inject constructor(
             )
 
             try {
-                traktRepository.logout()
                 val deviceCode = withContext(Dispatchers.IO) {
                     traktRepository.getDeviceCode()
                 }
+                traktRepository.logout()
                 _uiState.value = _uiState.value.copy(
                     traktCode = deviceCode,
                     traktCodeExpiresAtMillis = System.currentTimeMillis() +
@@ -4630,16 +4630,8 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun reconnectTrakt() {
-        viewModelScope.launch {
-            cancelTraktAuth()
-            traktRepository.logout()
-            _uiState.value = _uiState.value.copy(
-                isTraktAuthenticated = false,
-                traktUsername = null,
-                traktExpiration = null
-            )
-            startTraktAuth()
-        }
+        cancelTraktAuth()
+        startTraktAuth()
     }
 
     private fun startTraktPolling(deviceCode: TraktDeviceCode) {

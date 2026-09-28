@@ -88,6 +88,7 @@ fun MediaCard(
     showTitle: Boolean = true,
     showSubtitle: Boolean = true,
     titleMaxLines: Int = 1,
+    titleMinLines: Int = 1,
     subtitleMaxLines: Int = 1,
     isFocusedOverride: Boolean = false,
     focusedScale: Float = 1.045f,
@@ -518,6 +519,7 @@ fun MediaCard(
                     ArvioSkin.colors.textPrimary.copy(alpha = 0.85f)
                 },
                 maxLines = titleMaxLines,
+                minLines = titleMinLines.coerceIn(1, titleMaxLines),
                 overflow = TextOverflow.Ellipsis,
             )
 

@@ -2,6 +2,8 @@ package com.arflix.tv.data.repository
 
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
 import okhttp3.Protocol
@@ -22,32 +24,36 @@ class TraktDeviceActivationTest {
         return HttpException(retrofit2.Response.error<String>("".toResponseBody(), raw))
     }
 
-    @Test fun retriesAfterServerCooldown() = runTest {
-        val activation = TraktDeviceActivation({ testScheduler.currentTime })
-        var calls = 0
-        assertEquals("code", activation.request { if (++calls == 1) throw failure(); "code" })
-        assertEquals(120_000L, testScheduler.currentTime)
-        assertEquals(2, calls)
-    }
-
-    @Test fun persistentRateLimitIsBoundedAndCooldownSurvivesRetry() = runTest {
+    @Test fun rateLimitReportsImmediatelyAndBlocksRequestsUntilCooldownEnds() = runTest {
         val activation = TraktDeviceActivation({ testScheduler.currentTime })
         var calls = 0
         try { activation.request { calls++; throw failure() }; fail() } catch (_: HttpException) { }
-        assertEquals(3, calls)
-        activation.request { "code" }
-        assertEquals(360_000L, testScheduler.currentTime)
+        assertEquals(0L, testScheduler.currentTime)
+        try { activation.request { calls++; "code" }; fail() } catch (_: HttpException) { }
+        assertEquals(1, calls)
+        advanceTimeBy(120_000L)
+        assertEquals("code", activation.request { calls++; "code" })
+        assertEquals(120_000L, testScheduler.currentTime)
+        assertEquals(2, calls)
     }
 
-    @Test fun cancellationStopsRequestsButRetainsCooldown() = runTest {
+    @Test fun stalledRequestHasDeadlineAndNextAttemptCanSucceed() = runTest {
+        val activation = TraktDeviceActivation({ testScheduler.currentTime })
+        try { activation.request { delay(60_000); "late" }; fail() } catch (_: java.net.SocketTimeoutException) { }
+        assertEquals(20_000L, testScheduler.currentTime)
+        assertEquals("code", activation.request { "code" })
+    }
+
+    @Test fun cancellationStopsRequestsAndReleasesActivationLock() = runTest {
         val activation = TraktDeviceActivation({ testScheduler.currentTime })
         var calls = 0
-        val job = launch { activation.request { calls++; throw failure() } }
+        val job = launch { activation.request { calls++; delay(60_000); "late" } }
         runCurrent()
         job.cancelAndJoin()
+        assertTrue(job.isCancelled)
         activation.request { calls++; "code" }
         assertEquals(2, calls)
-        assertEquals(120_000L, testScheduler.currentTime)
+        assertEquals(0L, testScheduler.currentTime)
     }
 
     @Test fun nonRateLimitErrorsAreNotRetried() = runTest {

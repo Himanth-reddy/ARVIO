@@ -118,7 +118,7 @@ internal fun CollectionBackdrop(catalog: CatalogConfig?, item: MediaItem?, isMob
     }
 }
 
-/** Stable-size preview in the grid header, with artwork drawn separately behind the cards. */
+/** Persistent preview above the grid, with artwork drawn separately behind the cards. */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 internal fun CollectionSpotlight(

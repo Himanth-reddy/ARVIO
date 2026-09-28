@@ -1,6 +1,8 @@
 package com.arflix.tv.data.repository
 
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
@@ -29,26 +31,36 @@ internal fun isTransientTraktPollFailure(error: Throwable): Boolean =
 /** Serialize activation requests and retain the server cooldown even if the dialog is cancelled. */
 internal class TraktDeviceActivation(
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
-    private val wait: suspend (Long) -> Unit = { delay(it) }
+    private val timeoutMs: Long = 20_000L
 ) {
     private val mutex = Mutex()
     private var retryAtMs = 0L
+    private var rateLimitError: HttpException? = null
 
-    suspend fun <T> request(block: suspend () -> T): T = mutex.withLock {
-        var retries = 0
-        while (true) {
-            val remaining = retryAtMs - nowMs()
-            if (remaining > 0) wait(remaining)
-            try {
-                return@withLock block()
-            } catch (error: HttpException) {
-                if (error.code() != 429) throw error
-                val waitMs = traktRetryDelayMs(error.response()?.headers()?.get("Retry-After"), 60_000L)
-                retryAtMs = nowMs() + waitMs.coerceAtMost(Long.MAX_VALUE - nowMs())
-                if (++retries >= 3) throw error
+    suspend fun <T> request(block: suspend () -> T): T {
+        try {
+            return withTimeout(timeoutMs) {
+                mutex.withLock {
+                    // Keep the cooldown, but report it immediately instead of hiding minutes
+                    // of delay behind the Connect spinner. Retry never bypasses Trakt's limit.
+                    rateLimitError?.let { if (nowMs() < retryAtMs) throw it }
+                    try {
+                        block().also { rateLimitError = null }
+                    } catch (error: HttpException) {
+                        if (error.code() == 429) {
+                            val now = nowMs()
+                            val waitMs = traktRetryDelayMs(error.response()?.headers()?.get("Retry-After"), 60_000L)
+                            retryAtMs = now + waitMs.coerceAtMost(Long.MAX_VALUE - now)
+                            rateLimitError = error
+                        }
+                        throw error
+                    }
+                }
             }
+        } catch (error: TimeoutCancellationException) {
+            // Ordinary user cancellation still propagates; only our own deadline becomes an error.
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            throw java.net.SocketTimeoutException("Trakt activation timed out. Please check your connection and try again.")
         }
-        @Suppress("UNREACHABLE_CODE")
-        error("Unreachable")
     }
 }

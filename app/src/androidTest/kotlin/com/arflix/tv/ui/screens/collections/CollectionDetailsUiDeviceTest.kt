@@ -68,6 +68,7 @@ class CollectionDetailsUiDeviceTest {
         var opened: MediaItem? = null
         var preview: MediaItem? = null
         var nearEnd = false
+        var renderedGridState: androidx.tv.foundation.lazy.grid.TvLazyGridState? = null
         val selected = mutableStateOf(CollectionTab.MOVIES)
         compose.runOnUiThread {
             compose.activity.actionBar?.hide()
@@ -83,6 +84,8 @@ class CollectionDetailsUiDeviceTest {
                 val layout = collectionGridLayout(LocalConfiguration.current.screenWidthDp, mobile, posters)
                 val columns = layout.columns
                 val cardWidth = layout.cardWidthDp.dp
+                val gridState = rememberTvLazyGridState()
+                renderedGridState = gridState
                 LaunchedEffect(Unit) {
                     kotlinx.coroutines.delay(300)
                     if (!mobile) {
@@ -92,7 +95,7 @@ class CollectionDetailsUiDeviceTest {
                 }
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
                     CollectionItemsGrid(catalog, {}, items, columns, cardWidth, posters,
-                        rememberTvLazyGridState(), -1, {}, true, true, logos, selected.value,
+                        gridState, -1, {}, true, true, logos, selected.value,
                         firstTab, secondTab, false, { selected.value = it }, { opened = it },
                         { _, _ -> }, {}, {}, { nearEnd = true }, false, false, "", 8.dp,
                         onPreviewItemChanged = { preview = it })
@@ -118,7 +121,7 @@ class CollectionDetailsUiDeviceTest {
         compose.onNodeWithTag("collection_grid").assertIsDisplayed()
         val gridTop = compose.onNodeWithTag("collection_grid").fetchSemanticsNode().boundsInRoot.top
         val heroBottom = compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot.bottom
-        assertTrue("Grid must extend behind the hero, not start below it", gridTop < heroBottom)
+        assertEquals("Hero details stay above the scrolling cards", heroBottom, gridTop, 1f)
         val firstCardTop = compose.onNodeWithTag("collection_item_0").fetchSemanticsNode().boundsInRoot.top
         assertTrue("Initial cards must not overlap hero details", firstCardTop >= heroBottom)
         val backdropBottom = compose.onNodeWithTag("collection_backdrop").fetchSemanticsNode().boundsInRoot.bottom
@@ -138,16 +141,41 @@ class CollectionDetailsUiDeviceTest {
             assertTrue("First-row focus must not clip the clearlogo header",
                 compose.onNodeWithTag("collection_spotlight").getUnclippedBoundsInRoot().top.value >= 0)
             assertEquals(gridTop, compose.onNodeWithTag("collection_grid").fetchSemanticsNode().boundsInRoot.top)
+            fun scrollPosition() = renderedGridState!!.let {
+                it.firstVisibleItemIndex to it.firstVisibleItemScrollOffset
+            }
+            val rowPosition = compose.runOnIdle { scrollPosition() }
+            repeat(6) {
+                compose.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+                compose.mainClock.advanceTimeBy(200)
+                compose.runOnIdle { assertEquals("Sideways focus must not scroll the row", rowPosition, scrollPosition()) }
+                compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+                compose.mainClock.advanceTimeBy(200)
+                compose.runOnIdle { assertEquals("Sideways focus must not scroll the row", rowPosition, scrollPosition()) }
+            }
             compose.onRoot().performKeyInput { pressKey(Key.Enter) }
             compose.runOnIdle { assertEquals(items[1].id, opened?.id) }
+            repeat(2) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+            val scrolledPosition = compose.runOnIdle { scrollPosition() }
+            assertNotEquals("Down must reveal later rows", rowPosition, scrolledPosition)
+            repeat(6) {
+                compose.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+                compose.mainClock.advanceTimeBy(200)
+                compose.runOnIdle { assertEquals("Scrolled row must stay still moving left", scrolledPosition, scrollPosition()) }
+                compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+                compose.mainClock.advanceTimeBy(200)
+                compose.runOnIdle { assertEquals("Scrolled row must stay still moving right", scrolledPosition, scrollPosition()) }
+            }
             repeat(14) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
             compose.runOnIdle { assertTrue("Pagination must remain reachable", nearEnd) }
-            compose.onNodeWithTag("collection_spotlight").assertIsNotDisplayed()
+            compose.onNodeWithTag("collection_spotlight").assertIsDisplayed()
+            assertEquals("Hero must remain stationary while scrolling", heroBottom,
+                compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot.bottom, 1f)
             val visibleCards = compose.onAllNodes(SemanticsMatcher("collection card") {
                 it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)
                     ?.startsWith("collection_item_") == true
             }).fetchSemanticsNodes().map { it.boundsInRoot }.filter { it.height > 0 }
-            assertTrue("Cards must scroll through the former hero area", visibleCards.any { it.top < heroBottom })
+            assertTrue("Cards must never cover the hero details", visibleCards.all { it.top >= heroBottom })
             Thread.sleep(1500)
             val scrolled = File(context.getExternalFilesDir(null), "collection-blended-scrolled-${if (posters) "poster" else "landscape"}.png")
             scrolled.outputStream().use {
@@ -161,6 +189,8 @@ class CollectionDetailsUiDeviceTest {
             compose.onNodeWithTag("collection_item_0").onChildren().filter(hasClickAction()).onFirst().performClick()
             compose.runOnIdle { assertEquals(items.first().id, opened?.id) }
             compose.onNodeWithTag("collection_grid").performTouchInput { swipeUp() }
+            assertEquals("Hero must also remain visible on touch devices", heroBottom,
+                compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot.bottom, 1f)
             compose.onNodeWithTag("collection_grid").performTouchInput { swipeDown() }
         }
         // Let real images decode before recording the visual result (not a loading benchmark).

@@ -86,6 +86,23 @@ object AppModule {
 
     @Provides
     @Singleton
+    @Named("traktAuth")
+    fun provideTraktAuthApi(okHttpClient: OkHttpClient): TraktApi {
+        // Device activation must not queue behind Home's metadata/sync requests.
+        val client = okHttpClient.newBuilder()
+            .dispatcher(okhttp3.Dispatcher())
+            .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        return Retrofit.Builder()
+            .baseUrl(Constants.TRAKT_API_URL)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(TraktApi::class.java)
+    }
+
+    @Provides
+    @Singleton
     @JvmStatic
     fun provideMdbListApi(okHttpClient: OkHttpClient): com.arflix.tv.data.api.MdbListApi {
         return Retrofit.Builder()

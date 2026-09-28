@@ -4284,7 +4284,7 @@ private fun CloudPairModal(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TraktActivationModal(
+internal fun TraktActivationModal(
     verificationUrl: String,
     userCode: String,
     onDismiss: () -> Unit,
@@ -4335,18 +4335,6 @@ private fun TraktActivationModal(
         }
     }
 
-    // The dialog grabs focus for the code; once it turns into the expired panel the retry button
-    // has to take over, or the remote would have nothing to act on.
-    LaunchedEffect(userCode, outcome, hasSecondaryAction) {
-        if (outcome == TraktAuthOutcome.EXPIRED) {
-            runCatching { retryFocusRequester.requestFocus() }
-        } else if (hasSecondaryAction && !isMobile) {
-            runCatching { cancelFocusRequester.requestFocus() }
-        } else {
-            runCatching { focusRequester.requestFocus() }
-        }
-    }
-
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(
@@ -4355,6 +4343,16 @@ private fun TraktActivationModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        // Dialog content has its own composition. Request focus only after its targets attach.
+        LaunchedEffect(userCode, outcome, hasSecondaryAction) {
+            if (outcome == TraktAuthOutcome.EXPIRED) {
+                retryFocusRequester.requestFocus()
+            } else if (hasSecondaryAction && !isMobile) {
+                cancelFocusRequester.requestFocus()
+            } else {
+                focusRequester.requestFocus()
+            }
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
