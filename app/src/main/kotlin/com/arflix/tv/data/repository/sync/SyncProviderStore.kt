@@ -146,7 +146,11 @@ class SyncProviderStore @Inject constructor(
         SyncProvider.fromStorage(prefs[providerKey()])
     }
 
-    suspend fun setProvider(provider: SyncProvider, profileId: String = profileManager.getProfileIdSync()) {
+    suspend fun setProvider(provider: SyncProvider) {
+        setProvider(provider, profileManager.getProfileIdSync())
+    }
+
+    suspend fun setProvider(provider: SyncProvider, profileId: String) {
         context.settingsDataStore.edit { prefs ->
             if (provider == SyncProvider.NONE) {
                 prefs.remove(providerKeyFor(profileId))
@@ -184,7 +188,11 @@ class SyncProviderStore @Inject constructor(
         )
     }
 
-    suspend fun setReadMode(feature: TrackingFeature, mode: TrackingReadMode, profileId: String = profileManager.getProfileIdSync()) {
+    suspend fun setReadMode(feature: TrackingFeature, mode: TrackingReadMode) {
+        setReadMode(feature, mode, profileManager.getProfileIdSync())
+    }
+
+    suspend fun setReadMode(feature: TrackingFeature, mode: TrackingReadMode, profileId: String) {
         context.settingsDataStore.edit { prefs ->
             val key = when (feature) {
                 TrackingFeature.WATCHLIST -> watchlistReadModeKeyFor(profileId)
@@ -196,7 +204,11 @@ class SyncProviderStore @Inject constructor(
         }
     }
 
-    suspend fun setWriteTarget(provider: SyncProvider, enabled: Boolean, profileId: String = profileManager.getProfileIdSync()) {
+    suspend fun setWriteTarget(provider: SyncProvider, enabled: Boolean) {
+        setWriteTarget(provider, enabled, profileManager.getProfileIdSync())
+    }
+
+    suspend fun setWriteTarget(provider: SyncProvider, enabled: Boolean, profileId: String) {
         context.settingsDataStore.edit { prefs ->
             when (provider) {
                 SyncProvider.TRAKT -> prefs[writeToTraktKeyFor(profileId)] = enabled
@@ -236,7 +248,11 @@ class SyncProviderStore @Inject constructor(
         }
     }
 
-    suspend fun onProviderConnected(provider: SyncProvider, profileId: String = profileManager.getProfileIdSync()) {
+    suspend fun onProviderConnected(provider: SyncProvider) {
+        onProviderConnected(provider, profileManager.getProfileIdSync())
+    }
+
+    suspend fun onProviderConnected(provider: SyncProvider, profileId: String) {
         val settings = context.settingsDataStore.data.first()
         val credentials = context.traktDataStore.data.first()
         val hasTrakt = !credentials[profileManager.profileStringKeyFor(profileId, "trakt_access_token")].isNullOrBlank()
@@ -284,7 +300,11 @@ class SyncProviderStore @Inject constructor(
         if (provider == SyncProvider.SIMKL) setWriteTarget(SyncProvider.SIMKL, true, profileId)
     }
 
-    suspend fun onProviderDisconnected(provider: SyncProvider, profileId: String = profileManager.getProfileIdSync()) {
+    suspend fun onProviderDisconnected(provider: SyncProvider) {
+        onProviderDisconnected(provider, profileManager.getProfileIdSync())
+    }
+
+    suspend fun onProviderDisconnected(provider: SyncProvider, profileId: String) {
         setWriteTarget(provider, false, profileId)
         val credentials = context.traktDataStore.data.first()
         val hasTrakt = !credentials[profileManager.profileStringKeyFor(profileId, "trakt_access_token")].isNullOrBlank()
