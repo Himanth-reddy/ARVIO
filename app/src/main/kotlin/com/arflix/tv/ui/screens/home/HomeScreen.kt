@@ -2325,7 +2325,7 @@ private fun MobileHeroCarousel(
             state = pagerState,
             contentPadding = PaddingValues(horizontal = heroLayout.carouselHorizontalPaddingDp.dp),
             pageSpacing = 18.dp,
-            beyondBoundsPageCount = 1,
+            beyondViewportPageCount = 1,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(heroLayout.cardHeightDp.dp),

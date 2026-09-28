@@ -59,7 +59,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.material.ripple.rememberRipple
+import androidx.compose.material3.ripple
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.RectangleShape
@@ -246,7 +246,7 @@ fun AppBottomBar(
                             selected = isSelected,
                             role = Role.Tab,
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = rememberRipple(bounded = false, radius = 24.dp),
+                            indication = ripple(bounded = false, radius = 24.dp),
                             onClick = { onNavigate(item.route) }
                         )
                         .onFocusChanged { isFocused = it.isFocused }
