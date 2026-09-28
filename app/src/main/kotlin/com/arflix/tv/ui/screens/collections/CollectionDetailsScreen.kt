@@ -931,11 +931,11 @@ private fun CollectionTabChip(
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(50)
+    val shape = RoundedCornerShape(6.dp)
     val bg = when {
         isSelected -> Color.White
         isFocused -> Color.Transparent
-        else -> Color.White.copy(alpha = 0.08f)
+        else -> Color.Transparent
     }
     val fg = when {
         isSelected -> appBackgroundDark()
@@ -963,12 +963,12 @@ private fun CollectionTabChip(
                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp
             }
             .clickable(onClick = onClick)
-            .padding(horizontal = 22.dp, vertical = 10.dp)
+            .padding(horizontal = 18.dp, vertical = 7.dp)
     ) {
         androidx.tv.material3.Text(
             text = label,
             style = ArflixTypography.sectionTitle.copy(
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
                 letterSpacing = 0.sp
             ),

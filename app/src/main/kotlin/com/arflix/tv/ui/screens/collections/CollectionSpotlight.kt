@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -20,6 +21,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -63,6 +65,20 @@ internal fun collectionRating(item: MediaItem?): String? {
     }
 }
 
+internal fun collectionCompactBudget(item: MediaItem?, locale: Locale = Locale.getDefault()): String? {
+    val value = item?.budget?.takeIf { it > 0 && item.mediaType == MediaType.MOVIE } ?: return null
+    val divisor = when {
+        value >= 1_000_000_000L -> 1_000_000_000L
+        value >= 1_000_000L -> 1_000_000L
+        else -> return collectionBudget(item, locale)
+    }
+    return NumberFormat.getCurrencyInstance(locale).apply {
+        currency = Currency.getInstance("USD")
+        minimumFractionDigits = 0
+        maximumFractionDigits = 1
+    }.format(value.toDouble() / divisor) + if (divisor == 1_000_000L) "M" else "B"
+}
+
 /** Fixed-size, non-interactive preview: changing focus never moves the grid below it. */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
@@ -83,18 +99,19 @@ internal fun CollectionSpotlight(
     val background = appBackgroundDark()
     val inset = if (isMobile) 20.dp else 42.dp
     val height = when {
-        compact -> 184.dp
-        isMobile -> 272.dp
-        else -> 206.dp
+        compact -> 174.dp
+        isMobile -> 258.dp
+        else -> 198.dp
     }
     Box(Modifier.fillMaxWidth().height(height).testTag("collection_spotlight")) {
         if (backdrop != null) {
-            AsyncImage(request, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
-                alignment = Alignment.CenterEnd)
+            AsyncImage(request, null,
+                Modifier.fillMaxHeight().fillMaxWidth(if (isMobile) 1f else 0.72f).align(Alignment.CenterEnd),
+                contentScale = ContentScale.Crop, alignment = BiasAlignment(1f, -0.5f))
         }
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
             0f to background, 0.30f to background.copy(alpha = 0.97f),
-            0.62f to background.copy(alpha = 0.76f), 1f to background.copy(alpha = 0.08f)
+            0.60f to background.copy(alpha = 0.62f), 1f to Color.Transparent
         )))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
             Color.Transparent, background.copy(alpha = 0.15f), background
@@ -121,35 +138,42 @@ internal fun CollectionSpotlight(
                 maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
             val facts = listOfNotNull(
                 item?.year?.takeIf(String::isNotBlank),
-                item?.duration?.takeIf(String::isNotBlank)
+                item?.duration?.takeIf(String::isNotBlank),
+                item?.contentRating?.takeIf(String::isNotBlank)
             ).joinToString("  ·  ")
             Text(facts, modifier = Modifier.fillMaxWidth(textWidth).testTag("collection_spotlight_facts"),
                 color = Color(0xFFD7DBDF), fontSize = 12.sp, letterSpacing = 0.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             val rating = collectionRating(item)
-            val budget = remember(item?.budget, item?.mediaType) { collectionBudget(item) }
+            val budget = remember(item?.budget, item?.mediaType) { collectionCompactBudget(item) }
             FlowRow(Modifier.fillMaxWidth(textWidth).testTag("collection_spotlight_brands"),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                if (!providerLogoUrl.isNullOrBlank()) {
-                    val logo = remember(providerLogoUrl, context) {
-                        ImageRequest.Builder(context).data(providerLogoUrl)
-                            .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
-                            .allowRgb565(false).size(156, 54).build()
-                    }
-                    AsyncImage(logo, stringResource(R.string.home_cd_primary_provider),
-                        contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
-                        modifier = Modifier.width(52.dp).height(18.dp).testTag("collection_provider_logo"))
-                }
                 if (rating?.startsWith("IMDb ") == true) {
                     ImdbSvgRatingBadge(rating.removePrefix("IMDb "), context.imageLoader,
                         ratingFontSize = 13, logoWidth = 30.dp, logoHeight = 16.dp)
                 } else if (rating != null) {
                     Text(rating, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
+                if (!providerLogoUrl.isNullOrBlank()) {
+                    val logo = remember(providerLogoUrl, context) {
+                        ImageRequest.Builder(context).data(providerLogoUrl)
+                            .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
+                            .allowRgb565(false).size(156, 54).build()
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (rating != null) MetadataDivider()
+                        AsyncImage(logo, stringResource(R.string.home_cd_primary_provider),
+                            contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
+                            modifier = Modifier.width(52.dp).height(18.dp).testTag("collection_provider_logo"))
+                    }
+                }
                 if (budget != null) {
-                    Text("${stringResource(R.string.budget)} $budget", color = Color(0xFFB6BBC2),
-                        fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (rating != null || !providerLogoUrl.isNullOrBlank()) MetadataDivider()
+                        Text("${stringResource(R.string.budget)} $budget", color = Color(0xFFB6BBC2),
+                            fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
             Text(item?.overview?.takeIf(String::isNotBlank) ?: catalog?.collectionDescription.orEmpty(),
@@ -158,4 +182,9 @@ internal fun CollectionSpotlight(
                 maxLines = if (isMobile && !compact) 3 else 2, overflow = TextOverflow.Ellipsis)
         }
     }
+}
+
+@Composable
+private fun MetadataDivider() {
+    Box(Modifier.width(1.dp).height(12.dp).background(Color.White.copy(alpha = 0.3f)))
 }

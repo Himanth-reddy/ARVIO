@@ -26,4 +26,14 @@ class CollectionPresentationTest {
         assertNull(collectionRating(item.copy(imdbRating = "-1", tmdbRating = "unknown")))
         assertNull(collectionRating(MediaItem(1, "Movie", rating = "PG-13")))
     }
+
+    @Test fun `compact budget keeps small amounts and scales large amounts accurately`() {
+        val movie = MediaItem(1, "Movie", budget = 225_000_000L)
+        assertEquals("$225M", collectionCompactBudget(movie, Locale.US))
+        assertEquals("$12.5M", collectionCompactBudget(movie.copy(budget = 12_500_000), Locale.US))
+        assertEquals("$1.2B", collectionCompactBudget(movie.copy(budget = 1_200_000_000), Locale.US))
+        assertEquals("$750,000", collectionCompactBudget(movie.copy(budget = 750_000), Locale.US))
+        assertNull(collectionCompactBudget(movie.copy(mediaType = MediaType.TV)))
+        assertNull(collectionCompactBudget(movie.copy(budget = 0)))
+    }
 }
