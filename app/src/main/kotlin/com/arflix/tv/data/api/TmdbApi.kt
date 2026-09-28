@@ -271,8 +271,28 @@ data class TmdbPublicListResponse(
 
 data class TmdbPublicListItem(
     val id: Int = 0,
-    @SerializedName("media_type") val mediaType: String? = null
-)
+    @SerializedName("media_type") val mediaType: String? = null,
+    val title: String? = null,
+    val name: String? = null,
+    @SerializedName("original_title") val originalTitle: String? = null,
+    @SerializedName("original_name") val originalName: String? = null,
+    val overview: String? = null,
+    @SerializedName("release_date") val releaseDate: String? = null,
+    @SerializedName("first_air_date") val firstAirDate: String? = null,
+    @SerializedName("poster_path") val posterPath: String? = null,
+    @SerializedName("backdrop_path") val backdropPath: String? = null,
+    @SerializedName("vote_average") val voteAverage: Float = 0f,
+    @SerializedName("genre_ids") val genreIds: List<Int> = emptyList(),
+    @SerializedName("original_language") val originalLanguage: String? = null
+) {
+    fun asMediaItem() = TmdbMediaItem(
+        id = id, mediaType = mediaType, title = title, name = name,
+        originalTitle = originalTitle, originalName = originalName, overview = overview,
+        releaseDate = releaseDate, firstAirDate = firstAirDate,
+        posterPath = posterPath, backdropPath = backdropPath, voteAverage = voteAverage,
+        genreIds = genreIds, originalLanguage = originalLanguage
+    )
+}
 
 data class TmdbListResponse(
     val page: Int = 1,

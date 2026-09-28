@@ -2,12 +2,14 @@ package com.arflix.tv.data.repository
 
 import com.arflix.tv.data.api.StremioCatalogResponse
 import com.arflix.tv.data.api.StremioMetaPreview
+import com.arflix.tv.data.api.TmdbApi
+import com.arflix.tv.data.api.TmdbMovieDetails
+import com.arflix.tv.data.api.TmdbTvDetails
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogKind
 import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CollectionSourceConfig
 import com.arflix.tv.data.model.CollectionSourceKind
-import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
@@ -21,12 +23,15 @@ import java.io.IOException
  */
 class CollectionTabPagingTest {
     private val streams = mockk<StreamRepository>()
-    private val media = spyk(MediaRepository(mockk(relaxed = true), mockk(), mockk(), mockk(), mockk(), streams, mockk()))
+    private val api = mockk<TmdbApi>()
+    private val media = MediaRepository(mockk(relaxed = true), api, mockk(), mockk(), mockk(), streams, mockk())
 
     init {
-        coEvery { media.getMovieDetails(any()) } answers { MediaItem(firstArg(), "Movie ${firstArg<Int>()}") }
-        coEvery { media.getTvDetails(any()) } answers {
-            MediaItem(firstArg(), "Show ${firstArg<Int>()}", mediaType = MediaType.TV)
+        coEvery { api.getMovieDetails(any(), any(), any(), any()) } answers {
+            TmdbMovieDetails(id = firstArg(), title = "Movie ${firstArg<Int>()}")
+        }
+        coEvery { api.getTvDetails(any(), any(), any(), any()) } answers {
+            TmdbTvDetails(id = firstArg(), name = "Show ${firstArg<Int>()}")
         }
     }
 

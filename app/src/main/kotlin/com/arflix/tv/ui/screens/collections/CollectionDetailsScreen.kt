@@ -89,10 +89,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 enum class CollectionTab { MOVIES, SERIES }
@@ -140,6 +148,16 @@ class CollectionDetailsViewModel @Inject constructor(
     val uiState: StateFlow<CollectionDetailsUiState> = _uiState.asStateFlow()
     private val _cardLogoUrls = MutableStateFlow<Map<String, String>>(emptyMap())
     val cardLogoUrls: StateFlow<Map<String, String>> = _cardLogoUrls.asStateFlow()
+    private var collectionJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+    private var collectionScope = CoroutineScope(viewModelScope.coroutineContext + collectionJob)
+    private var loadJob: Job? = null
+    private var loadedCatalogId: String? = null
+    private var loadGeneration = 0L
+    private val detailsSemaphore = Semaphore(2)
+    private val detailJobs = mutableMapOf<Pair<MediaType, Int>, Job>()
+    private val detailAttempts = mutableSetOf<Pair<MediaType, Int>>()
+    private val enrichedDetails = mutableMapOf<Pair<MediaType, Int>, MediaItem>()
+    private var visibleDetailKeys = emptySet<Pair<MediaType, Int>>()
 
     private companion object {
         const val FIRST_PAGE = 8
@@ -149,18 +167,28 @@ class CollectionDetailsViewModel @Inject constructor(
     }
 
     fun load(catalogId: String) {
-        viewModelScope.launch {
-            val normalizedCatalogId = normalizeCatalogId(catalogId)
-            // Skip reload if this catalog is already loaded — the composable is re-entered
-            // after back navigation (Navigation Compose tears down composables on forward nav)
-            // and we want to preserve all paginated data so saved scroll positions stay valid.
-            val current = _uiState.value
-            if (current.catalog?.id == normalizedCatalogId && !current.isLoadingMovies && !current.isLoadingSeries) return@launch
-
-            _uiState.value = CollectionDetailsUiState(isLoadingMovies = true, isLoadingSeries = true)
+        val normalizedCatalogId = normalizeCatalogId(catalogId)
+        // Preserve partial and paginated data when composition is recreated during a load.
+        if (loadedCatalogId == normalizedCatalogId &&
+            (loadJob?.isActive == true || _uiState.value.catalog != null)
+        ) return
+        loadGeneration += 1
+        val generation = loadGeneration
+        collectionJob.cancel()
+        collectionJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+        collectionScope = CoroutineScope(viewModelScope.coroutineContext + collectionJob)
+        loadedCatalogId = normalizedCatalogId
+        detailJobs.clear()
+        detailAttempts.clear()
+        enrichedDetails.clear()
+        visibleDetailKeys = emptySet()
+        _cardLogoUrls.value = emptyMap()
+        _uiState.value = CollectionDetailsUiState()
+        loadJob = collectionScope.launch {
             val catalog = sportsRepository.sportsCollectionCatalog(normalizedCatalogId)
                 ?: catalogRepository.getCatalogs().firstOrNull { it.id == normalizedCatalogId || it.id == catalogId }
                 ?: syntheticTmdbCollectionCatalog(normalizedCatalogId)
+            ensureCurrentLoad(generation)
             if (catalog == null) {
                 _uiState.value = CollectionDetailsUiState(
                     isLoadingMovies = false,
@@ -182,12 +210,13 @@ class CollectionDetailsViewModel @Inject constructor(
                 _uiState.value.supportsSeries -> CollectionTab.SERIES
                 else -> CollectionTab.MOVIES
             }
-            loadInitialTab(catalog, primaryTab)
+            loadInitialTab(catalog, primaryTab, generation)
             launch {
                 delay(1200L)
+                ensureCurrentLoad(generation)
                 val secondaryTab = if (primaryTab == CollectionTab.MOVIES) CollectionTab.SERIES else CollectionTab.MOVIES
                 if (supportsTab(catalog, secondaryTab)) {
-                    loadInitialTab(catalog, secondaryTab)
+                    loadInitialTab(catalog, secondaryTab, generation)
                 } else {
                     _uiState.value = when (secondaryTab) {
                         CollectionTab.MOVIES -> _uiState.value.copy(isLoadingMovies = false)
@@ -233,11 +262,28 @@ class CollectionDetailsViewModel @Inject constructor(
         )
     }
 
-    private suspend fun loadInitialTab(catalog: CatalogConfig, tab: CollectionTab) {
-        val page = runCatching { loadCollectionPage(catalog, tab, offset = 0, limit = FIRST_PAGE) }.getOrNull()
+    private suspend fun loadInitialTab(catalog: CatalogConfig, tab: CollectionTab, generation: Long) {
+        val requestScope = collectionScope
+        val page = collectionResultOrNull {
+            loadCollectionPage(catalog, tab, offset = 0, limit = FIRST_PAGE, onItemsAvailable = { items ->
+                // Repository callbacks may arrive off Main; serialize with enrichment and final publication.
+                requestScope.launch {
+                    ensureCurrentLoad(generation)
+                    val state = _uiState.value
+                    val loading = if (tab == CollectionTab.MOVIES) state.isLoadingMovies else state.isLoadingSeries
+                    if (!loading) return@launch
+                    val partial = mergeEnrichedItems(items.filter { it.mediaType == tab.mediaType() })
+                    _uiState.value = when (tab) {
+                        CollectionTab.MOVIES -> state.copy(movieItems = partial)
+                        CollectionTab.SERIES -> state.copy(seriesItems = partial)
+                    }
+                }
+            })
+        }
+        ensureCurrentLoad(generation)
         val pageItems = when (tab) {
-            CollectionTab.MOVIES -> page?.items.orEmpty().filter { it.mediaType == MediaType.MOVIE }
-            CollectionTab.SERIES -> page?.items.orEmpty().filter { it.mediaType == MediaType.TV }
+            CollectionTab.MOVIES -> (page?.items ?: _uiState.value.movieItems).filter { it.mediaType == MediaType.MOVIE }
+            CollectionTab.SERIES -> (page?.items ?: _uiState.value.seriesItems).filter { it.mediaType == MediaType.TV }
         }
         val missingAddons = if (page != null && pageItems.isEmpty() &&
             !SportsAddonCapabilities.isSportsCollectionCatalogId(catalog.id)
@@ -252,6 +298,7 @@ class CollectionDetailsViewModel @Inject constructor(
         } else {
             emptyList()
         }
+        ensureCurrentLoad(generation)
         val pageError = when {
             page == null -> COLLECTION_LOAD_FAILED_ERROR
             missingAddons.isNotEmpty() -> COLLECTION_MISSING_ADDON_PREFIX + missingAddons.joinToString(", ")
@@ -261,7 +308,7 @@ class CollectionDetailsViewModel @Inject constructor(
         _uiState.value = when (tab) {
             CollectionTab.MOVIES -> _uiState.value.copy(
                 catalog = decoratedCatalog,
-                movieItems = pageItems,
+                movieItems = mergeEnrichedItems(pageItems),
                 isLoadingMovies = false,
                 hasMoreMovies = page?.hasMore == true,
                 loadedMovieOffset = page?.nextOffset ?: pageItems.size,
@@ -269,7 +316,7 @@ class CollectionDetailsViewModel @Inject constructor(
             )
             CollectionTab.SERIES -> _uiState.value.copy(
                 catalog = decoratedCatalog,
-                seriesItems = pageItems,
+                seriesItems = mergeEnrichedItems(pageItems),
                 isLoadingSeries = false,
                 hasMoreSeries = page?.hasMore == true,
                 loadedSeriesOffset = page?.nextOffset ?: pageItems.size,
@@ -282,8 +329,9 @@ class CollectionDetailsViewModel @Inject constructor(
             CollectionTab.SERIES -> _uiState.value.hasMoreSeries
         }
         if (hasMore) {
-            viewModelScope.launch {
+            requestScope.launch {
                 delay(BACKGROUND_PREFETCH_DELAY_MS)
+                ensureCurrentLoad(generation)
                 loadMoreIfNeeded(tab)
             }
         }
@@ -301,31 +349,34 @@ class CollectionDetailsViewModel @Inject constructor(
             CollectionTab.MOVIES -> state.copy(isLoadingMoreMovies = true)
             CollectionTab.SERIES -> state.copy(isLoadingMoreSeries = true)
         }
-        viewModelScope.launch {
+        val generation = loadGeneration
+        collectionScope.launch {
             val pageCatalog = catalogForTab(catalog, tab)
             val nextOffset = when (tab) {
                 CollectionTab.MOVIES -> state.loadedMovieOffset
                 CollectionTab.SERIES -> state.loadedSeriesOffset
             }
-            val next = runCatching { loadCollectionPage(pageCatalog, tab, offset = nextOffset, limit = PAGE_STEP) }.getOrNull()
+            val next = collectionResultOrNull { loadCollectionPage(pageCatalog, tab, offset = nextOffset, limit = PAGE_STEP) }
+            ensureCurrentLoad(generation)
             val freshItems = when (tab) {
                 CollectionTab.MOVIES -> next?.items.orEmpty().filter { it.mediaType == MediaType.MOVIE }
                 CollectionTab.SERIES -> next?.items.orEmpty().filter { it.mediaType == MediaType.TV }
             }
+            val current = _uiState.value
             val existingIds = when (tab) {
-                CollectionTab.MOVIES -> state.movieItems.mapTo(HashSet()) { it.id to it.mediaType }
-                CollectionTab.SERIES -> state.seriesItems.mapTo(HashSet()) { it.id to it.mediaType }
+                CollectionTab.MOVIES -> current.movieItems.mapTo(HashSet()) { it.id to it.mediaType }
+                CollectionTab.SERIES -> current.seriesItems.mapTo(HashSet()) { it.id to it.mediaType }
             }
             val uniqueNew = freshItems.filter { (it.id to it.mediaType) !in existingIds }
             _uiState.value = when (tab) {
                 CollectionTab.MOVIES -> _uiState.value.copy(
-                    movieItems = state.movieItems + uniqueNew,
+                    movieItems = current.movieItems + mergeEnrichedItems(uniqueNew),
                     isLoadingMoreMovies = false,
                     hasMoreMovies = next?.hasMore == true,
                     loadedMovieOffset = next?.nextOffset ?: (state.loadedMovieOffset + freshItems.size)
                 )
                 CollectionTab.SERIES -> _uiState.value.copy(
-                    seriesItems = state.seriesItems + uniqueNew,
+                    seriesItems = current.seriesItems + mergeEnrichedItems(uniqueNew),
                     isLoadingMoreSeries = false,
                     hasMoreSeries = next?.hasMore == true,
                     loadedSeriesOffset = next?.nextOffset ?: (state.loadedSeriesOffset + freshItems.size)
@@ -337,7 +388,9 @@ class CollectionDetailsViewModel @Inject constructor(
 
     fun preloadLogos(items: List<MediaItem>) {
         if (items.isEmpty()) return
-        viewModelScope.launch {
+        val generation = loadGeneration
+        collectionScope.launch {
+            ensureCurrentLoad(generation)
             val current = _cardLogoUrls.value.toMutableMap()
             val missing = items
                 .filterNot { item -> SportsAddonCapabilities.isSportsEventStatus(item.status) }
@@ -364,17 +417,101 @@ class CollectionDetailsViewModel @Inject constructor(
             val fetched = remoteMissing.map { item ->
                 async {
                     val key = "${item.mediaType}_${item.id}"
-                    val logo = runCatching {
+                    val logo = collectionResultOrNull {
                         mediaRepository.getLogoUrl(item.mediaType, item.id)
-                    }.getOrNull()
+                    }
                     if (logo.isNullOrBlank()) null else key to logo
                 }
             }.awaitAll().filterNotNull()
 
+            ensureCurrentLoad(generation)
             if (fetched.isNotEmpty()) {
                 _cardLogoUrls.value = (_cardLogoUrls.value + fetched).toMap()
             }
         }
+    }
+
+    fun enrichVisibleDetails(items: List<MediaItem>) {
+        val state = _uiState.value
+        val loadedKeys = (state.movieItems + state.seriesItems).mapTo(HashSet()) { it.mediaType to it.id }
+        val visible = items.filter {
+            it.id > 0 && !it.isHomeServer && !SportsAddonCapabilities.isSportsEventStatus(it.status) &&
+                (it.mediaType to it.id) in loadedKeys
+        }
+        visibleDetailKeys = visible.mapTo(HashSet()) { it.mediaType to it.id }
+        val generation = loadGeneration
+        visible.forEach { item ->
+            val key = item.mediaType to item.id
+            if (key in detailAttempts || key in detailJobs) return@forEach
+            val job = collectionScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    detailsSemaphore.withPermit {
+                        ensureCurrentLoad(generation)
+                        if (key !in visibleDetailKeys || !detailAttempts.add(key)) return@withPermit
+                        val details = collectionResultOrNull {
+                            when (item.mediaType) {
+                                MediaType.MOVIE -> mediaRepository.getMovieDetails(item.id)
+                                MediaType.TV -> mediaRepository.getTvDetails(item.id)
+                            }
+                        }
+                        ensureCurrentLoad(generation)
+                        if (details == null || details.id != item.id || details.mediaType != item.mediaType) return@withPermit
+                        enrichedDetails[key] = details
+                        val current = _uiState.value
+                        _uiState.value = current.copy(
+                            movieItems = mergeEnrichedItems(current.movieItems),
+                            seriesItems = mergeEnrichedItems(current.seriesItems)
+                        )
+                    }
+                } finally {
+                    if (generation == loadGeneration) detailJobs.remove(key)
+                }
+            }
+            detailJobs[key] = job
+            job.start()
+        }
+    }
+
+    private fun mergeEnrichedItems(items: List<MediaItem>): List<MediaItem> = items.map { item ->
+        val details = enrichedDetails[item.mediaType to item.id] ?: return@map item
+        // Keep source identity, nonblank artwork, ordering and playback state on the original card.
+        item.copy(
+            image = item.image.ifBlank { details.image },
+            backdrop = item.backdrop?.takeIf { it.isNotBlank() } ?: details.backdrop,
+            overview = details.overview.ifBlank { item.overview },
+            year = details.year.ifBlank { item.year },
+            releaseDate = details.releaseDate ?: item.releaseDate,
+            rating = details.rating.ifBlank { item.rating },
+            contentRating = details.contentRating ?: item.contentRating,
+            duration = details.duration.ifBlank { item.duration },
+            imdbRating = details.imdbRating.ifBlank { item.imdbRating },
+            tmdbRating = details.tmdbRating.ifBlank { item.tmdbRating },
+            genreIds = details.genreIds.ifEmpty { item.genreIds },
+            originalLanguage = details.originalLanguage ?: item.originalLanguage,
+            originalTitle = details.originalTitle ?: item.originalTitle,
+            primaryNetworkLogo = details.primaryNetworkLogo ?: item.primaryNetworkLogo,
+            isOngoing = details.isOngoing,
+            totalEpisodes = details.totalEpisodes ?: item.totalEpisodes,
+            status = item.status ?: details.status,
+            budget = details.budget ?: item.budget,
+            revenue = details.revenue ?: item.revenue,
+            popularity = details.popularity
+        )
+    }
+
+    private fun CollectionTab.mediaType() = if (this == CollectionTab.MOVIES) MediaType.MOVIE else MediaType.TV
+
+    private suspend fun ensureCurrentLoad(generation: Long) {
+        currentCoroutineContext().ensureActive()
+        if (generation != loadGeneration) throw CancellationException("Collection changed")
+    }
+
+    private suspend fun <T> collectionResultOrNull(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
     }
 
     fun openSportsCollectionItem(
@@ -388,8 +525,10 @@ class CollectionDetailsViewModel @Inject constructor(
             onUnavailable()
             return
         }
-        viewModelScope.launch {
+        val generation = loadGeneration
+        collectionScope.launch {
             val playback = sportsRepository.resolvePlayback(status, item.title)
+            ensureCurrentLoad(generation)
             if (playback == null) {
                 onUnavailable()
                 return@launch
@@ -408,7 +547,8 @@ class CollectionDetailsViewModel @Inject constructor(
         catalog: CatalogConfig,
         tab: CollectionTab,
         offset: Int,
-        limit: Int
+        limit: Int,
+        onItemsAvailable: ((List<MediaItem>) -> Unit)? = null
     ): MediaRepository.CategoryPageResult {
         return if (SportsAddonCapabilities.isSportsCollectionCatalogId(catalog.id)) {
             sportsRepository.loadSportsCollectionPage(catalog.id, offset = offset, limit = limit)
@@ -419,7 +559,8 @@ class CollectionDetailsViewModel @Inject constructor(
                 limit = limit,
                 // Lists without a per-source type (MDBList, Trakt, TMDB lists) mix movies and
                 // series; page through this tab's type only, or the tab stalls on pages of the other.
-                mediaType = if (tab == CollectionTab.MOVIES) MediaType.MOVIE else MediaType.TV
+                mediaType = tab.mediaType(),
+                onItemsAvailable = onItemsAvailable
             )
         }
     }
@@ -592,7 +733,13 @@ fun CollectionDetailsScreen(
                         CollectionTab.SERIES -> seriesGridState
                     }
                     // Grid has 2 header items (tab bar + spacer) before the media cards
-                    runCatching { currentGridState.scrollToItem(savedIndex + 2) }
+                    try {
+                        currentGridState.scrollToItem(savedIndex + 2)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // The saved item may no longer exist after a collection update.
+                    }
                     pendingFocusIndex = savedIndex
                 } else {
                     runCatching {
@@ -706,6 +853,7 @@ fun CollectionDetailsScreen(
                 }
             },
             onVisibleItemsChanged = { visibleItems -> viewModel.preloadLogos(visibleItems) },
+            onVisibleDetailsChanged = { visibleItems -> viewModel.enrichVisibleDetails(visibleItems) },
             onNearEnd = { viewModel.loadMoreIfNeeded(activeTab) },
             isLoading = isTabLoading,
             isLoadingMore = isTabLoadingMore,
@@ -907,6 +1055,7 @@ private fun CollectionItemsGrid(
     onItemClick: (MediaItem) -> Unit,
     onItemFocused: (MediaItem, Int) -> Unit,
     onVisibleItemsChanged: (List<MediaItem>) -> Unit,
+    onVisibleDetailsChanged: (List<MediaItem>) -> Unit,
     onNearEnd: () -> Unit,
     isLoading: Boolean,
     isLoadingMore: Boolean,
@@ -918,7 +1067,17 @@ private fun CollectionItemsGrid(
     val latestItems by rememberUpdatedState(items)
     val latestGridColumns by rememberUpdatedState(gridColumns)
     val latestOnVisibleItemsChanged by rememberUpdatedState(onVisibleItemsChanged)
+    val latestOnVisibleDetailsChanged by rememberUpdatedState(onVisibleDetailsChanged)
     val latestOnNearEnd by rememberUpdatedState(onNearEnd)
+    LaunchedEffect(gridState) {
+        try {
+            snapshotFlow {
+                gridState.layoutInfo.visibleItemsInfo.mapNotNull { latestItems.getOrNull(it.index - 2) }
+            }.distinctUntilChanged().collect { latestOnVisibleDetailsChanged(it) }
+        } finally {
+            latestOnVisibleDetailsChanged(emptyList())
+        }
+    }
     // Collect scroll position without restarting on page-load-size changes —
     // items.size used to live in the key, which relaunched the snapshotFlow on
     // every page append and caused a stutter frame during scroll.
@@ -980,7 +1139,7 @@ private fun CollectionItemsGrid(
             Box(modifier = Modifier.height(6.dp))
         }
 
-        if (isLoading) {
+        if (isLoading && items.isEmpty()) {
             val cardHeight = if (usePosterCards) cardWidth * 1.5f else cardWidth * 9f / 16f
             itemsIndexed((1..gridColumns * 3).toList(), contentType = { _, _ -> "skeleton" }) { _, _ ->
                 Box(

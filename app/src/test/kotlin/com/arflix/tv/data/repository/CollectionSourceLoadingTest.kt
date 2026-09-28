@@ -94,9 +94,9 @@ class CollectionSourceLoadingTest {
         coEvery { api.getPublicList(1, any(), any(), 2) } throws IOException("temporary error")
         val repository = repository(api)
         val catalog = catalog(listSource())
-        assertEquals(8, repository.loadCollectionCatalogPage(catalog, 0, 8).items.size)
+        assertEquals(20, repository.loadCollectionCatalogPage(catalog, 0, 24).items.size)
         coEvery { api.getPublicList(1, any(), any(), 2) } returns page(2, 2, 21..40)
-        repository.loadCollectionCatalogPage(catalog, 0, 8)
+        repository.loadCollectionCatalogPage(catalog, 0, 24)
         coVerify(exactly = 2) { api.getPublicList(1, any(), any(), 2) }
     }
 

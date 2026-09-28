@@ -21,3 +21,26 @@ characters, 100 rows and 500 folders; duplicate identifiers are rejected.
 The web collection view supports poster/landscape covers, keyboard navigation,
 missing-artwork fallback and retry. Animated hero videos are not played in the web
 collection dialog; their metadata is retained when syncing back to Android.
+
+## Android loading
+
+Collection cards reuse the titles and artwork already returned by TMDB lists,
+discover, franchise and person-credit endpoints. ID-only sources fetch lightweight
+details with a shared six-request limit. The initial page does not wait for IMDb
+ratings; visible cards receive full details and ratings afterward, two at a time.
+Partial pages keep source order so TV focus does not jump as requests finish.
+Imported collections fetch one upstream page initially and expand on scroll;
+movie/series filters, pagination and the collection's contents are preserved.
+
+Run the collection regression tests with:
+
+```powershell
+./gradlew.bat :app:testSideloadDebugUnitTest --tests '*Collection*'
+```
+
+`CollectionLoadingBenchmarkTest` includes a deterministic cold/warm request-count
+benchmark. Set `ARVIO_LIVE_COLLECTION_BENCHMARK=1` to additionally measure two public
+lists from the bundled Kaptain pack (requires the configured TMDB key). JVM timings
+exclude image decoding and UI rendering. The opt-in Android instrumentation test
+`CollectionLoadingDeviceTest`, with argument `collectionLive=true`, measures actual
+repository loading, poster downloads/decoding, warm reloads and pagination.

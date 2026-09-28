@@ -48,6 +48,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -146,17 +148,18 @@ class MediaRepository @Inject constructor(
         cachedHomeCategories = emptyList()
         homeCategoriesFetchedAt = 0L
         synchronized(detailsCache) { detailsCache.clear() }
-        synchronized(fullDetailsCacheKeys) { fullDetailsCacheKeys.clear() }
         synchronized(castCache) { castCache.clear() }
         synchronized(similarCache) { similarCache.clear() }
         synchronized(logoCache) { logoCache.clear() }
         homeServerLogoRefCache.clear()
         synchronized(reviewsCache) { reviewsCache.clear() }
         synchronized(seasonEpisodesCache) { seasonEpisodesCache.clear() }
+        collectionRefsCache.clear()
     }
 
-    private val detailsCache = mutableMapOf<String, CacheEntry<MediaItem>>()
-    private val fullDetailsCacheKeys = mutableSetOf<String>()
+    private data class MediaCacheEntry(val item: MediaItem, val timestamp: Long, val complete: Boolean)
+    private val detailsCache = ConcurrentHashMap<String, MediaCacheEntry>()
+    private val collectionCardSlots = Semaphore(6)
     private val castCache = mutableMapOf<String, CacheEntry<List<CastMember>>>()
     private val similarCache = mutableMapOf<String, CacheEntry<List<MediaItem>>>()
     private val logoCache = ConcurrentHashMap<String, CacheEntry<String?>>()
@@ -244,6 +247,8 @@ class MediaRepository @Inject constructor(
 
     private fun collectionRefsCacheKey(catalog: CatalogConfig): String {
         return buildString {
+            append(contentLanguage)
+            append('|')
             append(catalog.id)
             append('|')
             catalog.collectionSources.forEach { source ->
@@ -325,7 +330,9 @@ class MediaRepository @Inject constructor(
         }
         val sourceBudgets = catalog.collectionSources.mapIndexed { index, source ->
             if (unlimitedGroup) {
-                (targetCount + 20).coerceAtLeast(40)
+                // Start with one upstream page; grow on scroll instead of downloading
+                // extra pages before the first eight cards can be displayed.
+                ((targetCount + 19) / 20) * 20
             } else when (source.kind) {
                 CollectionSourceKind.ADDON_CATALOG -> (targetCount + 12).coerceAtLeast(24)
                 CollectionSourceKind.MDBLIST_PUBLIC -> (targetCount + 8).coerceAtLeast(24)
@@ -389,9 +396,13 @@ class MediaRepository @Inject constructor(
     }
 
     fun getCachedItem(mediaType: MediaType, mediaId: Int): MediaItem? {
-        val cacheKey = detailsCacheKey(mediaType, mediaId)
-        return getFromCache(detailsCache, cacheKey)
+        return cachedMediaEntry(mediaType, mediaId)?.item
     }
+
+    private fun cachedMediaEntry(mediaType: MediaType, mediaId: Int): MediaCacheEntry? =
+        detailsCache[detailsCacheKey(mediaType, mediaId)]?.takeIf {
+            System.currentTimeMillis() - it.timestamp < CACHE_TTL_MS
+        }
 
     suspend fun getCachedItemFromDisk(mediaType: MediaType, mediaId: Int): MediaItem? =
         withContext(Dispatchers.IO) {
@@ -443,13 +454,7 @@ class MediaRepository @Inject constructor(
         }
 
     fun getCachedFullItem(mediaType: MediaType, mediaId: Int): MediaItem? {
-        val cacheKey = detailsCacheKey(mediaType, mediaId)
-        if (cacheKey !in fullDetailsCacheKeys) return null
-        val cached = getFromCache(detailsCache, cacheKey)
-        if (cached == null) {
-            fullDetailsCacheKeys.remove(cacheKey)
-        }
-        return cached
+        return cachedMediaEntry(mediaType, mediaId)?.takeIf { it.complete }?.item
     }
 
     fun cacheImdbId(mediaType: MediaType, mediaId: Int, imdbId: String) {
@@ -699,18 +704,16 @@ class MediaRepository @Inject constructor(
 
     fun cacheItem(item: MediaItem) {
         val cacheKey = detailsCacheKey(item.mediaType, item.id)
-        if (cacheKey in fullDetailsCacheKeys) {
-            val existingFullDetails = getFromCache(detailsCache, cacheKey)
-            if (existingFullDetails != null) return
-            fullDetailsCacheKeys.remove(cacheKey)
+        val now = System.currentTimeMillis()
+        detailsCache.compute(cacheKey) { _, existing ->
+            if (existing != null && existing.complete && now - existing.timestamp < CACHE_TTL_MS) existing
+            else MediaCacheEntry(item, now, complete = false)
         }
-        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
     }
 
     private fun cacheFullDetailsItem(item: MediaItem) {
         val cacheKey = detailsCacheKey(item.mediaType, item.id)
-        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
-        fullDetailsCacheKeys.add(cacheKey)
+        detailsCache[cacheKey] = MediaCacheEntry(item, System.currentTimeMillis(), complete = true)
     }
 
     private fun cacheItems(items: List<MediaItem>) {
@@ -2156,58 +2159,87 @@ class MediaRepository @Inject constructor(
         catalog: CatalogConfig,
         offset: Int,
         limit: Int,
-        mediaType: MediaType? = null
+        mediaType: MediaType? = null,
+        onItemsAvailable: ((List<MediaItem>) -> Unit)? = null
     ): CategoryPageResult = coroutineScope {
         if (catalog.collectionSources.isEmpty() || limit <= 0 || offset < 0) {
             return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
         }
+        val requestLanguage = contentLanguage
 
         val resolved = resolveCollectionCatalogRefs(
             catalog = catalog,
             requiredCount = (offset + limit).coerceAtLeast(limit),
             mediaType = mediaType
         )
+        if (requestLanguage != contentLanguage) throw CancellationException("Collection language changed")
         val refs = if (mediaType == null) resolved.refs else resolved.refs.filter { it.first == mediaType }
         if (refs.isEmpty()) return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
 
         val pageRefs = refs.drop(offset).take(limit)
         val itemsByRef = LinkedHashMap<Pair<MediaType, Int>, MediaItem>()
         val missingRefs = mutableListOf<Pair<MediaType, Int>>()
+        val finishedRefs = mutableSetOf<Pair<MediaType, Int>>()
+        val progressMutex = Mutex()
+        var publishedCount = 0
+        // Publish only the resolved prefix: slow cards must not reorder focused TV items.
+        fun publishAvailable() {
+            val available = pageRefs.takeWhile { it in finishedRefs }.mapNotNull { itemsByRef[it] }
+            if (available.size > publishedCount) {
+                publishedCount = available.size
+                onItemsAvailable?.invoke(available)
+            }
+        }
         pageRefs.forEach { (type, tmdbId) ->
             val cachedItem = getCachedItem(type, tmdbId)
             if (cachedItem != null) {
                 itemsByRef[type to tmdbId] = cachedItem
+                finishedRefs += type to tmdbId
             } else {
                 missingRefs += (type to tmdbId)
             }
         }
-        // Each item costs two sequential rounds (TMDB details + external ids, then the IMDb
-        // rating), so two at a time left a first page of 8 waiting through four rounds. Same
-        // limit as custom catalog rows. Results are collected after awaitAll, so the map is
-        // never written from several jobs at once.
-        val semaphore = Semaphore(6)
+        publishAvailable()
+        // Lists/discover usually provided the cards already. ID-only sources need just
+        // one metadata request, never external IDs or ratings on the first-render path.
         missingRefs.map { (type, tmdbId) ->
             async {
-                semaphore.withPermit {
-                    (type to tmdbId) to runCatching {
+                val item = collectionCardSlots.withPermit {
+                    try {
                         when (type) {
-                            MediaType.MOVIE -> getMovieDetails(tmdbId)
-                            MediaType.TV -> getTvDetails(tmdbId)
+                            MediaType.MOVIE -> tmdbApi.getMovieDetails(tmdbId, apiKey, language = requestLanguage)
+                                .let { it.toMediaItem().copy(contentRating = ContentRating.forMovie(it.releaseDates, requestLanguage)) }
+                            MediaType.TV -> tmdbApi.getTvDetails(tmdbId, apiKey, language = requestLanguage)
+                                .let { it.toMediaItem().copy(contentRating = ContentRating.forTv(it.contentRatings, requestLanguage)) }
                         }
-                    }.getOrNull()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                progressMutex.withLock {
+                    if (requestLanguage != contentLanguage) throw CancellationException("Collection language changed")
+                    if (item != null) {
+                        // This fallback fetched complete TMDB details; only ratings remain.
+                        synchronized(detailsCache) {
+                            if (requestLanguage == contentLanguage) cacheFullDetailsItem(item)
+                        }
+                        itemsByRef[type to tmdbId] = item
+                    }
+                    finishedRefs += type to tmdbId
+                    publishAvailable()
                 }
             }
-        }.awaitAll().forEach { (ref, item) ->
-            if (item != null) itemsByRef[ref] = item
-        }
+        }.awaitAll()
         val items = pageRefs.mapNotNull { itemsByRef[it] }
-        if (items.isNotEmpty()) cacheItems(items)
+        // Every successful card was cached at its source or lightweight detail boundary.
         // nextOffset counts consumed refs, not returned items: a failed lookup drops an item, and
         // counting items would make the next page start inside this one.
-        // A filtered tab can have run out of its type inside the fetched window while the sources
-        // still hold more; stop only once they are exhausted or a page comes back empty.
+        // Reaching the end of a fetched window is not the end of the source, including
+        // callers without a movie/series filter. Grow that window on the next page.
         val hasMore = offset + pageRefs.size < refs.size ||
-            (mediaType != null && !resolved.complete && pageRefs.isNotEmpty())
+            (!resolved.complete && pageRefs.isNotEmpty())
         CategoryPageResult(
             items = items,
             hasMore = hasMore,
@@ -2386,13 +2418,14 @@ class MediaRepository @Inject constructor(
         limit: Int,
         mediaType: MediaType?
     ): List<Pair<MediaType, Int>> {
+        val requestLanguage = contentLanguage
         val listId = source.tmdbListId ?: return emptyList()
         val refs = LinkedHashSet<Pair<MediaType, Int>>()
         var page = 1
         var totalPages = 1
         while (refs.size < limit && page <= totalPages) {
             val response = try {
-                tmdbApi.getPublicList(listId, apiKey, language = contentLanguage, page = page)
+                tmdbApi.getPublicList(listId, apiKey, language = requestLanguage, page = page)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -2401,7 +2434,10 @@ class MediaRepository @Inject constructor(
             response.items.forEach { item ->
                 if (item.id <= 0) return@forEach
                 val type = if (item.mediaType.equals("tv", ignoreCase = true)) MediaType.TV else MediaType.MOVIE
-                if (mediaType == null || type == mediaType) refs.add(type to item.id)
+                if (mediaType == null || type == mediaType) {
+                    if (refs.size < limit) cacheCollectionPreview(item.asMediaItem(), type, requestLanguage)
+                    refs.add(type to item.id)
+                }
             }
             totalPages = response.totalPages.coerceAtLeast(1)
             if (response.items.isEmpty()) break
@@ -2414,12 +2450,14 @@ class MediaRepository @Inject constructor(
         source: CollectionSourceConfig,
         limit: Int
     ): List<Pair<MediaType, Int>> {
+        val requestLanguage = contentLanguage
         val id = source.tmdbCollectionId ?: return emptyList()
-        val response = tmdbApi.getTmdbCollection(id, apiKey, language = contentLanguage)
+        val response = tmdbApi.getTmdbCollection(id, apiKey, language = requestLanguage)
         return response.parts
             .sortedBy { it.releaseDate.orEmpty() }
-            .map { MediaType.MOVIE to it.id }
             .take(limit)
+            .onEach { cacheCollectionPreview(it, MediaType.MOVIE, requestLanguage) }
+            .map { MediaType.MOVIE to it.id }
     }
 
     /**
@@ -2603,10 +2641,11 @@ class MediaRepository @Inject constructor(
         source: CollectionSourceConfig,
         limit: Int
     ): List<Pair<MediaType, Int>> {
+        val requestLanguage = contentLanguage
         val personId = source.tmdbPersonId ?: return emptyList()
         val sortBy = source.sortBy ?: "popularity.desc"
         if (source.tmdbCreditRole != null) {
-            val credits = tmdbApi.getPersonDetails(personId, apiKey, language = contentLanguage).combinedCredits
+            val credits = tmdbApi.getPersonDetails(personId, apiKey, language = requestLanguage).combinedCredits
                 ?: return emptyList()
             val items = if (source.tmdbCreditRole == "Director") credits.crew.filter { it.job == "Director" } else credits.cast
             val type = if (source.mediaType in setOf("tv", "series", "show")) MediaType.TV else MediaType.MOVIE
@@ -2618,7 +2657,9 @@ class MediaRepository @Inject constructor(
                 "title", "original_title" -> matching.sortedBy { it.title ?: it.name.orEmpty() }
                 else -> matching.sortedBy { it.popularity }
             }
-            return (if (sortBy.endsWith(".asc")) sorted else sorted.reversed()).take(limit).map { type to it.id }
+            return (if (sortBy.endsWith(".asc")) sorted else sorted.reversed()).take(limit)
+                .onEach { cacheCollectionPreview(it, type, requestLanguage) }
+                .map { type to it.id }
         }
         return when (source.mediaType?.lowercase(Locale.US)) {
             "movie" -> loadPagedTmdbDiscoverRefs(
@@ -2654,6 +2695,7 @@ class MediaRepository @Inject constructor(
         limit: Int,
         fetchPage: suspend (Int) -> TmdbListResponse
     ): List<Pair<MediaType, Int>> {
+        val requestLanguage = contentLanguage
         if (limit <= 0) return emptyList()
         val refs = LinkedHashSet<Pair<MediaType, Int>>()
         var page = 1
@@ -2666,12 +2708,24 @@ class MediaRepository @Inject constructor(
             } catch (e: Exception) {
                 throw CollectionSourceLoadException(refs.toList(), e)
             }
-            response.results.forEach { refs.add(mediaType to it.id) }
+            response.results.forEach {
+                cacheCollectionPreview(it, mediaType, requestLanguage)
+                refs.add(mediaType to it.id)
+            }
             totalPages = response.totalPages.coerceAtLeast(1)
             if (response.results.isEmpty()) break
             page += 1
         }
         return refs.take(limit)
+    }
+
+    private fun cacheCollectionPreview(item: TmdbMediaItem, type: MediaType, requestLanguage: String) {
+        // Some list providers expose IDs only. Keep their lightweight detail fallback.
+        if (item.id <= 0 || listOf(item.title, item.name, item.originalTitle, item.originalName).all { it.isNullOrBlank() }) return
+        synchronized(detailsCache) {
+            if (requestLanguage != contentLanguage || getCachedItem(type, item.id) != null) return
+            cacheItem(item.toMediaItem(type))
+        }
     }
 
     private suspend fun loadPagedAddonCollectionRefs(
@@ -3116,17 +3170,14 @@ class MediaRepository @Inject constructor(
      * Get movie details (cached)
      */
     suspend fun getMovieDetails(movieId: Int): MediaItem {
-        val cacheKey = "movie_$movieId"
-        getFromCache(detailsCache, cacheKey)?.let { cached ->
-            if (movieId < 0 && cached.isHomeServer) return cached
-            if (cacheKey in fullDetailsCacheKeys) {
-                if (cached.imdbRating.isNotBlank()) return cached
-                val imdbRating = getImdbRating(MediaType.MOVIE, movieId)
-                if (!imdbRating.isNullOrBlank()) {
-                    return cached.copy(imdbRating = imdbRating).also { cacheFullDetailsItem(it) }
-                }
-                return cached
+        getCachedItem(MediaType.MOVIE, movieId)?.let { if (movieId < 0 && it.isHomeServer) return it }
+        getCachedFullItem(MediaType.MOVIE, movieId)?.let { cached ->
+            if (cached.imdbRating.isNotBlank()) return cached
+            val imdbRating = getImdbRating(MediaType.MOVIE, movieId)
+            if (!imdbRating.isNullOrBlank()) {
+                return cached.copy(imdbRating = imdbRating).also { cacheFullDetailsItem(it) }
             }
+            return cached
         }
 
         val item = coroutineScope {
@@ -3149,17 +3200,14 @@ class MediaRepository @Inject constructor(
      * Get TV show details (cached)
      */
     suspend fun getTvDetails(tvId: Int): MediaItem {
-        val cacheKey = "tv_$tvId"
-        getFromCache(detailsCache, cacheKey)?.let { cached ->
-            if (tvId < 0 && cached.isHomeServer) return cached
-            if (cacheKey in fullDetailsCacheKeys) {
-                if (cached.imdbRating.isNotBlank()) return cached
-                val imdbRating = getImdbRating(MediaType.TV, tvId)
-                if (!imdbRating.isNullOrBlank()) {
-                    return cached.copy(imdbRating = imdbRating).also { cacheFullDetailsItem(it) }
-                }
-                return cached
+        getCachedItem(MediaType.TV, tvId)?.let { if (tvId < 0 && it.isHomeServer) return it }
+        getCachedFullItem(MediaType.TV, tvId)?.let { cached ->
+            if (cached.imdbRating.isNotBlank()) return cached
+            val imdbRating = getImdbRating(MediaType.TV, tvId)
+            if (!imdbRating.isNullOrBlank()) {
+                return cached.copy(imdbRating = imdbRating).also { cacheFullDetailsItem(it) }
             }
+            return cached
         }
 
         val item = coroutineScope {
