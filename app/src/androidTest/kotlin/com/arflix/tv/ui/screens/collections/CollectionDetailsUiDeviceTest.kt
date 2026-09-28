@@ -46,14 +46,20 @@ class CollectionDetailsUiDeviceTest {
         val device = DeviceType.valueOf(InstrumentationRegistry.getArguments().getString("collectionDevice") ?: "TV")
         val posters = InstrumentationRegistry.getArguments().getString("collectionPosters") != "false"
         val repository = EntryPointAccessors.fromApplication(context, RepositoryAccessEntryPoint::class.java).mediaRepository()
-        val catalog = CatalogConfig("collection-ui-test", "Science fiction", CatalogSourceType.PREINSTALLED,
+        val catalogId = InstrumentationRegistry.getArguments().getString("collectionCatalogId")
+        val catalog = if (catalogId != null) {
+            com.arflix.tv.data.repository.MediaRepository.buildPreinstalledDefaults().first { it.id == catalogId }
+        } else CatalogConfig("collection-ui-test", "Science fiction", CatalogSourceType.PREINSTALLED,
             kind = CatalogKind.COLLECTION,
             collectionDescription = "New worlds, speculative futures and journeys beyond our own.",
             collectionSources = listOf(CollectionSourceConfig(kind = CollectionSourceKind.TMDB_GENRE,
                 mediaType = "movie", tmdbGenreId = 878, sortBy = "popularity.desc")))
         val page = repository.loadCollectionCatalogPage(catalog, 0, 30, MediaType.MOVIE)
         assertTrue("Real collection should contain enough cards to scroll", page.items.size >= 20)
-        val details = repository.getMovieDetails(page.items.first().id)
+        val provider = repository.getStreamingServices(MediaType.MOVIE, page.items.first().id,
+            preferredRegion = java.util.Locale.getDefault().country)?.services?.firstOrNull()
+        if (catalogId != null) assertFalse("Provider fixture must resolve actual artwork", provider?.logoUrl.isNullOrBlank())
+        val details = repository.getMovieDetails(page.items.first().id)?.copy(primaryNetworkLogo = provider?.logoUrl)
         val items = page.items.map { if (it.id == details?.id) details else it }.filterNotNull()
         var opened: MediaItem? = null
         var nearEnd = false
@@ -92,6 +98,12 @@ class CollectionDetailsUiDeviceTest {
         compose.mainClock.advanceTimeBy(400)
         compose.waitForIdle()
         compose.onNodeWithTag("collection_spotlight_title").assertTextEquals(items.first().title)
+        if (collectionRating(items.first())?.startsWith("IMDb ") == true) {
+            compose.onNodeWithContentDescription("IMDb").assertIsDisplayed()
+        }
+        if (!provider?.logoUrl.isNullOrBlank()) {
+            compose.onNodeWithTag("collection_provider_logo").assertIsDisplayed()
+        }
         compose.onNodeWithTag("collection_grid").assertIsDisplayed()
         val gridTop = compose.onNodeWithTag("collection_grid").fetchSemanticsNode().boundsInRoot.top
         val heroBottom = compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot.bottom
@@ -110,6 +122,9 @@ class CollectionDetailsUiDeviceTest {
             repeat(14) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
             compose.runOnIdle { assertTrue("Pagination must remain reachable", nearEnd) }
             repeat(14) { compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) } }
+            compose.onNodeWithTag("collection_item_0").onChildren().filter(hasClickAction()).onFirst()
+                .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus) { it() }
+            compose.mainClock.advanceTimeBy(200)
         } else {
             compose.onNodeWithTag("collection_item_0").onChildren().filter(hasClickAction()).onFirst().performClick()
             compose.runOnIdle { assertEquals(items.first().id, opened?.id) }
@@ -119,8 +134,8 @@ class CollectionDetailsUiDeviceTest {
         // Let real images decode before recording the visual result (not a loading benchmark).
         Thread.sleep(2500)
         compose.waitForIdle()
-        val suffix = if (posters) "" else "-landscape"
-        val file = File(context.getExternalFilesDir(null), "collection-redesign-${device.name}$suffix.png")
+        val suffix = (if (posters) "" else "-landscape") + (if (catalogId != null) "-service" else "")
+        val file = File(context.getExternalFilesDir(null), "collection-branded-${device.name}$suffix.png")
         file.outputStream().use {
             compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
         }

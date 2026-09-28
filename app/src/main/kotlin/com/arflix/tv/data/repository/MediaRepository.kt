@@ -2925,12 +2925,17 @@ class MediaRepository @Inject constructor(
             watchProvidersCache.remove(cacheKey)
         }
 
-        val response = runCatching {
+        val response = try {
             when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieWatchProviders(mediaId, apiKey)
                 MediaType.TV -> tmdbApi.getTvWatchProviders(mediaId, apiKey)
             }
-        }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // A failed lookup is not a successful empty response and must not poison the cache.
+            return null
+        }
 
         val results = response?.results.orEmpty()
         if (results.isEmpty()) {

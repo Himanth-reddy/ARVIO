@@ -131,6 +131,7 @@ import coil.ImageLoader
 import coil.imageLoader
 import coil.compose.AsyncImage
 import coil.decode.SvgDecoder
+import com.arflix.tv.ui.components.ImdbSvgRatingBadge
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.arflix.tv.data.model.Category
@@ -3613,50 +3614,6 @@ private fun MetaPill(text: String) {
                 fontWeight = FontWeight.Bold
             ),
             color = TextPrimary
-        )
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun ImdbSvgRatingBadge(
-    rating: String,
-    imageLoader: ImageLoader,
-    ratingFontSize: Int,
-    logoWidth: Dp,
-    logoHeight: Dp,
-    textShadow: Shadow
-) {
-    val context = LocalContext.current
-    val request = remember(context) {
-        ImageRequest.Builder(context)
-            .data(R.raw.logo_imdb_rectangle)
-            .bitmapConfig(Bitmap.Config.ARGB_8888)
-            .allowRgb565(false)
-            .build()
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        AsyncImage(
-            model = request,
-            imageLoader = imageLoader,
-            contentDescription = "IMDb",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .width(logoWidth)
-                .height(logoHeight)
-        )
-        Text(
-            text = rating,
-            style = ArflixTypography.caption.copy(
-                fontSize = ratingFontSize.sp,
-                fontWeight = FontWeight.Bold,
-                shadow = textShadow
-            ),
-            color = Color.White,
-            maxLines = 1
         )
     }
 }

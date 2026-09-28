@@ -62,6 +62,10 @@ The collection detail screen has a bounded artwork preview of the focused title.
 Ratings identify their source, and budgets are shown in USD only for movies with
 a known positive budget. Missing figures are omitted, not estimated. Preview
 artwork waits briefly for focus to settle; the grid's focus feedback is immediate.
+The IMDb badge uses the same SVG component as Home. Service logos use Home's
+region-aware provider lookup and bundled brand assets, requested only for the
+settled preview and reused during navigation. Unknown services are not guessed;
+TMDB-only scores retain their TMDB label rather than an IMDb badge.
 
 ## Collection Credits
 

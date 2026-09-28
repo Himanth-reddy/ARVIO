@@ -146,6 +146,9 @@ class CollectionDetailsViewModel @Inject constructor(
     val uiState: StateFlow<CollectionDetailsUiState> = _uiState.asStateFlow()
     private val _cardLogoUrls = MutableStateFlow<Map<String, String>>(emptyMap())
     val cardLogoUrls: StateFlow<Map<String, String>> = _cardLogoUrls.asStateFlow()
+    private val _providerLogos = MutableStateFlow<Map<String, String?>>(emptyMap())
+    val providerLogos: StateFlow<Map<String, String?>> = _providerLogos.asStateFlow()
+    private var providerJob: Job? = null
     private var collectionJob = SupervisorJob(viewModelScope.coroutineContext[Job])
     private var collectionScope = CoroutineScope(viewModelScope.coroutineContext + collectionJob)
     private var loadJob: Job? = null
@@ -182,6 +185,7 @@ class CollectionDetailsViewModel @Inject constructor(
         enrichedDetails.clear()
         visibleDetailKeys = emptySet()
         _cardLogoUrls.value = emptyMap()
+        _providerLogos.value = emptyMap()
         _uiState.value = CollectionDetailsUiState()
         loadJob = collectionScope.launch {
             val catalog = sportsRepository.sportsCollectionCatalog(normalizedCatalogId)
@@ -471,6 +475,23 @@ class CollectionDetailsViewModel @Inject constructor(
         }
     }
 
+    fun loadPreviewProvider(item: MediaItem) {
+        providerJob?.cancel()
+        val key = "${item.mediaType}_${item.id}"
+        if (key in _providerLogos.value || item.id <= 0 ||
+            item.status?.startsWith("iptv:") == true || SportsAddonCapabilities.isSportsEventStatus(item.status.orEmpty())) return
+        val generation = loadGeneration
+        providerJob = collectionScope.launch {
+            delay(180)
+            val providers = collectionResultOrNull {
+                mediaRepository.getStreamingServices(item.mediaType, item.id,
+                    preferredRegion = java.util.Locale.getDefault().country)
+            }
+            ensureCurrentLoad(generation)
+            _providerLogos.value += key to providers?.services?.firstOrNull()?.logoUrl?.takeIf(String::isNotBlank)
+        }
+    }
+
     private fun mergeEnrichedItems(items: List<MediaItem>): List<MediaItem> = items.map { item ->
         val details = enrichedDetails[item.mediaType to item.id] ?: return@map item
         // Keep source identity, nonblank artwork, ordering and playback state on the original card.
@@ -627,6 +648,7 @@ fun CollectionDetailsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val cardLogoUrls by viewModel.cardLogoUrls.collectAsStateWithLifecycle()
+    val providerLogos by viewModel.providerLogos.collectAsStateWithLifecycle()
     val context = LocalContext.current
     LaunchedEffect(catalogId) { viewModel.load(catalogId) }
     BackHandler(onBack = onBack)
@@ -847,7 +869,9 @@ fun CollectionDetailsScreen(
                     error.orEmpty()
                 }
             },
-            topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 22.dp else 10.dp
+            topContentPadding = if (isMobile) 12.dp else 8.dp,
+            onPreviewItemChanged = viewModel::loadPreviewProvider,
+            providerLogos = providerLogos
         )
     }
 }
@@ -980,7 +1004,9 @@ internal fun CollectionItemsGrid(
     isLoading: Boolean,
     isLoadingMore: Boolean,
     emptyMessage: String,
-    topContentPadding: androidx.compose.ui.unit.Dp
+    topContentPadding: androidx.compose.ui.unit.Dp,
+    onPreviewItemChanged: (MediaItem) -> Unit = {},
+    providerLogos: Map<String, String?> = emptyMap()
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val compact = LocalConfiguration.current.screenHeightDp < 480
@@ -993,6 +1019,10 @@ internal fun CollectionItemsGrid(
     }
     val previewItem = remember(items, previewKey) {
         items.firstOrNull { "${it.mediaType}-${it.id}" == previewKey } ?: items.firstOrNull()
+    }
+    val latestPreviewChanged by rememberUpdatedState(onPreviewItemChanged)
+    LaunchedEffect(previewItem?.mediaType, previewItem?.id) {
+        previewItem?.let { latestPreviewChanged(it) }
     }
     val cardContentType = if (usePosterCards) "poster_card" else "landscape_card"
     val focusBleedPadding = if (usePosterCards) 10.dp else 6.dp
@@ -1038,7 +1068,8 @@ internal fun CollectionItemsGrid(
     }
 
     Column(Modifier.fillMaxSize()) {
-        CollectionSpotlight(catalog, previewItem, isMobile, compact, onBack)
+        CollectionSpotlight(catalog, previewItem, isMobile, compact, onBack,
+            providerLogos["${previewItem?.mediaType}_${previewItem?.id}"] ?: previewItem?.primaryNetworkLogo)
         TvLazyVerticalGrid(
         columns = TvGridCells.Fixed(gridColumns),
         state = gridState,

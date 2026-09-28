@@ -66,6 +66,41 @@ class CollectionDetailsLoadingTest {
         Dispatchers.resetMain()
     }
 
+    @Test fun previewProvidersLoadOnlyForSettledFocusAndReuseCachedResults() = runTest {
+        coEvery { media.getStreamingServices(any(), any(), any()) } returns
+            com.arflix.tv.data.repository.StreamingServicesResult("NL", listOf(
+                com.arflix.tv.data.repository.StreamingServiceInfo(8, "Netflix", "netflix.svg")))
+        model.loadPreviewProvider(item(1))
+        runCurrent()
+        model.loadPreviewProvider(item(2))
+        advanceUntilIdle()
+        coVerify(exactly = 0) { media.getStreamingServices(MediaType.MOVIE, 1, any()) }
+        coVerify(exactly = 1) { media.getStreamingServices(MediaType.MOVIE, 2, any()) }
+        assertEquals("netflix.svg", model.providerLogos.value["MOVIE_2"])
+        model.loadPreviewProvider(item(2))
+        advanceUntilIdle()
+        coVerify(exactly = 1) { media.getStreamingServices(MediaType.MOVIE, 2, any()) }
+    }
+
+    @Test fun unavailableProviderDoesNotRepeatOrInventABrand() = runTest {
+        coEvery { media.getStreamingServices(any(), any(), any()) } returns null
+        model.loadPreviewProvider(item(1))
+        advanceUntilIdle()
+        model.loadPreviewProvider(item(1))
+        advanceUntilIdle()
+        coVerify(exactly = 1) { media.getStreamingServices(any(), any(), any()) }
+        assertNull(model.providerLogos.value["MOVIE_1"])
+    }
+
+    @Test fun changingCollectionCancelsPendingProviderRequests() = runTest {
+        model.loadPreviewProvider(item(1))
+        runCurrent()
+        model.load("second")
+        advanceUntilIdle()
+        coVerify(exactly = 0) { media.getStreamingServices(any(), any(), any()) }
+        assertTrue(model.providerLogos.value.isEmpty())
+    }
+
     @Test fun partialPageKeepsLoadingAndBlocksDuplicateRequests() = runTest {
         val complete = CompletableDeferred<MediaRepository.CategoryPageResult>()
         lateinit var publish: (List<MediaItem>) -> Unit
