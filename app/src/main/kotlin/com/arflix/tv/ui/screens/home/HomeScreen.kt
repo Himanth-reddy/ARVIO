@@ -110,6 +110,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -3398,7 +3399,7 @@ private fun TvHomeRowsLayer(
                     val rowIsFocused = !focusState.isSidebarFocused && actualRowIndex == focusState.currentRowIndex
                     val rowKey = remember(category.id) { "home:${category.id}" }
                     val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
-                    val rowHeight = if (rowUsePosterCards) 245.dp else 202.dp
+                    val rowHeight = if (category.isPortrait(rowUsePosterCards)) 245.dp else 202.dp
                     val onRowLoadMore = remember(category.id) {
                         { onLoadMoreCategory(category.id) }
                     }
@@ -3423,6 +3424,7 @@ private fun TvHomeRowsLayer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(rowHeight)
+                        .testTag("home_row_${category.id}")
                         .clipToBounds()
                     ) {
                         ContentRow(
@@ -3686,11 +3688,7 @@ private fun ContentRow(
     // row spacing (which made the section layout feel loose), slightly reduce the
     // poster card width so the 1.05x focus zoom has more breathing room inside the
     // existing row spacing. ~5% smaller than before.
-    val effectivePosterMode = if (isCollectionRow) {
-        category.items.firstOrNull()?.collectionTileShape == CollectionTileShape.POSTER
-    } else {
-        usePosterCards
-    }
+    val effectivePosterMode = category.isPortrait(usePosterCards)
     val cardAspectRatio = if (effectivePosterMode) 2f / 3f else 16f / 9f
     val itemWidth = if (effectivePosterMode) HOME_TV_POSTER_CARD_WIDTH_DP.dp else HOME_TV_LANDSCAPE_CARD_WIDTH_DP.dp
     val itemSpacing = 14.dp
@@ -3741,11 +3739,14 @@ private fun ContentRow(
             featuredExpandedForIndex = focusedItemIndex
         }
     }
-    val railFocusOverlayActive by remember(isCurrentRow, isScrollable, focusedItemIndex, totalItems, hasFeaturedCard) {
+    // Collection rails keep one anchored outline while their tiles animate underneath.
+    // Handing it to an offscreen card mid-scroll makes Left briefly lose focus visually.
+    val railFocusOverlayActive by remember(isCollectionRow, isCurrentRow, isScrollable, focusedItemIndex, totalItems, hasFeaturedCard) {
         derivedStateOf {
             isCurrentRow && isScrollable && focusedItemIndex in 0 until totalItems &&
-                !hasFeaturedCard && focusedItemIndex == rowState.firstVisibleItemIndex &&
-                rowState.firstVisibleItemScrollOffset == 0
+                !hasFeaturedCard && (isCollectionRow ||
+                    (focusedItemIndex == rowState.firstVisibleItemIndex &&
+                        rowState.firstVisibleItemScrollOffset == 0))
         }
     }
     val focusedCardIndex = if (railFocusOverlayActive) {
@@ -4031,6 +4032,7 @@ private fun ContentRow(
                         .padding(start = startPadding, top = 8.dp)
                         .width(itemWidth)
                         .aspectRatio(cardAspectRatio)
+                        .testTag("home_focus_${category.id}")
                         .zIndex(4f),
                     shape = railFocusShape,
                     backgroundColor = Color.Transparent,
