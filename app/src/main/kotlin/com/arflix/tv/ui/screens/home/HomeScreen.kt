@@ -819,7 +819,9 @@ fun HomeScreen(
         } else {
             null
         }
-    val displayHeroLogo = uiState.heroLogoUrl ?: preloadedHeroLogoUrl
+    val displayHeroLogo = homeHeroLogo(
+        displayHeroItem, uiState.heroLogoUrl, preloadedHeroItem, preloadedHeroLogoUrl
+    )
     val displayHeroOverview = uiState.heroOverviewOverride
     val latestDisplayCategories by rememberUpdatedState(displayCategories)
     val latestDisplayHeroItem by rememberUpdatedState(displayHeroItem)
@@ -958,9 +960,7 @@ fun HomeScreen(
                 // Continue Watching reloads, cannot leave the hero bound to an old
                 // first-row fallback while the visual focus is on another card.
                 focusedItemKey = focusedItem?.let { homeRowItemKey(it) }.orEmpty(),
-                // Also include the current hero key. Background home/CW refreshes can
-                // republish the initial row-0 hero without changing focus indices; this
-                // forces the watcher to restore the actually focused card.
+                // Reconcile focus when the visible rows themselves change.
                 heroItemKey = latestDisplayHeroItem?.let { homeRowItemKey(it) }.orEmpty()
             )
         }

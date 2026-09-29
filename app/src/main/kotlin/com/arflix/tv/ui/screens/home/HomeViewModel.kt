@@ -832,16 +832,17 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun applyHeroDetailsSnapshotIfCurrent(item: MediaItem, snapshot: HeroDetailsSnapshot): Boolean {
-        val currentHero = _uiState.value.heroItem
-        if (currentHero?.id != item.id || currentHero.mediaType != item.mediaType) return false
-
-        val updatedHero = currentHero.withHeroDetails(snapshot)
-        mediaRepository.cacheItem(updatedHero)
-        _uiState.value = _uiState.value.copy(
-            heroItem = updatedHero,
-            heroOverviewOverride = snapshot.overview.ifBlank { updatedHero.overview },
-            isHeroTransitioning = false
-        )
+        val updatedState = _uiState.updateAndGet { current ->
+            if (!current.heroItem.isSameHomeHero(item)) return@updateAndGet current
+            val updatedHero = current.heroItem!!.withHeroDetails(snapshot)
+            current.copy(
+                heroItem = updatedHero,
+                heroOverviewOverride = snapshot.overview.ifBlank { updatedHero.overview },
+                isHeroTransitioning = false
+            )
+        }
+        if (!updatedState.heroItem.isSameHomeHero(item)) return false
+        updatedState.heroItem?.let { mediaRepository.cacheItem(it) }
         return true
     }
 
@@ -1612,6 +1613,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun scheduleStartupHeroHydration(item: MediaItem) {
+        if (!_uiState.value.heroItem.isSameHomeHero(item) || isCollectionItem(item)) return
         heroDetailsJob?.cancel()
         heroDetailsJob = viewModelScope.launch(networkDispatcher) {
             delay(if (isLowRamDevice) 700L else 300L)
@@ -2328,10 +2330,7 @@ class HomeViewModel @Inject constructor(
                     publishLogoCacheSnapshotIfChanged()
                 }
             }
-            val currentState = _uiState.value
-            if (heroLogoUrl != null && currentState.heroLogoUrl == null) {
-                _uiState.value = currentState.copy(heroLogoUrl = heroLogoUrl)
-            }
+            _uiState.update { it.withBackgroundHero(heroItem, heroLogoUrl) }
             return
         }
         if (categories.isEmpty()) {
@@ -2384,17 +2383,15 @@ class HomeViewModel @Inject constructor(
             chooseInitialHero(filteredCategories)
         }
 
-        // If CW preload already set a hero with a logo, preserve it — the preloaded
-        // hero from startup doesn't carry a logo URL and would cause a visible flash
-        // from logo → text → logo.
+        // Startup data must not replace an already selected hero, even without a logo.
         val currentHero = _uiState.value.heroItem
         val currentLogo = _uiState.value.heroLogoUrl
-        val finalHero = if (currentHero != null && currentLogo != null) {
-            currentHero  // keep CW hero that already has a logo
+        val finalHero = if (currentHero != null) {
+            currentHero
         } else {
             adjustedHeroItem
         }
-        val finalLogo = if (finalHero == currentHero && currentLogo != null) {
+        val finalLogo = if (finalHero == currentHero) {
             currentLogo  // keep the cached logo
         } else if (adjustedHeroItem == heroItem) {
             heroLogoUrl  // use whatever startup preloaded
@@ -2699,7 +2696,7 @@ class HomeViewModel @Inject constructor(
                             isLoading = true,
                             isInitialLoad = false,
                             categories = initialSkeleton,
-                            heroItem = initialSkeleton.firstOrNull()?.items?.firstOrNull { !it.isPlaceholder } ?: _uiState.value.heroItem,
+                            heroItem = _uiState.value.heroItem ?: initialSkeleton.firstOrNull()?.items?.firstOrNull { !it.isPlaceholder },
                             heroLogoUrl = _uiState.value.heroLogoUrl,
                             error = null
                         )
@@ -3122,24 +3119,7 @@ class HomeViewModel @Inject constructor(
                 // Launch the independent CW fetch
                 launchContinueWatchingFetch()
 
-                // During catalog-triggered reloads, chooseInitialHero can pick
-                // the first Continue Watching item and overwrite the currently
-                // focused hero. Preserve the existing hero when possible, and
-                // let the focus watcher correct it on the next focus change.
-                val heroItem = if (_uiState.value.heroItem != null) {
-                    val currentHero = _uiState.value.heroItem!!
-                    // Preserve current hero during reload.  Try to find it in the fresh
-                    // categories; if the same id/mediaType still exists, use the fresh
-                    // instance to ensure reference consistency.  If not found, keep the
-                    // old hero — it's still valid UI and the hero-update LaunchedEffect
-                    // will correct it when the user moves focus.
-                    categories.asSequence()
-                        .flatMap { it.items.asSequence() }
-                        .firstOrNull { it.id == currentHero.id && it.mediaType == currentHero.mediaType }
-                        ?: currentHero
-                } else {
-                    chooseInitialHero(categories)
-                }
+                val heroItem = _uiState.value.heroItem ?: chooseInitialHero(categories)
 
                 // The catalog rows are complete enough to use now. Logo lookups and
                 // image preloads continue below and update decoration independently.
@@ -3150,10 +3130,9 @@ class HomeViewModel @Inject constructor(
                     isInitialLoad = false,
                     categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                     collectionRows = collectionRows,
-                    heroItem = heroItem,
                     categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
                     error = null
-                )
+                ).withBackgroundHero(heroItem, null)
 
                 // Preload logos for the first visible rows so card overlays appear immediately.
                 // Skip IPTV items — their channel logo is already in item.image.
@@ -3196,11 +3175,9 @@ class HomeViewModel @Inject constructor(
                             isLoading = _uiState.value.isLoading,
                             categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                             collectionRows = collectionRows,
-                            heroItem = heroItem,
-                            heroLogoUrl = heroLogoFromCache ?: _uiState.value.heroLogoUrl,
                             categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore }
-                        )
-                        heroItem?.let { item ->
+                        ).withBackgroundHero(heroItem, heroLogoFromCache)
+                        _uiState.value.heroItem?.let { item ->
                             if (isStartupSettling()) {
                                 scheduleStartupHeroHydration(item)
                             } else {
@@ -3262,23 +3239,25 @@ class HomeViewModel @Inject constructor(
 
                 putCachedLogos(logoResults)
 
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    isInitialLoad = false,
-                    categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
-                    collectionRows = collectionRows,
-                    heroItem = heroItem,
-                    heroLogoUrl = heroLogoUrl,
-                    isAuthenticated = traktRepository.isAuthenticated.first(),
-                    categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
-                    error = null
-                )
+                val authenticated = traktRepository.isAuthenticated.first()
+                if (requestId != loadHomeRequestId) return@loadHome
+                _uiState.update { current ->
+                    current.copy(
+                        isLoading = false,
+                        isInitialLoad = false,
+                        categories = preserveExtendedCatalogRows(categories, current.categories),
+                        collectionRows = collectionRows,
+                        isAuthenticated = authenticated,
+                        categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
+                        error = null
+                    ).withBackgroundHero(heroItem, heroLogoUrl)
+                }
                 // Cached fallback rows keep Home usable, but only freshly fetched rows
                 // suppress the next resume retry.
                 if (loadedFreshCatalogRows) {
                     markHomeDataLoadSuccessful(requestId)
                 }
-                heroItem?.let { item ->
+                _uiState.value.heroItem?.let { item ->
                     if (isStartupSettling()) {
                         scheduleStartupHeroHydration(item)
                     } else {
@@ -3324,7 +3303,11 @@ class HomeViewModel @Inject constructor(
                                 val updatedHero = updatedCat?.items?.firstOrNull { it.id == currentHero.id }
                                 if (updatedHero != null) {
                                     withContext(Dispatchers.Main.immediate) {
-                                        _uiState.value = _uiState.value.copy(heroItem = updatedHero)
+                                        _uiState.update { current ->
+                                            if (current.heroItem.isSameHomeHero(updatedHero)) {
+                                                current.copy(heroItem = updatedHero)
+                                            } else current
+                                        }
                                     }
                                 }
                             }
@@ -3403,7 +3386,7 @@ class HomeViewModel @Inject constructor(
             nextOffset = nextOffset ?: newCategory.items.size
         )
         val currentHero = _uiState.value.heroItem
-        val newHero = if (currentHero == null || !isEligibleHeroItem(currentHero)) {
+        val newHero = if (currentHero == null) {
             chooseInitialHero(orderedCategories)
         } else {
             currentHero
@@ -4863,6 +4846,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun hydrateHeroDetailsIfNeeded(item: MediaItem) {
+        if (!_uiState.value.heroItem.isSameHomeHero(item)) return
         if (!isActionableMediaItem(item) || isIptvItem(item) || isCollectionItem(item)) {
             return
         }
