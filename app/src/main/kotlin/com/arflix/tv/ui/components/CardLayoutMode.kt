@@ -31,6 +31,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 enum class CardLayoutMode {
@@ -170,17 +172,42 @@ fun rememberCatalogueRowLayoutMode(rowKey: String): CardLayoutMode {
     return mode
 }
 
+internal fun catalogueRowLayoutModes(
+    profileId: String,
+    settings: Preferences,
+    rowKeys: List<String>
+): Map<String, CardLayoutMode> {
+    val fallback = settings[profileCardLayoutModeKey(profileId)] ?: settings[cardLayoutModeKey]
+    return rowKeys.associateWith { rowKey ->
+        parseCardLayoutMode(settings[profileCatalogueRowLayoutModeKey(profileId, rowKey)] ?: fallback)
+    }
+}
+
+@Composable
+fun rememberCatalogueRowLayoutModes(rowKeys: List<String>): Map<String, CardLayoutMode> {
+    val context = LocalContext.current
+    val modesFlow = remember(context, rowKeys) {
+        combine(context.profilesDataStore.data, context.settingsDataStore.data) { profilePrefs, settingsPrefs ->
+            val profileId = profilePrefs[activeProfileIdKey].orEmpty().ifBlank { "default" }
+            catalogueRowLayoutModes(profileId, settingsPrefs, rowKeys)
+        }.distinctUntilChanged().flowOn(Dispatchers.Default)
+    }
+    val modes by modesFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
+    return modes
+}
+
 @Composable
 fun CatalogueRowLayoutToggleButton(
     rowKey: String,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    forceFocused: Boolean = false
+    forceFocused: Boolean = false,
+    layoutMode: CardLayoutMode? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val normalizedRowKey = remember(rowKey) { normalizeCatalogueRowLayoutKey(rowKey) }
-    val mode = rememberCatalogueRowLayoutMode(normalizedRowKey)
+    val mode = layoutMode ?: rememberCatalogueRowLayoutMode(normalizedRowKey)
     val shape = rememberArvioCardShape(8.dp)
 
     ArvioFocusableSurface(

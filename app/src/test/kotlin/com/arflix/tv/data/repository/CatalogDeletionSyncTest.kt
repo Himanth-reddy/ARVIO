@@ -58,6 +58,26 @@ class CatalogDeletionSyncTest {
         sourceUrl = "https://trakt.tv/users/test/lists/$id", isPreinstalled = false, packId = packId
     )
 
+    @Test fun unrelatedPreferencesDoNotInvalidateCatalogParsing() {
+        val initial = preferencesOf(catalogKey to "[]")
+        val changed = initial.toMutablePreferences().apply {
+            this[booleanPreferencesKey("auto_play_next")] = false
+            this[stringPreferencesKey("cloud_sync_field_ts")] = "{\"other\":123}"
+            this[stringPreferencesKey("profile_other_catalogs_v1")] = "[]"
+        }
+        assertTrue(repository.catalogSettingsUnchanged(profileId, initial, changed))
+    }
+
+    @Test fun catalogAndHiddenOrLegacyChangesInvalidateParsing() {
+        val initial = emptyPreferences()
+        for (name in listOf("profile_default_catalogs_v1", "catalogs_v1",
+            "profile_default_hidden_preinstalled_catalogs_v2", "profile_default_hidden_addon_catalogs_v1",
+            "profile_default_hidden_home_server_catalogs_v1")) {
+            val changed = preferencesOf(stringPreferencesKey(name) to "[]")
+            assertFalse(name, repository.catalogSettingsUnchanged(profileId, initial, changed))
+        }
+    }
+
     @Test fun deletingLastCatalogSurvivesLegacyFallbackAndStaleCloud() = runBlocking {
         repository.replaceCatalogsForProfile(profileId, listOf(catalog()))
         val old = state.value[catalogKey]!!

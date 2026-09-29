@@ -684,7 +684,12 @@ private fun HomeBackdropCrossfade(
                 onSuccess = { pendingBackdropReady = true },
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = pendingAlpha.value }
+                    .graphicsLayer {
+                        // This layer contains one image, so per-draw alpha is identical
+                        // without allocating a full-screen intermediate texture.
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                        alpha = pendingAlpha.value
+                    }
             )
         }
     }
@@ -1158,15 +1163,7 @@ fun HomeScreen(
         // On TV, fill the entire screen with the backdrop.
         if (!isMobile) {
             val backdropModifier = Modifier.fillMaxSize()
-            Box(modifier = backdropModifier.graphicsLayer {
-                // Cache the unchanged backdrop and scrims as one full-resolution layer
-                // while the rails move. Video surfaces must remain independently composited.
-                compositingStrategy = if (heroExoPlayer == null) {
-                    androidx.compose.ui.graphics.CompositingStrategy.Offscreen
-                } else {
-                    androidx.compose.ui.graphics.CompositingStrategy.Auto
-                }
-            }) {
+            Box(modifier = backdropModifier) {
                 if (!showCinematicHomeLayer || settledBackdrop == null) {
                     Box(
                         modifier = Modifier
@@ -1217,7 +1214,11 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-
+                        // Cache only the static scrims. Caching the images together
+                        // with them rerendered all gradients on every crossfade frame.
+                        .graphicsLayer {
+                            compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                        }
                         .drawWithCache {
                             val width = size.width
                             val height = size.height

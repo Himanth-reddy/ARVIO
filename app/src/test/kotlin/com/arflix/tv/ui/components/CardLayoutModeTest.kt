@@ -2,8 +2,29 @@ package com.arflix.tv.ui.components
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.stringPreferencesKey
 
 class CardLayoutModeTest {
+    @Test
+    fun `batch row modes preserve profile overrides and legacy fallback`() {
+        val preferences = mutablePreferencesOf(
+            stringPreferencesKey("card_layout_mode") to "Poster",
+            stringPreferencesKey("profile_p1_card_layout_mode") to "Landscape",
+            profileCatalogueRowLayoutModeKey("p1", "home:movies") to "Poster"
+        )
+        val keys = listOf("home:movies", "home:shows")
+        assertThat(catalogueRowLayoutModes("p1", preferences, keys)).containsExactly(
+            "home:movies", CardLayoutMode.POSTER, "home:shows", CardLayoutMode.LANDSCAPE
+        )
+        assertThat(catalogueRowLayoutModes("p2", preferences, keys)).containsExactly(
+            "home:movies", CardLayoutMode.POSTER, "home:shows", CardLayoutMode.POSTER
+        )
+        preferences[profileCatalogueRowLayoutModeKey("p1", "home:movies")] = "Landscape"
+        assertThat(catalogueRowLayoutModes("p1", preferences, keys)["home:movies"])
+            .isEqualTo(CardLayoutMode.LANDSCAPE)
+        assertThat(catalogueRowLayoutModes("p1", preferences, emptyList())).isEmpty()
+    }
 
     @Test
     fun `normalizes card layout values`() {

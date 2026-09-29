@@ -103,6 +103,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -598,6 +600,8 @@ class SettingsViewModel @Inject constructor(
                 iptvRepository.observeHiddenGroups(),
                 iptvRepository.observeGroupOrder()
             ) { hidden, order -> Pair(hidden, order) }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
             .collect { (hidden, order) ->
                 _uiState.value = _uiState.value.copy(
                     iptvHiddenGroups = hidden,
@@ -610,6 +614,8 @@ class SettingsViewModel @Inject constructor(
                 iptvRepository.observeHiddenStalkerCategories(StalkerCatalogKind.MOVIES),
                 iptvRepository.observeHiddenStalkerCategories(StalkerCatalogKind.SERIES)
             ) { movies, series -> Pair(movies, series) }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
             .collect { (movies, series) ->
                 _uiState.value = _uiState.value.copy(
                     iptvHiddenVodCategories = movies,
@@ -769,24 +775,25 @@ class SettingsViewModel @Inject constructor(
 
             val subtitleOptions = loadSubtitleOptions(defaultSub)
             val audioLanguageOptions = loadAudioLanguageOptions(defaultAudio)
-            val existingCatalogs = visibleCatalogs(
+            withContext(Dispatchers.Default) {
                 catalogRepository.ensurePreinstalledDefaults(mediaRepository.getDefaultCatalogConfigs())
-            )
+            }
             val watchlistCount = try {
-                watchlistRepository.getLocalWatchlistItems().size
+                withContext(Dispatchers.IO) { watchlistRepository.getLocalWatchlistItems().size }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
                 0
             }
             val historyCount = try {
-                watchHistoryRepository.getContinueWatching().size
+                withContext(Dispatchers.IO) { watchHistoryRepository.getContinueWatching().size }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
                 0
             }
 
+            if (profileManager.getProfileIdSync() != loadProfileId) return@launch
             val currentState = _uiState.value
             _uiState.value = currentState.copy(
                 defaultSubtitle = defaultSub,
@@ -848,7 +855,6 @@ class SettingsViewModel @Inject constructor(
                 lastSyncTime = null,
                 syncedMovies = 0,
                 syncedEpisodes = 0,
-                catalogs = existingCatalogs,
                 contentLanguage = contentLang,
                 deviceModeOverride = deviceModeOverride,
                 skipProfileSelection = skipProfileSelection,
@@ -1024,7 +1030,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             streamRepository.installedAddons.collect { addons ->
                 runCatching {
-                    catalogRepository.syncAddonCatalogs(addons)
+                    withContext(Dispatchers.Default) { catalogRepository.syncAddonCatalogs(addons) }
                 }
                 if (_uiState.value.addons != addons) {
                     _uiState.value = _uiState.value.copy(addons = addons)
@@ -1056,7 +1062,7 @@ class SettingsViewModel @Inject constructor(
 
     private fun observeStreamIntegrations() {
         viewModelScope.launch {
-            streamIntegrationRepository.observeConfigs().collect { configs ->
+            streamIntegrationRepository.observeConfigs().flowOn(Dispatchers.IO).collect { configs ->
                 _uiState.value = _uiState.value.copy(streamIntegrations = configs)
             }
         }
@@ -2611,14 +2617,15 @@ class SettingsViewModel @Inject constructor(
 
     private fun observeIptvConfig() {
         viewModelScope.launch {
-            iptvRepository.observeAccountInfo().collect { info ->
+            iptvRepository.observeAccountInfo().flowOn(Dispatchers.Default).collect { info ->
                 if (_uiState.value.iptvAccountInfo != info) {
                     _uiState.value = _uiState.value.copy(iptvAccountInfo = info)
                 }
             }
         }
         viewModelScope.launch {
-            iptvRepository.observeConfig().collect { config ->
+            // Parsing stored playlists includes keystore decryption; never do it on the input thread.
+            iptvRepository.observeConfig().distinctUntilChanged().flowOn(Dispatchers.IO).collect { config ->
                 val current = _uiState.value
                 val stalkerConfigured = config.stalkerPortals.any { it.portalUrl.isNotBlank() }
                 if (current.iptvM3uUrl != config.m3uUrl || current.iptvEpgUrl != config.epgUrl || current.iptvStalkerPortals != config.stalkerPortals || current.iptvPlaylists != config.playlists || current.iptvSortOrder != config.sortOrder) {
@@ -2680,9 +2687,8 @@ class SettingsViewModel @Inject constructor(
 
     private fun observeCatalogs() {
         viewModelScope.launch {
-            catalogRepository.observeCatalogs().collect {
-                val effectiveCatalogs = catalogRepository.ensurePreinstalledDefaults(mediaRepository.getDefaultCatalogConfigs())
-                val visible = visibleCatalogs(effectiveCatalogs)
+            catalogRepository.observeCatalogs().collect { catalogs ->
+                val visible = visibleCatalogs(catalogs)
                 if (_uiState.value.catalogs != visible) {
                     _uiState.value = _uiState.value.copy(catalogs = visible)
                 }
@@ -2695,9 +2701,6 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 builtInCollectionsEnabled = catalogRepository.isBuiltInCollectionsEnabled()
             )
-            runCatching {
-                catalogRepository.ensurePreinstalledDefaults(mediaRepository.getDefaultCatalogConfigs())
-            }
         }
     }
 

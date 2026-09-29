@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.settings
 
 import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import android.view.inspector.WindowInspector
 import androidx.activity.ComponentActivity
@@ -12,6 +13,8 @@ import androidx.test.filters.SdkSuppress
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.data.repository.IptvPlaylistEntry
+import com.arflix.tv.data.model.CatalogConfig
+import com.arflix.tv.data.model.CatalogSourceType
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -96,6 +99,65 @@ class SettingsRemoteInputDeviceTest {
         verify(exactly = 1) { viewModel.setAutoPlayNext(false) }
     }
 
+    @Test fun largeCatalogListNavigation() {
+        state.value = state.value.copy(catalogs = List(300) { index ->
+            CatalogConfig(id = "catalog-$index", title = "Catalog $index",
+                sourceType = CatalogSourceType.ADDON, addonName = "Test addon")
+        })
+        val opening = SystemClock.elapsedRealtime()
+        show("catalogs")
+        Log.i("SettingsLatency", "catalog-open-ms=${SystemClock.elapsedRealtime() - opening}")
+        compose.onNodeWithText("Catalog 299").assertDoesNotExist()
+        val samples = mutableListOf<Long>()
+        for (index in 1..25) {
+            val start = SystemClock.elapsedRealtime()
+            compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            assertRowVisible(index)
+            samples += SystemClock.elapsedRealtime() - start
+        }
+        Log.i("SettingsLatency", "catalog-down-ms=$samples")
+        compose.onRoot().performKeyInput {
+            pressKey(Key.DirectionRight)
+            pressKey(Key.DirectionCenter)
+        }
+        verify(exactly = 1) { viewModel.moveCatalogUp("catalog-22") }
+        for (index in 24 downTo 0) {
+            compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+            assertRowVisible(index)
+        }
+        repeat(5) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        compose.runOnUiThread { state.value = state.value.copy(catalogs = emptyList()) }
+        assertRowVisible(2)
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
+        verify(exactly = 1) { viewModel.toggleBuiltInCollections() }
+    }
+
+    @Test fun sidebarAndPlaybackStayResponsiveWithLargeCatalogState() {
+        state.value = state.value.copy(catalogs = List(300) { index ->
+            CatalogConfig("catalog-$index", "Catalog $index", CatalogSourceType.ADDON)
+        })
+        show("playback")
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+        val samples = mutableListOf<Long>()
+        repeat(2) {
+            for (key in listOf(Key.DirectionDown, Key.DirectionUp)) {
+                repeat(7) {
+                    val start = SystemClock.elapsedRealtime()
+                    compose.onRoot().performKeyInput { pressKey(key) }
+                    compose.waitForIdle()
+                    samples += SystemClock.elapsedRealtime() - start
+                }
+            }
+        }
+        Log.i("SettingsLatency", "sidebar-step-ms=$samples")
+        compose.onRoot().performKeyInput {
+            pressKey(Key.DirectionRight)
+            pressKey(Key.DirectionDown)
+            pressKey(Key.DirectionCenter)
+        }
+        verify(exactly = 1) { viewModel.setAutoPlaySingleSource(false) }
+    }
+
     @Test fun largeCategoryListKeepsFocusedRowVisibleAndClickable() {
         state.value = state.value.copy(
             iptvPlaylists = listOf(IptvPlaylistEntry("test", "Test playlist", "https://example.invalid/list.m3u")),
@@ -147,6 +209,16 @@ class SettingsRemoteInputDeviceTest {
             pressKey(Key.DirectionCenter)
         }
         compose.onNode(isDialog()).assertExists()
+        // Compose semantics can settle before Android grants focus to the dialog window.
+        compose.waitUntil(5_000) {
+            var focused = false
+            compose.runOnUiThread {
+                focused = WindowInspector.getGlobalWindowViews().any {
+                    it !== compose.activity.window.decorView && it.hasWindowFocus()
+                }
+            }
+            focused
+        }
         val start = SystemClock.uptimeMillis()
         for (repeat in 1..3) {
             compose.runOnUiThread {

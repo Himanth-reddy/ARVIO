@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import com.arflix.tv.network.OkHttpProvider
@@ -71,7 +72,7 @@ class CatalogRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
-    private val bundledPreinstalledCatalogsById by lazy(LazyThreadSafetyMode.NONE) {
+    private val bundledPreinstalledCatalogsById by lazy {
         // Imported collections change at runtime, so they must not be frozen into
         // this snapshot (a stale copy would fight ensurePreinstalledDefaults).
         MediaRepository.buildPreinstalledDefaults()
@@ -85,7 +86,7 @@ class CatalogRepository @Inject constructor(
     // installed addon list is identical between calls.
     @Volatile private var lastSyncedAddonFingerprint: String? = null
 
-    private val bundledPreinstalledCatalogIds by lazy(LazyThreadSafetyMode.NONE) {
+    private val bundledPreinstalledCatalogIds by lazy {
         bundledPreinstalledCatalogsById.keys
     }
 
@@ -184,11 +185,21 @@ class CatalogRepository @Inject constructor(
     fun observeCatalogs(): Flow<List<CatalogConfig>> {
         return profileManager.activeProfileId
             .flatMapLatest { profileId ->
-                context.settingsDataStore.data.map { prefs ->
-                    readCatalogsFromPrefs(profileId, prefs)
-                }
+                context.settingsDataStore.data
+                    // Unrelated settings/sync writes must not reparse the entire catalog JSON.
+                    .distinctUntilChanged { previous, current ->
+                        catalogSettingsUnchanged(profileId, previous, current)
+                    }
+                    .map { prefs -> readCatalogsFromPrefs(profileId, prefs) }
             }
             .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
+    }
+
+    internal fun catalogSettingsUnchanged(profileId: String, previous: Preferences, current: Preferences): Boolean {
+        val keys = listOf(catalogsKey(profileId), hiddenPreinstalledKey(profileId),
+            hiddenAddonKey(profileId), hiddenHomeServerKey(profileId), legacyDefaultKey, legacyGlobalKey)
+        return keys.all { previous[it] == current[it] }
     }
 
     private suspend fun activeProfileId(): String {

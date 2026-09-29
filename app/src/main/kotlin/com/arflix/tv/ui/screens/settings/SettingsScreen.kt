@@ -862,6 +862,12 @@ fun SettingsScreen(
     }
 
     // Reset content scroll AND position cache when switching sections.
+    LaunchedEffect(sectionIndex, uiState.catalogs.size) {
+        if (sections[sectionIndex] == "catalogs") {
+            contentFocusIndex = contentFocusIndex.coerceAtMost(uiState.catalogs.size + 2)
+        }
+    }
+
     LaunchedEffect(sectionIndex) {
         if (scrollState.value != 0) {
             scrollState.scrollTo(0)
@@ -902,6 +908,7 @@ fun SettingsScreen(
         uiState.addons.size
     ) {
         if (activeZone != Zone.CONTENT) return@LaunchedEffect
+        if (!isTouchDevice && sections[sectionIndex] == "catalogs") return@LaunchedEffect
 
         if (!isTouchDevice) {
             // Let newly selected sections attach; never retain detached coordinates.
@@ -2005,15 +2012,17 @@ fun SettingsScreen(
                         .fillMaxSize()
                         .testTag("settings-content")
                         .onGloballyPositioned { focusTracker.viewport = it }
-                        .verticalScroll(scrollState)
+                        .then(if (sections[sectionIndex] == "catalogs") Modifier else Modifier.verticalScroll(scrollState))
                         .padding(start = 28.dp)
                 ) {
+                  if (sections[sectionIndex] != "catalogs") {
                     TvSettingsSectionHeader(
                         section = sections[sectionIndex],
                         uiState = uiState,
                         addonCount = stremioAddons.size
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+                  }
                   CompositionLocalProvider(LocalSettingsFocusTracker provides focusTracker) {
                     when (sections[sectionIndex]) {
                         in tvGeneralSectionIds -> {
@@ -2367,6 +2376,10 @@ fun SettingsScreen(
                         )
                         "catalogs" -> CatalogsSettings(
                             catalogs = uiState.catalogs,
+                            header = {
+                                TvSettingsSectionHeader("catalogs", uiState, stremioAddons.size)
+                                Spacer(Modifier.height(12.dp))
+                            },
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = catalogActionIndex,
                             onAddCatalog = { showCatalogInput = true },
@@ -9631,7 +9644,8 @@ private fun CatalogsSettings(
     onMoveCatalogUp: (CatalogConfig) -> Unit,
     onMoveCatalogDown: (CatalogConfig) -> Unit,
     onDeleteCatalog: (CatalogConfig) -> Unit,
-    onUnpackCatalog: (CatalogConfig) -> Unit
+    onUnpackCatalog: (CatalogConfig) -> Unit,
+    header: @Composable () -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var selectionMode by remember { mutableStateOf(false) }
@@ -9776,8 +9790,29 @@ private fun CatalogsSettings(
             }
         }
     } else {
-        // TV UI
-        Column {
+        // Keep off-screen catalog controls and their preference observers out of composition.
+        val layoutRowKeys = remember(catalogs) { catalogs.map(::catalogueLayoutRowKey) }
+        val layoutModes = com.arflix.tv.ui.components.rememberCatalogueRowLayoutModes(layoutRowKeys)
+        val listState = rememberLazyListState()
+        LaunchedEffect(focusedIndex, catalogs.size) {
+            if (focusedIndex < 0) return@LaunchedEffect
+            androidx.compose.runtime.withFrameNanos { }
+            val target = (focusedIndex + 1).coerceAtMost(catalogs.size + 3) // Heading is item zero.
+            val info = listState.layoutInfo
+            val item = info.visibleItemsInfo.firstOrNull { it.index == target }
+            if (item == null) {
+                listState.animateScrollToItem(target)
+            } else {
+                val delta = settingsCategoryScrollDelta(
+                    item.offset, item.size, info.viewportStartOffset, info.viewportEndOffset,
+                    center = false
+                )
+                if (delta != 0f) listState.animateScrollBy(delta, tween(100, easing = FastOutSlowInEasing))
+            }
+        }
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+          item(key = "heading") {
+            header()
             if (selectionMode) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.settings_n_selected, selectedIds.size), style = ArflixTypography.sectionTitle, color = TextPrimary)
@@ -9787,17 +9822,60 @@ private fun CatalogsSettings(
                 }
             }
             Text(text = stringResource(R.string.catalogs), style = ArflixTypography.caption, color = TextSecondary.copy(alpha = 0.65f), modifier = Modifier.padding(bottom = 20.dp))
+          }
+          item(key = "add") {
             SettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_catalog), subtitle = stringResource(R.string.add_catalog_desc), value = stringResource(R.string.settings_badge_add), isFocused = focusedIndex == 0, onClick = onAddCatalog, modifier = Modifier.settingsFocusSlot(0))
             Spacer(modifier = Modifier.height(16.dp))
+          }
+          item(key = "import") {
             SettingsRow(icon = Icons.Default.Widgets, title = stringResource(R.string.settings_catalog_pack_import_title), subtitle = stringResource(R.string.settings_catalog_pack_import_desc), value = stringResource(R.string.settings_catalog_pack_import_badge), isFocused = focusedIndex == 1, onClick = onImportCatalogPack, modifier = Modifier.settingsFocusSlot(1))
             Spacer(modifier = Modifier.height(16.dp))
+          }
+          item(key = "collections") {
             SettingsRow(icon = if (builtInCollectionsEnabled) Icons.Default.Visibility else Icons.Default.VisibilityOff, title = stringResource(R.string.settings_builtin_collections_title), subtitle = stringResource(R.string.settings_builtin_collections_desc), value = stringResource(if (builtInCollectionsEnabled) R.string.on else R.string.off), isFocused = focusedIndex == 2, onClick = onToggleBuiltInCollections, modifier = Modifier.settingsFocusSlot(2))
             Spacer(modifier = Modifier.height(16.dp))
-            catalogs.forEachIndexed { index, catalog ->
+          }
+            itemsIndexed(catalogs, key = { _, catalog -> "catalog:${catalog.id}" }, contentType = { _, _ -> "catalog" }) { index, catalog ->
                 val rowFocusIndex = index + 3; val isRowFocused = focusedIndex == rowFocusIndex
                 val currentPackId = catalog.packId
                 val prevPackId = if (index > 0) catalogs[index - 1].packId else null
                 val showPackHeader = currentPackId != null && currentPackId != prevPackId && catalog.isBulkDeletablePack
+                TvCatalogSettingsRow(
+                    catalog = catalog,
+                    rowFocusIndex = rowFocusIndex,
+                    isRowFocused = isRowFocused,
+                    focusedActionIndex = if (isRowFocused) focusedActionIndex else -1,
+                    isSelected = selectedIds.contains(catalog.id),
+                    showPackHeader = showPackHeader,
+                    layoutMode = layoutModes[catalogueLayoutRowKey(catalog)] ?: com.arflix.tv.ui.components.CardLayoutMode.LANDSCAPE,
+                    onRenameCatalog = onRenameCatalog,
+                    onMoveCatalogUp = onMoveCatalogUp,
+                    onMoveCatalogDown = onMoveCatalogDown,
+                    onUnpackCatalog = onUnpackCatalog,
+                    onDeleteCatalog = onDeleteCatalog
+                )
+            }
+        }
+    }
+}
+
+// A restartable row boundary lets Compose skip unchanged neighbours on DPAD moves.
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvCatalogSettingsRow(
+    catalog: CatalogConfig,
+    rowFocusIndex: Int,
+    isRowFocused: Boolean,
+    focusedActionIndex: Int,
+    isSelected: Boolean,
+    showPackHeader: Boolean,
+    layoutMode: com.arflix.tv.ui.components.CardLayoutMode,
+    onRenameCatalog: (CatalogConfig) -> Unit,
+    onMoveCatalogUp: (CatalogConfig) -> Unit,
+    onMoveCatalogDown: (CatalogConfig) -> Unit,
+    onUnpackCatalog: (CatalogConfig) -> Unit,
+    onDeleteCatalog: (CatalogConfig) -> Unit
+) {
 
                 if (showPackHeader) {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -9846,11 +9924,14 @@ private fun CatalogsSettings(
                     }
                     "Pack: ${catalog.effectivePackName} • $baseSubtitle"
                 }
-                val isSelected = selectedIds.contains(catalog.id)
                 val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL
                 val layoutRowKey = remember(catalog.id, catalog.kind) { catalogueLayoutRowKey(catalog) }
                 val focusRingColor = resolveAccentColor(fallback = Pink)
-                Row(modifier = Modifier.settingsFocusSlot(rowFocusIndex).fillMaxWidth().background(if (isSelected) Pink.copy(alpha = 0.2f) else if (isRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)).border(width = if (isRowFocused) 2.dp else 0.dp, color = if (isRowFocused) focusRingColor else Color.Transparent, shape = RoundedCornerShape(12.dp)).clickable { onRenameCatalog(catalog) }.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Moving a row can reuse its pixels instead of rasterizing six
+                // outlined action chips and both text lines on every scroll frame.
+                Row(modifier = Modifier.settingsFocusSlot(rowFocusIndex).fillMaxWidth().graphicsLayer {
+                    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                }.background(if (isSelected) Pink.copy(alpha = 0.2f) else if (isRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)).border(width = if (isRowFocused) 2.dp else 0.dp, color = if (isRowFocused) focusRingColor else Color.Transparent, shape = RoundedCornerShape(12.dp)).clickable { onRenameCatalog(catalog) }.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(title, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (isRowFocused || isSelected) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(modifier = Modifier.height(4.dp))
@@ -9862,16 +9943,18 @@ private fun CatalogsSettings(
                     Spacer(modifier = Modifier.width(6.dp))
                     CatalogActionChip(icon = Icons.Default.ArrowDownward, isFocused = isRowFocused && focusedActionIndex == 2, onClick = { onMoveCatalogDown(catalog) })
                     Spacer(modifier = Modifier.width(6.dp))
-                    CatalogueRowLayoutToggleButton(rowKey = layoutRowKey, enabled = layoutToggleEnabled, forceFocused = isRowFocused && focusedActionIndex == 3)
+                    CatalogueRowLayoutToggleButton(
+                        rowKey = layoutRowKey,
+                        enabled = layoutToggleEnabled,
+                        forceFocused = isRowFocused && focusedActionIndex == 3,
+                        layoutMode = layoutMode
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
                     CatalogActionChip(icon = Icons.Default.Unarchive, isFocused = isRowFocused && focusedActionIndex == 4, enabled = catalog.packId != null && catalog.isBulkDeletablePack, onClick = { onUnpackCatalog(catalog) })
                     Spacer(modifier = Modifier.width(6.dp))
                     CatalogActionChip(icon = Icons.Default.Delete, isFocused = isRowFocused && focusedActionIndex == 5, isDestructive = true, enabled = true, onClick = { onDeleteCatalog(catalog) })
                 }
                 Spacer(modifier = Modifier.height(10.dp))
-            }
-        }
-    }
 }
 
 
