@@ -56,7 +56,7 @@ for (const file of pages) {
 
 const sitemap = fs.readFileSync(path.join(siteRoot, "sitemap.xml"), "utf8");
 const sitemapUrls = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/gu)].map((match) => match[1]);
-if (sitemapUrls.length !== 35) errors.push(`sitemap: expected 35 URLs, got ${sitemapUrls.length}`);
+if (sitemapUrls.length !== 36) errors.push(`sitemap: expected 36 URLs, got ${sitemapUrls.length}`);
 for (const file of pages) {
   const url = `${baseUrl}${routeForFile(file)}`;
   if (!sitemapUrls.includes(url)) errors.push(`sitemap: missing ${url}`);

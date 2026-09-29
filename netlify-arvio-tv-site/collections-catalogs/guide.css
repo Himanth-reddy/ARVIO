@@ -1,0 +1,26 @@
+.guide-reading { min-width: 0; }
+.guide-reading h1 { font-size: 48px; line-height: 1.15; }
+.guide-reading h2 { font-size: 30px; line-height: 1.3; }
+.guide-reading h3 { margin-top: 28px; font-size: 21px; }
+.guide-reading p, .guide-reading li { overflow-wrap: anywhere; }
+.guide-reading .guide-subheading { margin-top: 36px; }
+.guide-reading pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.guide-reading code { font-family: ui-monospace, Consolas, monospace; }
+.guide-reading pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.guide-points { padding-left: 24px; }
+.guide-points li { margin-bottom: 12px; }
+[id] { scroll-margin-top: 28px; }
+@media (max-width: 640px) {
+  .guide-reading h1 { font-size: 36px; }
+  .guide-reading h2 { font-size: 27px; }
+  .guide-reading pre { padding: 14px; font-size: 13px; }
+}

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create and Add Collections and Catalogs - ARVIO Guide</title>
+  <meta name="description" content="Create ARVIO collections with a JSON starter, host them free on GitHub, and import them by URL. Add Trakt and MDBList catalogs on Android or ARVIO Web.">
+  <link rel="canonical" href="https://arvio.tv/collections-catalogs/">
+  <link rel="icon" href="/assets/arvio-icon-512.png" type="image/png">
+  <link rel="stylesheet" href="/guides/guide.css">
+  <link rel="stylesheet" href="/collections-catalogs/guide.css">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Create and Add Collections and Catalogs - ARVIO">
+  <meta property="og:description" content="A practical guide to collection JSON, free hosting, URL imports and custom catalogs.">
+  <meta property="og:url" content="https://arvio.tv/collections-catalogs/">
+  <meta property="og:image" content="https://arvio.tv/assets/arvio-social.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@graph":[
+    {"@type":"TechArticle","headline":"Create and add collections and catalogs","description":"Create collection JSON, host it at a public URL and import it into ARVIO. Add custom catalogs from supported list services.","url":"https://arvio.tv/collections-catalogs/","dateModified":"2026-09-29","author":{"@type":"Organization","name":"ARVIO"}},
+    {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ARVIO","item":"https://arvio.tv/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://arvio.tv/guides/"},{"@type":"ListItem","position":3,"name":"Collections and catalogs","item":"https://arvio.tv/collections-catalogs/"}]}
+  ]}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <a class="brand-link" href="/" aria-label="ARVIO home"><img src="/assets/arvio-wordmark.png" alt="ARVIO"></a>
+    <nav class="header-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/guides/">Guides</a><a href="https://github.com/ProdigyV21/ARVIO">GitHub</a><a class="play-link" href="https://play.google.com/store/apps/details?id=com.arvio.tv">Google Play</a></nav>
+  </div></header>
+  <main id="content">
+    <section class="guide-intro"><div class="shell guide-reading">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">ARVIO</a><span aria-hidden="true">/</span><a href="/guides/">Guides</a><span aria-hidden="true">/</span><span>Collections and catalogs</span></nav>
+      <p class="eyebrow">Make Home your own</p>
+      <h1>Collections and catalogs</h1>
+      <p class="lead">Create folders of movies and shows, add your favorite lists, and organize them into your own Home rows. Start with the ready-to-import example, or build your own JSON file.</p>
+      <p class="guide-updated">Updated 29 September 2026 &middot; Android TV, Android mobile and ARVIO Web</p>
+      <nav class="guide-jump" aria-label="On this page"><a href="#create">Create a collection</a><a href="#host">Get a public URL</a><a href="#import">Import into ARVIO</a><a href="#catalogs">Add catalogs</a><a href="#help">Troubleshooting</a></nav>
+    </div></section>
+
+    <section class="section compact"><div class="shell guide-reading">
+      <div class="note"><h2>No file uploads yet</h2><p><strong>Uploading a file directly into ARVIO is not yet supported.</strong> Use a public URL to your JSON file, or paste the JSON text into the collection import field. Uploading a file to GitHub or another host is different: ARVIO reads it from the link you provide.</p></div>
+      <h2 class="guide-subheading">Which one do you need?</h2>
+      <p>A <strong>catalog</strong> is a list of titles, such as an MDBList or Trakt list. A <strong>collection</strong> groups sources into folders: a Home row called &ldquo;My Collections&rdquo; might contain &ldquo;Popular Movies&rdquo; and &ldquo;Popular Shows&rdquo; tiles. Opening a tile shows its titles.</p>
+      <p>These organize metadata, not playable media. You still need a separate source you are authorized to use to watch a title.</p>
+    </div></section>
+
+    <section class="section" id="create"><div class="shell guide-reading">
+      <p class="eyebrow">1. Create</p><h2>Start with a working collection</h2>
+      <p><a href="/collections-catalogs/collections.json" download="collections.json">Download the starter JSON</a> or <a href="/collections-catalogs/collections.json">open it as plain JSON</a>. It creates one Home row with two folders using TMDB discovery. No add-on is required for this example.</p>
+      <p>To try it immediately, paste this URL into ARVIO's collection importer:</p>
+      <pre tabindex="0" aria-label="Starter collection URL"><code>https://arvio.tv/collections-catalogs/collections.json</code></pre>
+      <p>For your own version, edit the file in a plain-text editor and keep the filename <code>collections.json</code>. This smaller example creates one folder:</p>
+      <pre tabindex="0" aria-label="Collection JSON example"><code id="collection-example">[
+  {
+    "id": "my-picks",
+    "title": "My Collections",
+    "folders": [
+      {
+        "id": "popular-movies",
+        "title": "Popular Movies",
+        "description": "Movies with at least 100 votes.",
+        "sources": [
+          {
+            "provider": "tmdb",
+            "tmdbSourceType": "DISCOVER",
+            "mediaType": "MOVIE",
+            "sortBy": "popularity.desc",
+            "filters": { "voteCountGte": 100 }
+          }
+        ]
+      }
+    ]
+  }
+]</code></pre>
+      <ul class="guide-points">
+        <li><code>title</code> at the top names the Home row. Each folder's <code>title</code> names its tile.</li>
+        <li>Keep every collection ID unique, and every folder ID unique within its collection. Keep IDs unchanged when editing an existing import.</li>
+        <li>Duplicate a folder to add another source. Use <code>"mediaType": "TV"</code> for shows. For TMDB discovery you can add <code>"year": 2025</code> or <code>"voteAverageGte": 7</code> inside <code>filters</code>.</li>
+        <li>Optional folder fields include <code>description</code>, <code>coverImageUrl</code>, <code>heroBackdropUrl</code>, <code>titleLogoUrl</code> and <code>tileShape</code> (<code>LANDSCAPE</code> or <code>POSTER</code>). Artwork URLs must point directly to images you have permission to use.</li>
+      </ul>
+      <h3>Use a curated list instead</h3>
+      <p>For a hand-picked selection, create a public list on a supported service and use it as the folder's source. For example, replace the source object with <code>{ "provider": "mdblist", "slug": "YOUR-USERNAME/YOUR-LIST" }</code>. The slug comes after <code>/lists/</code> in the MDBList URL.</p>
+      <p>Other supported sources include public TMDB lists and movie collections, public Trakt lists, TMDB company/network and person/director sources, and installed add-on catalogs. Add-ons must already be installed; importing a collection does not install them. See the <a href="https://github.com/ProdigyV21/ARVIO/blob/main/docs/custom-collections.md">collection format notes</a> for supported sources and limits.</p>
+    </div></section>
+
+    <section class="section" id="host"><div class="shell guide-reading">
+      <p class="eyebrow">2. Host</p><h2>Get a free, public JSON URL</h2>
+      <h3>GitHub: use the raw file link</h3>
+      <ol class="setup-list">
+        <li>Create a GitHub account, then a <strong>public repository</strong>, for example <code>arvio-collections</code>. Adding a README when creating it makes the next step easy.</li>
+        <li>In that repository, choose <strong>Add file &gt; Create new file</strong>. Name it <code>collections.json</code>, paste your JSON, then choose <strong>Commit changes</strong>. You can also upload an existing JSON file to GitHub.</li>
+        <li>Open the committed file and choose <strong>Raw</strong>. Copy the URL from the browser address bar, not the normal GitHub file-view URL.</li>
+        <li>Open the URL in a private/incognito window. It should return the JSON itself without asking you to sign in.</li>
+      </ol>
+      <p>A raw URL looks like this. Replace the username, repository and branch with your own:</p>
+      <pre tabindex="0" aria-label="Example raw GitHub URL"><code>https://raw.githubusercontent.com/YOUR-USERNAME/arvio-collections/main/collections.json</code></pre>
+      <p>A link containing <code>github.com/.../blob/...</code> is a web page, not the raw JSON link to paste into ARVIO. GitHub Pages is not required for the raw-link method. See GitHub's instructions for <a href="https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository">creating a repository</a> and <a href="https://docs.github.com/en/repositories/working-with-files/managing-files/creating-new-files">adding a file</a>.</p>
+      <h3>Alternative: GitHub Pages or another static host</h3>
+      <p><a href="https://docs.github.com/en/pages/quickstart">GitHub Pages</a> is available for public repositories on GitHub Free. Publish the repository with the JSON file in its published root, then use a URL such as <code>https://YOUR-USERNAME.github.io/arvio-collections/collections.json</code>.</p>
+      <p>Another free static-file host works too, provided it serves the actual file over a public HTTPS URL. Use the direct <code>/collections.json</code> URL, not an editor, preview, login or download-confirmation page. If accessing it directly from a browser app, the host may also need cross-origin access (CORS).</p>
+      <p><strong>Keep it public-safe:</strong> do not include passwords, API keys, private server addresses or token-bearing add-on URLs. The file and its repository history can be read by others.</p>
+    </div></section>
+
+    <section class="section" id="import"><div class="shell guide-reading">
+      <p class="eyebrow">3. Import</p><h2>Add the collection to ARVIO</h2>
+      <h3>Android TV and Android mobile</h3>
+      <ol class="setup-list">
+        <li>Switch to the profile that should receive the collection.</li>
+        <li>Open <strong>Settings &gt; Catalogs &gt; Import Catalog Pack / Collections</strong>.</li>
+        <li>Paste your public JSON URL (or the JSON text itself) and confirm the import. Collections import directly; a traditional catalog pack may show a preview to confirm.</li>
+        <li>Return to Home and find your new collection row. Open a folder to browse its titles. Use Catalogs settings to rename, reorder or remove entries.</li>
+      </ol>
+      <h3>ARVIO Web</h3>
+      <p>Open <strong>Settings &gt; Catalogs (Home Rows)</strong>. Paste the URL or JSON into the <strong>Collection</strong> field and choose <strong>Import collections</strong>. This works in supported desktop, phone and tablet browsers.</p>
+      <p>Imports belong to the active profile. To use them across devices, connect ARVIO Cloud with the same account and select the same profile. A hosted file is not a promise of automatic refresh: after changing its structure, import the same URL again. Keep the URL and IDs stable to update that pack rather than create a separate one; existing names and ordering are preserved where possible.</p>
+    </div></section>
+
+    <section class="section" id="catalogs"><div class="shell guide-reading">
+      <p class="eyebrow">Just want a list?</p><h2>Add a catalog without creating JSON</h2>
+      <p>You do not need hosting for an existing public Trakt or MDBList list. The list service already supplies the URL.</p>
+      <h3>On Android</h3>
+      <ol class="setup-list">
+        <li>Find or create a public Trakt or MDBList list and copy its list-page URL, not a single movie, search-results or profile URL.</li>
+        <li>Open <strong>Settings &gt; Catalogs &gt; Add Catalog</strong>, paste the URL and confirm.</li>
+        <li>Return to Home. You can change the row's name, order and card layout in Catalogs settings.</li>
+      </ol>
+      <p>Example URL shapes (replace the placeholders with your actual list):</p>
+      <pre tabindex="0" aria-label="Supported catalog URL examples"><code>https://mdblist.com/lists/YOUR-USERNAME/YOUR-LIST
+https://trakt.tv/users/YOUR-USERNAME/lists/YOUR-LIST</code></pre>
+      <h3>On ARVIO Web</h3>
+      <p>In <strong>Settings &gt; Catalogs (Home Rows)</strong>, paste an MDBList list URL into the field showing the MDBList example and press <strong>Add</strong>. This simple web field is for MDBList; use the collection importer for a supported Trakt collection source instead of pasting a Trakt URL into that field.</p>
+      <p>Catalogs advertised by an installed add-on are a separate route: install the add-on through ARVIO's add-on settings, then manage its available catalog rows in Catalogs. A manifest URL is not a collection JSON file.</p>
+    </div></section>
+
+    <section class="section" id="help"><div class="shell guide-reading">
+      <h2>If it does not appear</h2>
+      <div class="faq-list">
+        <details><summary>The URL opens a website instead of JSON</summary><p>Use the raw file URL. Check it without signing in. Links to GitHub's file viewer, cloud-drive previews and local files are not public JSON endpoints.</p></details>
+        <details><summary>The JSON is rejected</summary><p>Use double quotes, no comments and no trailing commas. Start with the working example above. Use unique IDs and at least one supported source per folder. Current limits are 2 million characters, 100 collection rows and 500 folders; unsupported sources are skipped, and imports with no supported folders are rejected.</p></details>
+        <details><summary>The row exists but its folder is empty</summary><p>Check the source list is public and has titles, the filters are not too restrictive, and any referenced add-on is installed. Upstream services may be slow or unavailable. Importing metadata cannot grant access to private lists or playable media.</p></details>
+        <details><summary>My changes are not showing</summary><p>First check the hosted URL contains the updated JSON; hosting caches can delay changes. Re-import the same URL in the correct ARVIO profile. Keep IDs stable. If you renamed an existing row locally, that local name can be preserved during re-import.</p></details>
+        <details><summary>Can I select a JSON file from my phone or computer?</summary><p>Not yet. Direct file uploads into ARVIO are not supported. Host the file and paste its public URL, or open it in a text editor and paste its JSON contents into the collection import field.</p></details>
+      </div>
+      <p class="guide-subheading"><a href="/guides/">Back to all guides</a> &middot; <a href="https://web.arvio.tv">Open web app</a> &middot; <a href="https://arvio-ui.web.app/">Open dashboard</a></p>
+    </div></section>
+  </main>
+  <footer class="site-footer"><div class="shell"><div class="footer-main"><div class="footer-brand"><img src="/assets/arvio-wordmark.png" alt="ARVIO"><p>Open-source media management for Android TV, Google TV and Android mobile.</p></div><nav class="footer-links" aria-label="Footer navigation"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/privacy">Privacy</a><a href="https://github.com/ProdigyV21/ARVIO">GitHub</a></nav></div><div class="footer-bottom"><span>&copy; 2026 ARVIO</span><span>ARVIO provides software, not media.</span></div></div></footer>
+</body>
+</html>

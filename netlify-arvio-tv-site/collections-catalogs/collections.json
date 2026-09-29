@@ -1,0 +1,35 @@
+[
+  {
+    "id": "my-picks",
+    "title": "My Collections",
+    "folders": [
+      {
+        "id": "popular-movies",
+        "title": "Popular Movies",
+        "description": "Explore popular movies with at least 100 votes.",
+        "sources": [
+          {
+            "provider": "tmdb",
+            "tmdbSourceType": "DISCOVER",
+            "mediaType": "MOVIE",
+            "sortBy": "popularity.desc",
+            "filters": { "voteCountGte": 100 }
+          }
+        ]
+      },
+      {
+        "id": "popular-shows",
+        "title": "Popular Shows",
+        "sources": [
+          {
+            "provider": "tmdb",
+            "tmdbSourceType": "DISCOVER",
+            "mediaType": "TV",
+            "sortBy": "popularity.desc",
+            "filters": { "voteCountGte": 100 }
+          }
+        ]
+      }
+    ]
+  }
+]
