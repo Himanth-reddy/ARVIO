@@ -1,5 +1,6 @@
 "use client";
 import { useTranslation } from "@/lib/i18n";
+import { collectionFolders, collectionHomeCatalogs } from "@/lib/collectionPresentation";
 
 
 import { Info, Play } from "lucide-react";
@@ -13,7 +14,7 @@ import { CustomCollectionRail } from "@/components/media/CustomCollectionRail";
 import { MediaRail } from "@/components/media/MediaRail";
 import type { Category, MediaItem } from "@/lib/types";
 
-export function HomeScreen() {
+export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?: (open: boolean) => void }) {
   const translateUi = useTranslation();
   const { hero, categories, catalogConfigs, homeServerRows, continueWatching, openDetails, setHeroPreview, settings } = useApp();
   const posterMode = settings.cardLayoutMode === "poster";
@@ -188,10 +189,10 @@ export function HomeScreen() {
       {dedupedCategories.map((category) => (
         <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
       ))}
-      {catalogConfigs.filter(c => !c.collectionRailKey || String(c.kind).toUpperCase() !== "COLLECTION").map((catalog, index) => (
-        catalog.collectionRailKey && String(catalog.kind).toUpperCase() === "COLLECTION_RAIL" ?
-        <CustomCollectionRail key={catalog.id} catalog={catalog} onOpen={openDetails}
-          folders={catalogConfigs.filter(c => c.collectionRailKey === catalog.collectionRailKey && String(c.kind).toUpperCase() === "COLLECTION")} /> :
+      {collectionHomeCatalogs(catalogConfigs).map((catalog, index) => (
+        String(catalog.kind).toUpperCase() === "COLLECTION_RAIL" ?
+        <CustomCollectionRail key={catalog.id} catalog={catalog} onOpen={openDetails} onCollectionOpenChange={onCollectionOpenChange}
+          folders={collectionFolders(catalog, catalogConfigs)} /> :
         <LazyRail
           key={catalog.id}
           catalog={catalog}

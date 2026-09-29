@@ -32,6 +32,7 @@ const ACCENTS: Record<string, string> = {
 export function AppShell() {
   const { view, section, settings, selected, activeStream, activeChannel } = useApp();
   const [mounted, setMounted] = useState(false);
+  const [collectionOpen, setCollectionOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -91,11 +92,11 @@ export function AppShell() {
       {(!activeStream || (section === "tv" && activeChannel)) && <TopNav />}
 
       <section className="content">
+        {section === "home" && (!selected || collectionOpen) && <div hidden={Boolean(selected)}><NoAddonsPrompt /><HomeScreen onCollectionOpenChange={setCollectionOpen} /></div>}
         {selected ? (
           <DetailsDrawer />
         ) : (
           <>
-            {section === "home" && <><NoAddonsPrompt /><HomeScreen /></>}
             {section === "search" && <SearchScreen />}
             {section === "watchlist" && <WatchlistScreen />}
             {section === "tv" && <LiveTvScreen />}

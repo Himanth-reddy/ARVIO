@@ -705,6 +705,8 @@ fun CollectionDetailsScreen(
     val currentSupportsSeries by rememberUpdatedState(uiState.supportsSeries)
 
     fun requestTabFocus() {
+        // Touch keeps its saved scroll position; TV restoration must not steal focus or jump it.
+        if (isMobile) return
         coroutineScope.launch {
             // 300ms clears the 250ms pop-enter animation before touching the focus tree
             kotlinx.coroutines.delay(300)

@@ -340,11 +340,12 @@ async function loadCollectionCatalog(
   return dedupeItems(batches.flat());
 }
 
-async function loadCollectionSource(
+export async function loadCollectionSource(
   source: CollectionSourceConfig,
   language: string,
   addons: InstalledAddon[],
-  homeServers: HomeServerConfig[] = []
+  homeServers: HomeServerConfig[] = [],
+  paging?: { page: number; pageLimit: number }
 ) {
   const kind = String(source.kind ?? "").toUpperCase();
   const mediaType = sourceMediaType(source);
@@ -356,7 +357,7 @@ async function loadCollectionSource(
     return loadTmdbCatalogPages({
       id: "custom-discover", name: "Collection", sourceType: "tmdb", enabled: true,
       endpoint: `discover/${type}`, mediaType: type,
-      params: { ...source.discoverParams, language, sort_by: sort }
+      params: { ...source.discoverParams, language, sort_by: sort, ...paging }
     }, language).then(items => items.map(item => mapTmdbItem(item, type)));
   }
   if (kind === "TMDB_LIST" && source.tmdbListId) {
@@ -420,7 +421,7 @@ async function loadCollectionSource(
       params: {
       language,
       with_genres: source.tmdbGenreId,
-      sort_by: source.sortBy || "popularity.desc"
+      sort_by: source.sortBy || "popularity.desc", ...paging
       }
     }, language).then((items) => items.map((item) => mapTmdbItem(item, mediaType === "tv" ? "tv" : "movie")));
   }
@@ -435,7 +436,7 @@ async function loadCollectionSource(
       params: {
         language,
         with_keywords: source.tmdbKeywordId,
-        sort_by: source.sortBy || "popularity.desc"
+        sort_by: source.sortBy || "popularity.desc", ...paging
       }
     }, language).then((items) => items.map((item) => mapTmdbItem(item, mediaType === "tv" ? "tv" : "movie")));
   }
@@ -451,14 +452,14 @@ async function loadCollectionSource(
         language,
         watch_region: source.watchRegion || "US",
         with_watch_providers: source.tmdbWatchProviderId,
-        sort_by: source.sortBy || "popularity.desc"
+        sort_by: source.sortBy || "popularity.desc", ...paging
       }
     }, language).then((items) => items.map((item) => mapTmdbItem(item, mediaType === "tv" ? "tv" : "movie")));
   }
   if (kind === "ADDON_CATALOG") {
     const installed = addons.find(a => a.enabled !== false && a.id === source.addonId) ??
       addons.find(a => a.enabled !== false && a.catalogs?.some(c => c.id === source.addonCatalogId && c.type === source.addonCatalogType));
-    if (!installed) return [];
+    if (!installed) throw new Error("The add-on for this collection is not installed or enabled.");
     return loadAddonCatalog({
       id: `collection-addon-${source.addonId}-${source.addonCatalogId}`,
       name: source.addonCatalogId || "Addon catalog",
@@ -618,12 +619,12 @@ async function hydrateAddonMeta(meta: StremioMeta, preferred: CatalogConfig["med
   const tmdbId = numberValue(meta.tmdb_id);
   const mediaType: MediaType = String(meta.type ?? preferred ?? "").toLowerCase().includes("series") || preferred === "tv" ? "tv" : "movie";
   if (tmdbId) {
-    const detailed = await getBasicItem(mediaType, tmdbId, language);
+    const detailed = await getBasicItem(mediaType, tmdbId, language).catch(() => null);
     if (detailed) return detailed;
   }
   const numericId = numberValue(meta.id);
   if (numericId) {
-    const detailed = await getBasicItem(mediaType, numericId, language);
+    const detailed = await getBasicItem(mediaType, numericId, language).catch(() => null);
     if (detailed) return detailed;
   }
   const title = meta.name ?? meta.title;
@@ -1279,6 +1280,12 @@ function normalizeRating(value: unknown) {
 const basicItemCache = new Map<string, MediaItem | null>();
 
 /** Lightweight details fetch (no append_to_response) with an in-memory cache — used to hydrate catalog rows. */
+export async function getCollectionPreview(item: MediaItem, language: string): Promise<MediaItem> {
+  const details = await tmdb<TmdbItem>(`${item.mediaType}/${item.id}`, { language, append_to_response: "external_ids" });
+  return { ...item, ...mapTmdbItem(details, item.mediaType), budget: details.budget,
+    imdbId: details.external_ids?.imdb_id ?? item.imdbId, genres: details.genres?.map(genre => genre.name) };
+}
+
 export async function getBasicItem(mediaType: MediaType, id: number, language = "en-US"): Promise<MediaItem | null> {
   const key = `${mediaType}:${id}`;
   if (basicItemCache.has(key)) return basicItemCache.get(key) ?? null;

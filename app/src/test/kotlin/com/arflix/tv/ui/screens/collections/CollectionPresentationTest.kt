@@ -14,10 +14,18 @@ class CollectionPresentationTest {
         assertEquals(210, collectionGridLayout(1280, false, false).cardWidthDp)
     }
 
-    @Test fun `touch cards match home and tiny windows cannot overflow`() {
-        assertEquals(CollectionGridLayout(2, 120), collectionGridLayout(411, true, true))
-        assertEquals(CollectionGridLayout(1, 200), collectionGridLayout(411, true, false))
+    @Test fun `touch grids fill available width and tiny windows cannot overflow`() {
+        assertEquals(CollectionGridLayout(3, 115), collectionGridLayout(411, true, true))
+        assertEquals(CollectionGridLayout(2, 179), collectionGridLayout(411, true, false))
         assertEquals(CollectionGridLayout(1, 60), collectionGridLayout(100, true, false))
+        for (screen in listOf(320, 360, 390, 411, 600, 800, 1280)) {
+            for (posters in listOf(false, true)) {
+                val layout = collectionGridLayout(screen, true, posters)
+                val used = layout.columns * layout.cardWidthDp + (layout.columns - 1) * 12
+                assertTrue(used <= screen - 40)
+                assertTrue(screen - 40 - used < layout.columns)
+            }
+        }
     }
 
     @Test fun `budget is factual USD only for movies with known positive budget`() {
