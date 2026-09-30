@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { standaloneGuideRoutes } from "./standalone-guide-routes.mjs";
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const baseUrl = "https://arvio.tv";
@@ -736,7 +737,7 @@ const directoryLabels = {
     live: ["TV ao vivo", "TV ao vivo e EPG", "Use seu provedor autorizado com guia, favoritos e catch-up compatível."],
     subtitles: ["Acessibilidade", "Legendas com IA", "Pesquise, ajuste e traduza legendas com ferramentas opcionais."],
     firetv: ["Dispositivos", "ARVIO no Fire TV", "Instale o APK oficial em hardware Fire TV compatível."],
-    web: ["Premium opcional", "ARVIO Web", "Use o complemento de navegador em dispositivos Apple, Windows e Mac."]
+    web: ["Escolha a hospedagem", "ARVIO Web: gratuito ou gerenciado", "Compare a hospedagem própria gratuita, o Premium opcional, os perfis e a compatibilidade do navegador."]
   },
   es: {
     hub: ["Empieza aquí", "Centro multimedia en varios dispositivos", "Perfiles, servidores, seguimiento, televisión en vivo, subtítulos y reproducción en Android y navegador."],
@@ -747,7 +748,7 @@ const directoryLabels = {
     live: ["Televisión en vivo", "Televisión en vivo y EPG", "Usa tu proveedor autorizado con guía, favoritos y catch-up compatible."],
     subtitles: ["Accesibilidad", "Subtítulos con IA", "Busca, ajusta y traduce subtítulos con herramientas opcionales."],
     firetv: ["Dispositivos", "ARVIO en Fire TV", "Instala el APK oficial en hardware Fire TV compatible."],
-    web: ["Premium opcional", "ARVIO Web", "Utiliza el complemento de navegador en dispositivos Apple, Windows y Mac."]
+    web: ["Elige el alojamiento", "ARVIO Web: gratis o gestionado", "Compara el autoalojamiento gratuito, Premium opcional, los perfiles y la compatibilidad del navegador."]
   }
 };
 
@@ -784,7 +785,7 @@ const guideCopy = {
     description: "Guias do ARVIO em português para Android TV, Jellyfin, Plex, Emby, Trakt, Simkl, TV ao vivo, legendas, debrid, Usenet e acesso pelo navegador.",
     eyebrow: "Guias do produto",
     h1: "Monte sua própria central de mídia conectada.",
-    lead: "O aplicativo gratuito atende Android TV, Google TV e Android. O ARVIO Web opcional amplia recursos compatíveis para iPhone, iPad, Windows, Mac, Chromebook, Apple TV e navegadores de smart TVs.",
+    lead: "Comece pelo aplicativo Android gratuito, hospede o ARVIO Web no seu próprio servidor ou escolha a hospedagem gerenciada. Estes guias ajudam você a conectar suas fontes e testar o dispositivo que usa.",
     noteTitle: "Software, não conteúdo",
     ctaTitle: "Gratuito e de código aberto no Android.",
     ctaCopy: "Instale pelo Google Play ou examine o projeto completo no GitHub."
@@ -794,7 +795,7 @@ const guideCopy = {
     description: "Guías de ARVIO en español para Android TV, Jellyfin, Plex, Emby, Trakt, Simkl, televisión en vivo, subtítulos, debrid, Usenet y navegador.",
     eyebrow: "Guías del producto",
     h1: "Crea tu propio centro multimedia conectado.",
-    lead: "La aplicación gratuita funciona en Android TV, Google TV y Android. ARVIO Web opcional amplía funciones compatibles a iPhone, iPad, Windows, Mac, Chromebook, Apple TV y navegadores de televisores inteligentes.",
+    lead: "Empieza con la app Android gratuita, aloja ARVIO Web en tu propio servidor o elige alojamiento gestionado. Estas guías te ayudan a conectar tus fuentes y probar el dispositivo que utilizas.",
     noteTitle: "Software, no contenido",
     ctaTitle: "Gratuito y de código abierto en Android.",
     ctaCopy: "Instálalo desde Google Play o revisa el proyecto completo en GitHub."
@@ -916,7 +917,11 @@ function renderDirectory(localeKey, isHome = false) {
   const copy = isHome ? entryCopy[localeKey] : guideCopy[localeKey];
   const key = isHome ? "home" : "guides";
   const route = pageMap[key][localeKey];
-  const cards = Object.keys(directoryLabels[localeKey]).map((pageKey) => {
+  const extraCards = standaloneGuideRoutes.map(({ route, labels }) => {
+    const [category, title, description] = labels[localeKey];
+    return `<a class="guide-card" href="${route}" hreflang="en"><small>${category}</small><h2>${title}</h2><p>${description}</p></a>`;
+  }).join("");
+  const cards = extraCards + Object.keys(directoryLabels[localeKey]).map((pageKey) => {
     const [category, title, description] = directoryLabels[localeKey][pageKey];
     return `<a class="guide-card" href="${pageMap[pageKey][localeKey]}"><small>${category}</small><h2>${title}</h2><p>${description}</p></a>`;
   }).join("");
@@ -948,6 +953,7 @@ function renderDirectory(localeKey, isHome = false) {
   <meta property="og:type" content="website"><meta property="og:site_name" content="ARVIO"><meta property="og:locale" content="${localeKey === "pt" ? "pt_BR" : "es_ES"}"><meta property="og:title" content="${copy.title}"><meta property="og:description" content="${copy.description}"><meta property="og:url" content="${absolute(route)}"><meta property="og:image" content="${baseUrl}/assets/arvio-social.webp">
   <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${copy.title}"><meta name="twitter:description" content="${copy.description}"><meta name="twitter:image" content="${baseUrl}/assets/arvio-social.webp">
   <script type="application/ld+json">${json}</script>
+  <script defer src="/assets/premium-journey.js?v=2"></script>
 </head>
 <body>
   ${header(localeKey, key)}
@@ -985,25 +991,33 @@ function addEnglishHreflang(key) {
 
 function writeSitemap() {
   const priorities = { home: "1.0", guides: "0.9", hub: "0.9", sources: "0.9", jellyfin: "0.8", servers: "0.8", tracking: "0.8", live: "0.8", web: "0.8", subtitles: "0.7", firetv: "0.7" };
+  // Regenerating translations must not replace newer English update dates.
+  const sitemapFile = path.join(siteRoot, "sitemap.xml");
+  const existing = fs.existsSync(sitemapFile) ? fs.readFileSync(sitemapFile, "utf8") : "";
+  const existingDates = new Map([...existing.matchAll(/<url>\s*<loc>([^<]+)<\/loc>\s*<lastmod>([^<]+)<\/lastmod>/gu)].map(([, url, date]) => [url, date]));
   const entries = [];
   for (const [key, routes] of Object.entries(pageMap)) {
     for (const localeKey of ["en", "pt", "es"]) {
-      entries.push(`  <url>\n    <loc>${absolute(routes[localeKey])}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${key === "home" ? "weekly" : "monthly"}</changefreq>\n    <priority>${localeKey === "en" ? priorities[key] : Math.max(Number(priorities[key]) - 0.1, 0.6).toFixed(1)}</priority>\n  </url>`);
+      const updated = key === "guides" ? "2026-09-30" : existingDates.get(absolute(routes[localeKey])) || lastmod;
+      entries.push(`  <url>\n    <loc>${absolute(routes[localeKey])}</loc>\n    <lastmod>${updated}</lastmod>\n    <changefreq>${key === "home" ? "weekly" : "monthly"}</changefreq>\n    <priority>${localeKey === "en" ? priorities[key] : Math.max(Number(priorities[key]) - 0.1, 0.6).toFixed(1)}</priority>\n  </url>`);
     }
   }
-  for (const route of ["/premium/", "/media-kit/", "/collections-catalogs/"]) entries.push(`  <url><loc>${absolute(route)}</loc></url>`);
+  for (const route of ["/premium/", "/media-kit/"]) entries.push(`  <url><loc>${absolute(route)}</loc></url>`);
+  for (const { route, updated } of standaloneGuideRoutes) entries.push(`  <url><loc>${absolute(route)}</loc><lastmod>${updated}</lastmod><changefreq>monthly</changefreq></url>`);
   fs.writeFileSync(path.join(siteRoot, "sitemap.xml"), `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join("\n")}\n</urlset>\n`, "utf8");
 }
 
+const directoriesOnly = process.argv.includes("--directories-only");
 for (const localeKey of ["pt", "es"]) {
   writeRoute(pageMap.guides[localeKey], renderDirectory(localeKey, false));
+  if (directoriesOnly) continue;
   for (const key of Object.keys(locales[localeKey].pageData)) {
     writeRoute(pageMap[key][localeKey], renderFeaturePage(localeKey, key));
   }
 }
 
-for (const key of Object.keys(pageMap)) addEnglishHreflang(key);
+if (!directoriesOnly) for (const key of Object.keys(pageMap)) addEnglishHreflang(key);
 writeSitemap();
-await import("./generate-localized-homepages.mjs");
+if (!directoriesOnly) await import("./generate-localized-homepages.mjs");
 
-console.log("Generated 22 localized pages, matching localized homepages, reciprocal hreflang links, and sitemap entries.");
+console.log(directoriesOnly ? "Updated localized guide directories and sitemap; feature pages and homepages preserved." : "Generated 22 localized pages, matching localized homepages, reciprocal hreflang links, and sitemap entries.");
