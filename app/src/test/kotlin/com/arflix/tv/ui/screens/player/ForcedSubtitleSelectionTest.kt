@@ -24,8 +24,15 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.ConscryptMode
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], manifest = Config.NONE, application = android.app.Application::class)
+@ConscryptMode(ConscryptMode.Mode.OFF)
 class ForcedSubtitleSelectionTest {
     private lateinit var model: PlayerViewModel
     private val store = ViewModelStore()
