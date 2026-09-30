@@ -14,7 +14,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.test.*
@@ -81,9 +80,6 @@ class CollectionDetailsUiDeviceTest {
                 val secondTab = remember { FocusRequester() }
                 val mobile = device.isTouchDevice()
                 val inputMode = LocalInputModeManager.current
-                val layout = collectionGridLayout(LocalConfiguration.current.screenWidthDp, mobile, posters)
-                val columns = layout.columns
-                val cardWidth = layout.cardWidthDp.dp
                 val gridState = rememberTvLazyGridState()
                 renderedGridState = gridState
                 LaunchedEffect(Unit) {
@@ -94,7 +90,7 @@ class CollectionDetailsUiDeviceTest {
                     }
                 }
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    CollectionItemsGrid(catalog, {}, items, columns, cardWidth, posters,
+                    CollectionItemsGrid(catalog, {}, items, posters,
                         gridState, -1, {}, true, true, logos, selected.value,
                         firstTab, secondTab, false, { selected.value = it }, { opened = it },
                         { _, _ -> }, {}, {}, { nearEnd = true }, false, false, "", 8.dp,
@@ -127,10 +123,22 @@ class CollectionDetailsUiDeviceTest {
         val backdropBottom = compose.onNodeWithTag("collection_backdrop").fetchSemanticsNode().boundsInRoot.bottom
         assertTrue("Artwork must continue behind the cards", backdropBottom > firstCardTop)
         val density = context.resources.displayMetrics.density
-        val expectedWidth = collectionGridLayout(context.resources.configuration.screenWidthDp,
-            device.isTouchDevice(), posters).cardWidthDp * density
-        assertEquals("Cards must match home width", expectedWidth,
+        val gridWidth = compose.onNodeWithTag("collection_grid").fetchSemanticsNode().boundsInRoot.width
+        val gridLayout = collectionGridLayout((gridWidth / density).toInt(), device.isTouchDevice(), posters)
+        val expectedWidth = if (device.isTouchDevice()) {
+            (gridWidth - (40 + (gridLayout.columns - 1) * 12) * density) / gridLayout.columns
+        } else gridLayout.cardWidthDp * density
+        assertEquals("Touch cards fill their grid cell; TV cards retain Home width", expectedWidth,
             compose.onNodeWithTag("collection_item_0").fetchSemanticsNode().boundsInRoot.width, 2f)
+        if (device.isTouchDevice()) {
+            val first = compose.onNodeWithTag("collection_item_0").fetchSemanticsNode().boundsInRoot
+            val second = compose.onNodeWithTag("collection_item_1").fetchSemanticsNode().boundsInRoot
+            val columns = gridLayout.columns
+            if (columns > 1) {
+                assertEquals("Second card belongs beside the first, not below it", first.top, second.top, 1f)
+                assertTrue("Columns must not overlap", second.left >= first.right)
+            }
+        }
         if (device == DeviceType.TV) {
             compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
             compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }

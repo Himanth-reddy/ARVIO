@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -661,11 +662,7 @@ fun CollectionDetailsScreen(
     val isSportsCollection = SportsAddonCapabilities.isSportsCollectionCatalogId(uiState.catalog?.id ?: catalogId)
     val usePosterCards = uiState.catalog?.collectionGroup != CollectionGroupKind.GENRE &&
         rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
-    val configuration = LocalConfiguration.current
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val layout = collectionGridLayout(configuration.screenWidthDp, isMobile, usePosterCards)
-    val gridColumns = layout.columns
-    val cardWidth = layout.cardWidthDp.dp
 
     val initialTab = when {
         uiState.supportsMovies -> CollectionTab.MOVIES
@@ -812,8 +809,6 @@ fun CollectionDetailsScreen(
             catalog = uiState.catalog,
             onBack = onBack,
             items = items,
-            gridColumns = gridColumns,
-            cardWidth = cardWidth,
             usePosterCards = usePosterCards,
             gridState = gridState,
             pendingFocusIndex = pendingFocusIndex,
@@ -986,8 +981,6 @@ internal fun CollectionItemsGrid(
     catalog: CatalogConfig?,
     onBack: () -> Unit,
     items: List<MediaItem>,
-    gridColumns: Int,
-    cardWidth: androidx.compose.ui.unit.Dp,
     usePosterCards: Boolean,
     gridState: androidx.tv.foundation.lazy.grid.TvLazyGridState,
     pendingFocusIndex: Int,
@@ -1012,7 +1005,11 @@ internal fun CollectionItemsGrid(
     onPreviewItemChanged: (MediaItem) -> Unit = {},
     providerLogos: Map<String, String?> = emptyMap()
 ) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
+    val layout = collectionGridLayout(maxWidth.value.toInt(), isMobile, usePosterCards)
+    val gridColumns = layout.columns
+    val cardWidth = layout.cardWidthDp.dp
     val compact = LocalConfiguration.current.screenHeightDp < 480
     var focusedKey by rememberSaveable(catalog?.id, selectedTab) { mutableStateOf<String?>(null) }
     var previewKey by remember(catalog?.id, selectedTab) { mutableStateOf<String?>(null) }
@@ -1129,7 +1126,7 @@ internal fun CollectionItemsGrid(
             itemsIndexed((1..gridColumns * 3).toList(), contentType = { _, _ -> "skeleton" }) { _, _ ->
                 Box(Modifier.fillMaxWidth()) {
                 Box(
-                    modifier = Modifier
+                    modifier = (if (isMobile) Modifier.fillMaxWidth() else Modifier)
                         .width(cardWidth)
                         .height(cardHeight)
                         .clip(RoundedCornerShape(8.dp))
@@ -1163,7 +1160,8 @@ internal fun CollectionItemsGrid(
                     }
                 }
 
-                // Grid cells can be wider than Home cards; do not propagate their minimum width.
+                // Touch cards fill their measured cell, including after a window resize.
+                // TV cards keep Home's fixed width inside the wider grid slot.
                 Box(Modifier.fillMaxWidth()) {
                 MediaCard(
                     item = item,
@@ -1204,7 +1202,8 @@ internal fun CollectionItemsGrid(
                         if (items.size > 10 && index >= items.size - 2) onNearEnd()
                     },
                     onClick = { onItemClick(item) },
-                    modifier = Modifier.focusRequester(itemFocusRequester).testTag("collection_item_$index")
+                    modifier = (if (isMobile) Modifier.fillMaxWidth() else Modifier)
+                        .focusRequester(itemFocusRequester).testTag("collection_item_$index")
                 )
                 }
             }
@@ -1232,6 +1231,8 @@ internal fun CollectionItemsGrid(
     }
     }
     }
+}
+
 }
 
 @Composable
