@@ -41,6 +41,8 @@ config = args.build_config.read_text(encoding="utf-8")
 api_id = re.search(r'TELEGRAM_API_ID = "([1-9][0-9]+)"', config)
 api_hash = re.search(r'TELEGRAM_API_HASH = "([a-fA-F0-9]{32})"', config)
 assert api_id and api_hash, "Telegram release configuration missing"
+mdblist_client_id = re.search(r'MDBLIST_CLIENT_ID = "([^\"]+)"', config)
+assert mdblist_client_id and not mdblist_client_id[1].startswith("your-"), "MDBList OAuth release configuration missing"
 report = {"versionName": args.version_name, "versionCode": args.version_code,
     "signerSha256": certificate, "files": []}
 for path in (args.apk, args.aab):
@@ -53,6 +55,7 @@ for path in (args.apk, args.aab):
                 assert any(name.endswith(f"/{abi}/{library}") for name in libs), f"Missing {abi}/{library}"
         dex = [name for name in names if name.endswith(".dex")]
         assert any(api_hash[1].encode() in archive.read(name) for name in dex), "Telegram configuration absent from binary"
+        assert any(mdblist_client_id[1].encode() in archive.read(name) for name in dex), "MDBList OAuth configuration absent from binary"
         for name in libs:
             data = archive.read(name)
             assert data[:4] == b"\x7fELF"
@@ -68,5 +71,6 @@ for path in (args.apk, args.aab):
                 assert segment != 1 or alignment >= 16384, f"16 KB alignment failed: {name}"
     report["files"].append({"name": path.name, "bytes": path.stat().st_size,
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "telegramConfigured": True, "nativeLibraries": len(libs), "elf64bit16kb": True})
+        "telegramConfigured": True, "mdblistOAuthConfigured": True,
+        "nativeLibraries": len(libs), "elf64bit16kb": True})
 print(json.dumps(report, indent=2))
