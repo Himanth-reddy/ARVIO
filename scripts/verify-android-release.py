@@ -14,6 +14,7 @@ parser.add_argument("--apk", type=pathlib.Path, required=True)
 parser.add_argument("--aab", type=pathlib.Path, required=True)
 parser.add_argument("--build-config", type=pathlib.Path, required=True)
 parser.add_argument("--version-code", type=int, required=True)
+parser.add_argument("--version-name", required=True)
 parser.add_argument("--certificate", required=True)
 args = parser.parse_args()
 
@@ -32,7 +33,7 @@ run(args.sdk / "zipalign.exe", "-c", "-P", "16", "4", args.apk)
 manifest = run(args.sdk / "aapt.exe", "dump", "badging", args.apk)
 assert "name='com.arvio.tv'" in manifest
 assert f"versionCode='{args.version_code}'" in manifest
-assert "versionName='2.0.0'" in manifest
+assert f"versionName='{args.version_name}'" in manifest
 assert "application-debuggable" not in manifest
 assert "targetSdkVersion:'36'" in manifest
 
@@ -40,7 +41,8 @@ config = args.build_config.read_text(encoding="utf-8")
 api_id = re.search(r'TELEGRAM_API_ID = "([1-9][0-9]+)"', config)
 api_hash = re.search(r'TELEGRAM_API_HASH = "([a-fA-F0-9]{32})"', config)
 assert api_id and api_hash, "Telegram release configuration missing"
-report = {"versionCode": args.version_code, "signerSha256": certificate, "files": []}
+report = {"versionName": args.version_name, "versionCode": args.version_code,
+    "signerSha256": certificate, "files": []}
 for path in (args.apk, args.aab):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
