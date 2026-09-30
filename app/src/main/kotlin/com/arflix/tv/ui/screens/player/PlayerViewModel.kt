@@ -424,7 +424,9 @@ class PlayerViewModel @Inject constructor(
     private val aiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val aiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
     /** "Sync by hearing" (sideload build only): the audio sync after an unverified scan. */
-    private val hearingSyncKey = booleanPreferencesKey("subtitle_hearing_sync")
+    // v2: the setting is stored (and synced) only once the user sets it, so an untouched device
+    // keeps its own default — on, except on low-memory devices (see hearingSyncDefault).
+    private val hearingSyncKey = booleanPreferencesKey("subtitle_hearing_sync_v2")
     private var hearingSyncEnabled = true
     private val subtitlePreloadKey = booleanPreferencesKey("subtitle_preload_enabled")
     private val dolbyVisionCompatPrefKey = booleanPreferencesKey("dolby_vision_compat")
@@ -838,7 +840,7 @@ class PlayerViewModel @Inject constructor(
             aiSubtitleEnabled = prefs[aiEnabledKey] ?: false
             aiSubtitleAutoSelect = prefs[aiAutoSelectKey] ?: false
             aiFindBestMatchFirst = prefs[aiFindBestMatchKey] ?: false
-            hearingSyncEnabled = prefs[hearingSyncKey] ?: true
+            hearingSyncEnabled = prefs[hearingSyncKey] ?: hearingSyncDefault(context)
             subtitlePreloadEnabled = prefs[subtitlePreloadKey] ?: true
             aiApiKey = prefs[aiApiKeyKey] ?: ""
             aiModel = runCatching {
@@ -6186,6 +6188,13 @@ class PlayerViewModel @Inject constructor(
     private var audioSyncPositionMs: () -> Long = { 0L }
     private var audioSyncDurationMs: () -> Long = { 0L }
     private var audioSyncAudioFormat: androidx.media3.common.Format? = null
+
+    /**
+     * Off by default below 2.5 GB of RAM. A Mi Box 4 (2 GB, 32-bit, Sept 2026) needed 87s just to
+     * load the speech model and 118 MB of audio samples over its Wi-Fi, never analysed the audio at
+     * the playhead, and gave up after 90s every time — while AI covered the file anyway.
+     */
+    private fun hearingSyncDefault(context: Context): Boolean = !com.arflix.tv.ui.screens.player.audiosync.SpotConnections.isLowMemoryTv(context)
 
     /** Sync by hearing is enabled for this build and playback session. */
     private val hearingAvailable: Boolean get() = BuildConfig.AUDIO_SYNC_AVAILABLE && hearingSyncEnabled

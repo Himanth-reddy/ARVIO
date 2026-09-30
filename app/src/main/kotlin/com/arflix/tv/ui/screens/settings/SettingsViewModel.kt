@@ -386,6 +386,8 @@ data class SettingsUiState(
     val subtitleAiFindBestMatch: Boolean = false,
     /** Sync by hearing after an unverified scan (the setting exists in the sideload build only). */
     val subtitleHearingSync: Boolean = true,
+    /** Below 2.5 GB of RAM sync by hearing is off unless the user turns it on. */
+    val subtitleHearingSyncLowMemory: Boolean = false,
     val subtitlePreloadEnabled: Boolean = true,
     val dolbyVisionCompatEnabled: Boolean = true,
     val subtitleAiApiKey: String = "",
@@ -499,7 +501,8 @@ class SettingsViewModel @Inject constructor(
     private val subtitleAiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
     private val subtitleAiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val subtitleAiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
-    private val subtitleHearingSyncKey = booleanPreferencesKey("subtitle_hearing_sync")
+    private val subtitleHearingSyncKey = booleanPreferencesKey("subtitle_hearing_sync_v2")
+    private val hearingLowMemory by lazy { com.arflix.tv.ui.screens.player.audiosync.SpotConnections.isLowMemoryTv(context) }
     private val subtitlePreloadEnabledKey = booleanPreferencesKey("subtitle_preload_enabled")
     private val dolbyVisionCompatKey = booleanPreferencesKey("dolby_vision_compat")
     private val subtitleAiApiKeyKey = stringPreferencesKey("subtitle_ai_api_key")
@@ -751,7 +754,7 @@ class SettingsViewModel @Inject constructor(
             val subtitleAiEnabled = prefs[subtitleAiEnabledKey] ?: false
             val subtitleAiAutoSelect = prefs[subtitleAiAutoSelectKey] ?: false
             val subtitleAiFindBestMatch = prefs[subtitleAiFindBestMatchKey] ?: false
-            val subtitleHearingSync = prefs[subtitleHearingSyncKey] ?: true
+            val subtitleHearingSync = prefs[subtitleHearingSyncKey] ?: !hearingLowMemory
             val subtitlePreloadEnabled = prefs[subtitlePreloadEnabledKey] ?: true
             val dolbyVisionCompatEnabled = prefs[dolbyVisionCompatKey] ?: true
             val subtitleAiApiKey = prefs[subtitleAiApiKeyKey] ?: ""
@@ -871,6 +874,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiAutoSelect = subtitleAiAutoSelect,
                 subtitleAiFindBestMatch = subtitleAiFindBestMatch,
                 subtitleHearingSync = subtitleHearingSync,
+                subtitleHearingSyncLowMemory = hearingLowMemory,
                 subtitlePreloadEnabled = subtitlePreloadEnabled,
                 dolbyVisionCompatEnabled = dolbyVisionCompatEnabled,
                 subtitleAiApiKey = subtitleAiApiKey,

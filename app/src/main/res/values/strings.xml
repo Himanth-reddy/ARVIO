@@ -277,6 +277,7 @@
     <string name="ai_find_best_match_desc">Auto-pick the best-synced subtitle from your addons</string>
     <string name="subtitle_hearing_sync_title">Sync by Hearing</string>
     <string name="subtitle_hearing_sync_desc">When no subtitle matches, sync one to the audio (downloads a 74 MB speech model once)</string>
+    <string name="subtitle_hearing_sync_desc_low_memory">When no subtitle matches, sync one to the audio (74 MB speech model, downloaded once). Off by default on low-memory devices</string>
     <string name="subtitle_preload_title">Preload Subtitles</string>
     <string name="subtitle_preload_desc">Wait for subtitles before starting the video so switching them is instant</string>
     <string name="dv_compat_title">Dolby Vision Compatibility</string>
