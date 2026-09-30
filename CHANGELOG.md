@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 - Compatible sports add-on sources alongside IPTV or on their own, subscription artwork priority, live sports guide controls and configurable guide rows.
 - Provider account information, selective Stalker category searches, more accurate VOD quality/provider labels and source-completion/focus fixes.
 - Improved frame-rate mode switching, decoder recovery, forced subtitles, subtitle auto-sync, anime ordering and stream integration priorities.
+- Sync by Hearing subtitle fallback for English audio in sideload builds, with a one-time speech model download, cancellation safeguards and no additional audio-sampling connections for IPTV VOD/live playback. Improved dense-dialogue retiming and AI subtitle switching.
 - MDBList OAuth, resilient Trakt/SIMKL activation, Continue Watching reconciliation, immediate watched/watchlist feedback and reliable catalog/add-on deletions across cloud sync.
 - Telegram release/search recovery, Jellyfin 12 authentication, Home/Settings performance, preserved navigation state, mobile predictive back and official Obtainium support.
 - Web collection parity, improved browser/iPad playback, settings hydration and collection setup guides.

@@ -4,10 +4,14 @@ import android.util.Log
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.Subtitle
+import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.model.IptvVodSourceIds
+import com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync
 import io.mockk.mockk
 import io.mockk.every
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -82,6 +86,53 @@ class ForcedSubtitleSelectionTest {
         selectForAudio("en")
         assertNull(model.uiState.value.selectedSubtitle)
         assertTrue(manualSelection())
+    }
+
+    @Test fun manualOffStopsHearingAndCancelsPendingSubtitleDownload() {
+        val sync = mockk<ArvioAudioSync>(relaxed = true)
+        val pending = Job()
+        field("audioSyncInstance").set(model, sync)
+        field("audioSyncTarget").set(model, full)
+        field("audioSyncRaw").set(model, "old subtitle")
+        field("audioSyncWorkJob").set(model, pending)
+        state().value = state().value.copy(isHearingSync = true)
+
+        model.disableSubtitles()
+
+        verify(exactly = 1) { sync.stop() }
+        assertTrue(pending.isCancelled)
+        assertNull(field("audioSyncTarget").get(model))
+        assertNull(field("audioSyncRaw").get(model))
+        assertFalse(model.uiState.value.isHearingSync)
+        assertNull(model.uiState.value.selectedSubtitle)
+    }
+
+    @Test fun providerVodDoesNotOpenExtraAudioSamplingConnections() {
+        for (provider in IptvVodSourceIds.ALL) verifyAudioSampling(provider, live = false, allowed = false)
+    }
+
+    @Test fun livePlaybackDoesNotOpenExtraAudioSamplingConnections() {
+        verifyAudioSampling("sports-addon", live = true, allowed = false)
+    }
+
+    @Test fun ordinaryMovieSourceKeepsAudioSamplingAvailable() {
+        verifyAudioSampling("movie-addon", live = false, allowed = true)
+    }
+
+    private fun verifyAudioSampling(provider: String, live: Boolean, allowed: Boolean) {
+        val sync = mockk<ArvioAudioSync>(relaxed = true)
+        val url = "https://media.example/movie.mkv"
+        field("audioSyncInstance").set(model, sync)
+        field("currentIsLiveStreamPlayback").setBoolean(model, live)
+        state().value = state().value.copy(
+            selectedStreamUrl = url,
+            selectedStream = StreamSource("test", "test", provider, "1080p", "", url = url)
+        )
+
+        PlayerViewModel::class.java.getDeclaredMethod("audioSyncOnStream")
+            .apply { isAccessible = true }.invoke(model)
+
+        verify { sync.onStream(url, emptyMap(), allowSpotSampling = allowed) }
     }
 
     @Test fun explicitTrackPickSurvivesAudioChanges() {

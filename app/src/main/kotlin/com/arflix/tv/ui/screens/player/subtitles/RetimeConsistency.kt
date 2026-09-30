@@ -4,6 +4,8 @@ package com.arflix.tv.ui.screens.player.subtitles
  * Whether one retimer result fits the WHOLE file, judged by how far each part of the episode sits
  * from the result's own global map.
  *
+ * [placementProfile] logs where a retime puts each part of the episode, to compare a run against.
+ *
  * The retimer's `confident` flag checks that lines found partners, not how far off they are, so a
  * release with a cut (or uneven drift) can pass as confident while part of the episode is seconds
  * out — a measured weakness of the Nuvio retimer (3 of 8 planted 5-second cuts accepted, per the
@@ -44,6 +46,25 @@ internal object RetimeConsistency {
         if (medians.size < 3) return Verdict(true, medians, 0L, pairs.size)
         val spread = medians.max() - medians.min()
         return Verdict(spread <= MAX_WINDOW_SPREAD_MS, medians, spread, pairs.size)
+    }
+
+    /**
+     * Where a retime puts the subtitle, part by part: the median served shift (served start minus
+     * authored start) in each of [WINDOWS] equal parts of the subtitle. Diagnostic — it is what a
+     * run is compared against (the audio sync's own measurements, or the user's eyes).
+     */
+    fun placementProfile(result: AutoSyncTimelineRetimeResult): List<Long> {
+        val shifts = result.cues.map { it.originalStartTimeMs to it.startTimeMs - it.originalStartTimeMs }
+            .sortedBy { it.first }
+        if (shifts.isEmpty()) return emptyList()
+        val first = shifts.first().first
+        val span = (shifts.last().first - first).coerceAtLeast(1L)
+        return (0 until WINDOWS).mapNotNull { w ->
+            val lo = first + span * w / WINDOWS
+            val hi = first + span * (w + 1) / WINDOWS
+            val part = shifts.filter { (t, _) -> t >= lo && (t < hi || w == WINDOWS - 1) }.map { it.second }.sorted()
+            part.getOrNull(part.size / 2)
+        }
     }
 
     /** The residual pairs of a retimer [result] computed against [reference] for [target]. */

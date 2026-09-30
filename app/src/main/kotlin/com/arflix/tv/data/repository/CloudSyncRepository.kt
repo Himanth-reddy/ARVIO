@@ -400,6 +400,7 @@ class CloudSyncRepository @Inject constructor(
     private val subtitleAiEnabledKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_enabled")
     private val subtitleAiAutoSelectKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_auto_select")
     private val subtitleAiFindBestMatchKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_find_best_match")
+    private val subtitleHearingSyncKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_hearing_sync")
     private val subtitlePreloadEnabledKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_preload_enabled")
     private val dolbyVisionCompatKey = androidx.datastore.preferences.core.booleanPreferencesKey("dolby_vision_compat")
     private val subtitleAiApiKeyKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_api_key")
@@ -469,7 +470,8 @@ class CloudSyncRepository @Inject constructor(
         "accentColor", "oledBlackBackground", "skipProfileSelection", "customUserAgent",
         "dnsProvider", "subtitleAiEnabled", "subtitleAiAutoSelect", "subtitleAiFindBestMatch",
         "subtitlePreloadEnabled", "dolbyVisionCompatEnabled", "subtitleAiApiKey",
-        "subtitleAiModel", "subtitleRemoveHearingImpaired", "telegramSearchOnClickOnly"
+        "subtitleAiModel", "subtitleRemoveHearingImpaired", "telegramSearchOnClickOnly",
+        "subtitleHearingSync"
     )
     // Per-profile fields excluded from the generic merge (handled by their own logic / not values).
     private val profileMergeExclude = setOf("defaultSubtitle", "subtitleSettingsUpdatedAt")
@@ -754,6 +756,7 @@ class CloudSyncRepository @Inject constructor(
             "telegramSearchOnClickOnly",
             prefs[com.arflix.tv.data.telegram.TelegramRepository.KEY_SEARCH_ON_CLICK_ONLY] ?: true
         )
+        root.put("subtitleHearingSync", prefs[subtitleHearingSyncKey] ?: true)
 
         root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
         root.put("profiles", JSONArray(gson.toJson(profiles)))
@@ -1775,6 +1778,9 @@ class CloudSyncRepository @Inject constructor(
                 if (root.has("telegramSearchOnClickOnly")) {
                     prefs[com.arflix.tv.data.telegram.TelegramRepository.KEY_SEARCH_ON_CLICK_ONLY] =
                         root.optBoolean("telegramSearchOnClickOnly", true)
+                }
+                if (root.has("subtitleHearingSync")) {
+                    prefs[subtitleHearingSyncKey] = root.optBoolean("subtitleHearingSync", true)
                 }
                 val apiKey = root.optString("subtitleAiApiKey", "")
                 if (apiKey.isNotBlank()) prefs[subtitleAiApiKeyKey] = apiKey

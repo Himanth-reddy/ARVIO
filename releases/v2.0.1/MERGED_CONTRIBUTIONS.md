@@ -43,3 +43,4 @@ Pull requests merged after the v2.0.0 source tag and included in this release.
 | [#764](https://github.com/ProdigyV21/ARVIO/pull/764) | @ReichiMD | fix(iptv): keep remote focus inside the playlist dialog after typing |
 | [#765](https://github.com/ProdigyV21/ARVIO/pull/765) | @ReichiMD | feat(settings): copy-and-open button and countdown for Simkl sign-in |
 | [#766](https://github.com/ProdigyV21/ARVIO/pull/766) | @Himanth-reddy | feat(mobile): smooth predictive back and dismiss transitions for settings and stream selector |
+| [#767](https://github.com/ProdigyV21/ARVIO/pull/767) | @silentbil | feat(subtitles): sync by hearing, an audio-based subtitle sync fallback |

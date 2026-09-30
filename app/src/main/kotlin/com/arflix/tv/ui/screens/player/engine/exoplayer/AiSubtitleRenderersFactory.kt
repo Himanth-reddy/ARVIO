@@ -161,11 +161,13 @@ class AiSubtitleRenderersFactory(
     ): AudioSink {
         val capture = AudioCaptureProcessor()
         audioCaptureProcessor = capture
-        return DefaultAudioSink.Builder(context)
+        val sink = DefaultAudioSink.Builder(context)
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessors(arrayOf(capture))
             .build()
+        // Sync by hearing: hears the decoded audio where its own look-ahead copy can't be decoded.
+        return com.arflix.tv.ui.screens.player.audiosync.AudioSyncTaps.wrapAudioSink(sink)
     }
 
     override fun buildTextRenderers(

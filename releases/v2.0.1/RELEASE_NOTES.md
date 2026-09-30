@@ -34,6 +34,8 @@ This update brings together the changes since 2.0.0 across Android TV, phones, t
 - Recover supported audio through an alternate decoder when a hardware audio decoder fails during playback.
 - New Forced Subtitles preference, improved built-in track labels and automatic subtitle reconsideration when the audio track changes.
 - Improved subtitle auto-sync using container indexes and whole-file references from supported Matroska/MP4 sources, with bounded downloads and better best-match selection.
+- **Sync by Hearing (GitHub/sideload):** an on-device English-audio fallback when Find Best Match cannot verify subtitle timing. It downloads an approximately 74 MB speech model on first use and has a cloud-synced toggle in Playback settings. The bundled speech engine increases the sideload APK size; this initial feature is not included in the Play build.
+- Better subtitle timing for dense dialogue and different edits, plus a fix for untranslated English appearing after switching away from AI subtitles. Turning subtitles off or changing sources cancels pending hearing-sync work. IPTV VOD and live streams use audio from the existing playback connection without opening additional sampling connections.
 - Choose Broadcast or Standard TMDB anime episode ordering, with improved season-boundary resolution.
 - Stream Integrations settings let you manage enabled providers and their search priority/strategy, synchronized across devices.
 
@@ -76,7 +78,7 @@ Thank you to **@Himanth-reddy, @ReichiMD, @silentbil, @Saelon600, @test01203 and
 
 - **@Himanth-reddy:** stream integrations/search strategy, MDBList OAuth, anime ordering, navigation/performance, predictive back and Obtainium support.
 - **@ReichiMD:** watched-state feedback, activation dialogs, add-on configuration, Stalker/quality/account details, collection loading, forced subtitles and audio fallback.
-- **@silentbil:** Continue Watching reconciliation, Telegram search/source reliability and subtitle matching/auto-sync.
+- **@silentbil:** Continue Watching reconciliation, Telegram search/source reliability, subtitle matching/auto-sync and Sync by Hearing.
 - **@Saelon600:** responsive mobile landscape layouts.
 - **@test01203:** custom collection imports and replacement of built-in collections.
 - **@GAPP99:** live guide improvements, sports guide placement, expandable groups and configurable guide rows.

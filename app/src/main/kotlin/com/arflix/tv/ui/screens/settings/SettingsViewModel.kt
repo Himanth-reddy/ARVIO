@@ -384,6 +384,8 @@ data class SettingsUiState(
     val subtitleAiEnabled: Boolean = false,
     val subtitleAiAutoSelect: Boolean = false,
     val subtitleAiFindBestMatch: Boolean = false,
+    /** Sync by hearing after an unverified scan (the setting exists in the sideload build only). */
+    val subtitleHearingSync: Boolean = true,
     val subtitlePreloadEnabled: Boolean = true,
     val dolbyVisionCompatEnabled: Boolean = true,
     val subtitleAiApiKey: String = "",
@@ -497,6 +499,7 @@ class SettingsViewModel @Inject constructor(
     private val subtitleAiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
     private val subtitleAiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val subtitleAiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
+    private val subtitleHearingSyncKey = booleanPreferencesKey("subtitle_hearing_sync")
     private val subtitlePreloadEnabledKey = booleanPreferencesKey("subtitle_preload_enabled")
     private val dolbyVisionCompatKey = booleanPreferencesKey("dolby_vision_compat")
     private val subtitleAiApiKeyKey = stringPreferencesKey("subtitle_ai_api_key")
@@ -748,6 +751,7 @@ class SettingsViewModel @Inject constructor(
             val subtitleAiEnabled = prefs[subtitleAiEnabledKey] ?: false
             val subtitleAiAutoSelect = prefs[subtitleAiAutoSelectKey] ?: false
             val subtitleAiFindBestMatch = prefs[subtitleAiFindBestMatchKey] ?: false
+            val subtitleHearingSync = prefs[subtitleHearingSyncKey] ?: true
             val subtitlePreloadEnabled = prefs[subtitlePreloadEnabledKey] ?: true
             val dolbyVisionCompatEnabled = prefs[dolbyVisionCompatKey] ?: true
             val subtitleAiApiKey = prefs[subtitleAiApiKeyKey] ?: ""
@@ -866,6 +870,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiEnabled = subtitleAiEnabled,
                 subtitleAiAutoSelect = subtitleAiAutoSelect,
                 subtitleAiFindBestMatch = subtitleAiFindBestMatch,
+                subtitleHearingSync = subtitleHearingSync,
                 subtitlePreloadEnabled = subtitlePreloadEnabled,
                 dolbyVisionCompatEnabled = dolbyVisionCompatEnabled,
                 subtitleAiApiKey = subtitleAiApiKey,
@@ -2069,6 +2074,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitleAiFindBestMatchKey] = enabled }
             _uiState.value = _uiState.value.copy(subtitleAiFindBestMatch = enabled)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun setSubtitleHearingSync(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleHearingSyncKey] = enabled }
+            _uiState.value = _uiState.value.copy(subtitleHearingSync = enabled)
             syncLocalStateToCloud(silent = true)
         }
     }
