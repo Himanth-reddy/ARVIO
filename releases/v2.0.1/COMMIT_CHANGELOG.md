@@ -272,3 +272,4 @@ Changes after v2.0.0, including follow-up fixes and tests. Maintainer commits ar
 | [9b9826d67](https://github.com/ProdigyV21/ARVIO/commit/9b9826d679279fa8c051d006c4c6460ef1cd8cd4) | Maintainer | fix(player): stabilize and verify AFR display switching |
 | [e02d2806c](https://github.com/ProdigyV21/ARVIO/commit/e02d2806ce90be45a5b08010d790fcd452126b55) | Maintainer | fix(player): handle fractional AFR fallback and seed decoder frame rate |
 | [f4121c809](https://github.com/ProdigyV21/ARVIO/commit/f4121c80993ae1984c65cbe60ead662cd2045597) | Maintainer | fix(collections): fill mobile grid cells and reflow actual container widths |
+| [8a722dc88](https://github.com/ProdigyV21/ARVIO/commit/8a722dc885f81c13c3313e9ab48705cd2dc471c9) | Maintainer | Improve Premium trial entry and publish practical web guides |

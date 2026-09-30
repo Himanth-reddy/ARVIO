@@ -68,6 +68,7 @@ Web changes are delivered through the web app, not installed by this APK.
 - Fixed iPad remux codec signaling and gesture-blocked playback startup.
 - Preserve local settings and add-on visibility changes while cloud data hydrates or the connection is unavailable.
 - Updated multilingual setup guides, public media-kit screenshots and the website's Premium showcase and account-recovery links.
+- Clearer Premium trial entry, plus practical browser-playback and web-app self-hosting guides.
 
 ## Contributors
 
