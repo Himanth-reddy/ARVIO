@@ -11,22 +11,39 @@ class PlaybackFrameRate {
     val rate = mutableRate.asStateFlow()
     private var previousUs: Long? = null
     private val intervals = ArrayList<Long>(48)
+    private var candidateRate = 0f
+    private var candidateFrames = 0
 
     @Synchronized
     fun reset() {
         previousUs = null
         intervals.clear()
+        candidateRate = 0f
+        candidateFrames = 0
         mutableRate.value = 0f
     }
 
     @Synchronized
     fun onFrame(timeUs: Long, declaredRate: Float) {
         if (declaredRate.isFinite() && declaredRate in 10f..120f) {
-            mutableRate.value = declaredRate
+            val rate = stablePlaybackRate(declaredRate)
+            if (mutableRate.value == 0f || rate == mutableRate.value) {
+                mutableRate.value = rate
+                candidateFrames = 0
+            } else {
+                // Adaptive formats may briefly disagree. Do not renegotiate HDMI per frame.
+                candidateFrames = if (candidateRate == rate) candidateFrames + 1 else 1
+                candidateRate = rate
+                if (candidateFrames >= 48) {
+                    mutableRate.value = rate
+                    candidateFrames = 0
+                }
+            }
             previousUs = timeUs
             intervals.clear()
             return
         }
+        candidateFrames = 0
         val delta = previousUs?.let { timeUs - it }
         previousUs = timeUs
         if (delta == null) return
@@ -40,19 +57,29 @@ class PlaybackFrameRate {
         val median = sorted[sorted.size / 2]
         // Do not infer a fixed refresh rate from variable-rate or discontinuous output.
         if (intervals.count { abs(it - median) <= median * 0.02 } >= 44) {
-            mutableRate.value = 1_000_000f / median
+            mutableRate.value = stablePlaybackRate(1_000_000f / median)
         }
         intervals.clear()
     }
 }
 
-internal fun matchingRefreshRateIndex(rates: List<Float>, fps: Float): Int? {
+private val STANDARD_PLAYBACK_RATES = floatArrayOf(24000f / 1001f, 24f, 25f,
+    30000f / 1001f, 30f, 48f, 50f, 60000f / 1001f, 60f, 100f, 120000f / 1001f, 120f)
+
+internal fun stablePlaybackRate(fps: Float): Float {
+    return STANDARD_PLAYBACK_RATES.minByOrNull { abs(it - fps) }
+        ?.takeIf { abs(it - fps) <= 0.01f } ?: fps
+}
+
+internal fun matchingRefreshRateIndex(rates: List<Float>, fps: Float, activeIndex: Int? = null): Int? {
     if (!fps.isFinite() || fps !in 10f..120f) return null
-    return rates.indices.filter { index ->
+    val matches = rates.indices.filter { index ->
         val rate = rates[index]
         if (!rate.isFinite() || rate <= 0f) false else {
             val multiple = (rate / fps).roundToInt()
             multiple >= 1 && abs(rate / multiple - fps) <= 0.012f
         }
-    }.minByOrNull { rates[it] }
+    }
+    // Keep a compatible active mode (e.g. 120Hz for 24fps) instead of blanking HDMI.
+    return activeIndex?.takeIf { it in matches } ?: matches.minByOrNull { rates[it] }
 }

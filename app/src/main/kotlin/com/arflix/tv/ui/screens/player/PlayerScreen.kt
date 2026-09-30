@@ -201,6 +201,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
 import androidx.compose.runtime.rememberCoroutineScope
 import okhttp3.Cookie
@@ -2089,9 +2090,20 @@ fun PlayerScreen(
     LaunchedEffect(exoPlayer, frameRateActivity, frameRateSurface, uiState.frameRateMatchingMode) {
         if (!uiState.frameRateMatchingMode.equals("Always", ignoreCase = true)) return@LaunchedEffect
         val targetActivity = frameRateActivity ?: return@LaunchedEffect
-        playbackFrameRate.rate.collect { fps ->
+        playbackFrameRate.rate.collectLatest { fps ->
             if (!playerReleased && fps > 0f) {
+                // Fire TV/HDMI mode selection owns AFR when a compatible mode exists.
+                // Do not simultaneously ask SurfaceFlinger for a different display mode.
                 if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    frameRateSurface?.takeIf { it.isValid }?.let { surface ->
+                        runCatching {
+                            surface.setFrameRate(0f, android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                                android.view.Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
+                        }
+                    }
+                }
+                val modeHandled = com.arflix.tv.util.FrameRateUtils.matchFrameRateAndWait(targetActivity, fps)
+                if (!modeHandled && !playerReleased && android.os.Build.VERSION.SDK_INT >= 31) {
                     frameRateSurface?.takeIf { it.isValid }?.let { surface ->
                         runCatching {
                             surface.setFrameRate(fps, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
@@ -2099,8 +2111,6 @@ fun PlayerScreen(
                         }
                     }
                 }
-                // Older HDMI devices (including Shield) require an explicit display-mode request.
-                com.arflix.tv.util.FrameRateUtils.applyFrameRateMode(targetActivity, fps)
             }
         }
     }
