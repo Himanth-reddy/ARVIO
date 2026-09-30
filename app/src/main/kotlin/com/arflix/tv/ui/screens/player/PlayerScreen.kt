@@ -1061,13 +1061,21 @@ fun PlayerScreen(
         }
     }
 
+    // Sync by hearing (audiosync.ArvioAudioSync): every extractor also copies the playing stream's
+    // audio to the audio sync — idle unless it is listening. DV stripping, when on, stays underneath.
+    val audioTapExtractorsFactory = remember(dvStripExtractorsFactory) {
+        com.arflix.tv.ui.screens.player.audiosync.AudioSyncTaps.wrapExtractors(
+            dvStripExtractorsFactory ?: androidx.media3.extractor.DefaultExtractorsFactory()
+        ) { latestUiState.selectedStreamUrl }
+    }
+
     // Non-cached factory for heavy/debrid progressive streams to avoid disk I/O bottleneck.
     // The DV variant only differs by the rewriting ExtractorsFactory (MKV-only inside).
     val directProgressiveFactory = remember(httpDataSourceFactory) {
-        ProgressiveMediaSource.Factory(httpDataSourceFactory)
+        ProgressiveMediaSource.Factory(httpDataSourceFactory, audioTapExtractorsFactory)
     }
     val directProgressiveDvFactory = remember(httpDataSourceFactory, dvStripExtractorsFactory) {
-        dvStripExtractorsFactory?.let { ProgressiveMediaSource.Factory(httpDataSourceFactory, it) }
+        dvStripExtractorsFactory?.let { ProgressiveMediaSource.Factory(httpDataSourceFactory, audioTapExtractorsFactory) }
     }
 
     // Protocol-specific media source factories for faster startup
@@ -1079,8 +1087,7 @@ fun PlayerScreen(
         DashMediaSource.Factory(httpDataSourceFactory)
     }
     val mediaSourceFactory = remember(httpDataSourceFactory) {
-        (dvStripExtractorsFactory?.let { DefaultMediaSourceFactory(context, it) }
-            ?: DefaultMediaSourceFactory(context))
+        DefaultMediaSourceFactory(context, audioTapExtractorsFactory)
             .setDataSourceFactory(cacheDataSourceFactory)
     }
     // "Preload Subtitles" mode: sidecar subtitle configs only merge through a
@@ -1088,8 +1095,7 @@ fun PlayerScreen(
     // the disk cache (I/O bottleneck). This variant keeps file:// support for the local subtitle
     // copies while streaming video uncached, like directProgressiveFactory.
     val preloadMediaSourceFactory = remember(fileCapableDataSourceFactory) {
-        (dvStripExtractorsFactory?.let { DefaultMediaSourceFactory(context, it) }
-            ?: DefaultMediaSourceFactory(context))
+        DefaultMediaSourceFactory(context, audioTapExtractorsFactory)
             .setDataSourceFactory(fileCapableDataSourceFactory)
     }
 
@@ -1794,6 +1800,26 @@ fun PlayerScreen(
         }
     }
 
+    // Sync by hearing (sideload build only): the playhead, the duration and the selected audio track.
+    DisposableEffect(exoPlayer) {
+        if (!com.arflix.tv.BuildConfig.AUDIO_SYNC_AVAILABLE) return@DisposableEffect onDispose {}
+        viewModel.bindAudioSyncPlayer(
+            positionMs = { if (playerReleased) 0L else exoPlayer.currentPosition },
+            durationMs = { if (playerReleased) 0L else exoPlayer.duration.takeIf { it != C.TIME_UNSET } ?: 0L },
+        )
+        val audioTrackListener = object : androidx.media3.common.Player.Listener {
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                viewModel.onAudioSyncTrackSelected(
+                    with(com.arflix.tv.ui.screens.player.audiosync.AudioSyncTaps) { tracks.selectedAudio() }
+                )
+            }
+        }
+        exoPlayer.addListener(audioTrackListener)
+        onDispose {
+            exoPlayer.removeListener(audioTrackListener)
+            viewModel.bindAudioSyncPlayer(positionMs = { 0L }, durationMs = { 0L })
+        }
+    }
     DisposableEffect(exoPlayer) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !deviceType.isTouchDevice()) return@DisposableEffect onDispose {}
         val receiver = object : BroadcastReceiver() {
@@ -3769,8 +3795,10 @@ fun PlayerScreen(
         // "Find Best Match", but its transcription is no longer displayed.)
 
         // "Find Best Match" indicator — one generic message for the whole run, not a running
-        // commentary on its internal stages (those live in logcat via matchStep).
-        if (hasPlaybackStarted && uiState.isFindingBestMatch) {
+        // commentary on its internal stages (those live in logcat via matchStep). When the scan
+        // hands over to sync by hearing, the same pill stays up and says so until the audio has
+        // confirmed the timing (it can take a minute, and nothing else shows it is still working).
+        if (hasPlaybackStarted && (uiState.isFindingBestMatch || uiState.isHearingSync)) {
             androidx.compose.foundation.layout.Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -3790,7 +3818,10 @@ fun PlayerScreen(
                     color = androidx.compose.ui.graphics.Color(0xFF7EC8F0)
                 )
                 Text(
-                    text = stringResource(R.string.player_subtitle_searching_match),
+                    text = stringResource(
+                        if (uiState.isFindingBestMatch) R.string.player_subtitle_searching_match
+                        else R.string.player_subtitle_hearing_sync
+                    ),
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                 )
@@ -3828,7 +3859,7 @@ fun PlayerScreen(
                     .align(Alignment.TopCenter)
                     // Slide below the scanning pill on the rare frames both are visible
                     // (e.g. a remembered-match toast fired before the scan state cleared).
-                    .padding(top = if (hasPlaybackStarted && uiState.isFindingBestMatch) 60.dp else 16.dp)
+                    .padding(top = if (hasPlaybackStarted && (uiState.isFindingBestMatch || uiState.isHearingSync)) 60.dp else 16.dp)
                     .background(
                         color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.72f),
                         shape = RoundedCornerShape(20.dp)

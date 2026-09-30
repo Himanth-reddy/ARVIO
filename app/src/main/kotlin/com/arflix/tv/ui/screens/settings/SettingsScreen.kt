@@ -321,7 +321,10 @@ private val tvGeneralSectionIds = setOf(
 private fun tvGeneralRowsForSection(section: String): List<Int> {
     return when (section) {
         "language" -> listOf(0, 3, 1, 2)
-        "subtitles" -> listOf(4, 5, 6, 7, 42, 8, 38, 39, 9, 45)
+        // 48 (sync by hearing) only where it exists: the sideload build.
+        "subtitles" -> listOf(4, 5, 6, 7, 42, 8, 38) +
+            (if (BuildConfig.AUDIO_SYNC_AVAILABLE) listOf(48) else emptyList()) +
+            listOf(39, 9, 45)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
         "playback" -> listOf(10, 11, 12, 43, 44, 13, 14, 34, 16, 15, 40, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 41, 46, 36, 47)
@@ -1448,6 +1451,7 @@ fun SettingsScreen(
                                                 29 -> showAiModelDialog = true
                                                 30 -> viewModel.setSubtitleAiAutoSelect(!uiState.subtitleAiAutoSelect)
                                                 38 -> viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch)
+                                                48 -> viewModel.setSubtitleHearingSync(!uiState.subtitleHearingSync)
                                                 39 -> viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled)
                                                 40 -> viewModel.setDolbyVisionCompatEnabled(!uiState.dolbyVisionCompatEnabled)
                                                 31 -> viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired)
@@ -2108,6 +2112,7 @@ fun SettingsScreen(
                             subtitleAiEnabled = uiState.subtitleAiEnabled,
                             subtitleAiAutoSelect = uiState.subtitleAiAutoSelect,
                             subtitleAiFindBestMatch = uiState.subtitleAiFindBestMatch,
+                            subtitleHearingSync = uiState.subtitleHearingSync,
                             subtitlePreloadEnabled = uiState.subtitlePreloadEnabled,
                             dolbyVisionCompatEnabled = uiState.dolbyVisionCompatEnabled,
                             subtitleAiApiKey = uiState.subtitleAiApiKey,
@@ -2117,6 +2122,7 @@ fun SettingsScreen(
                             onSubtitleAiModelClick = { showAiModelDialog = true },
                             onSubtitleAiAutoSelectToggle = { viewModel.setSubtitleAiAutoSelect(it) },
                             onSubtitleAiFindBestMatchToggle = { viewModel.setSubtitleAiFindBestMatch(it) },
+                            onSubtitleHearingSyncToggle = { viewModel.setSubtitleHearingSync(it) },
                             onSubtitlePreloadToggle = { viewModel.setSubtitlePreloadEnabled(it) },
                             onDolbyVisionCompatToggle = { viewModel.setDolbyVisionCompatEnabled(it) },
                             onSubtitleRemoveHearingImpairedToggle = { viewModel.setSubtitleRemoveHearingImpaired(it) },
@@ -5794,6 +5800,18 @@ private fun MobileSettingsSubPage(
                         isFocused = false,
                         onClick = { viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch) }
                     )
+                    if (BuildConfig.AUDIO_SYNC_AVAILABLE) {
+                        MobileSettingsRow(
+                            icon = Icons.Default.Subtitles,
+                            title = stringResource(R.string.subtitle_hearing_sync_title),
+                            subtitle = stringResource(R.string.subtitle_hearing_sync_desc),
+                            value = stringResource(if (uiState.subtitleHearingSync) R.string.on else R.string.off),
+                            toggleChecked = uiState.subtitleHearingSync,
+                            isToggle = true,
+                            isFocused = false,
+                            onClick = { viewModel.setSubtitleHearingSync(!uiState.subtitleHearingSync) }
+                        )
+                    }
                     MobileSettingsRow(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.subtitle_preload_title),
@@ -7121,6 +7139,7 @@ private fun TvGeneralSettingsRows(
     subtitleAiEnabled: Boolean = false,
     subtitleAiAutoSelect: Boolean = false,
     subtitleAiFindBestMatch: Boolean = false,
+    subtitleHearingSync: Boolean = true,
     subtitlePreloadEnabled: Boolean = false,
     dolbyVisionCompatEnabled: Boolean = true,
     subtitleAiApiKey: String = "",
@@ -7130,6 +7149,7 @@ private fun TvGeneralSettingsRows(
     onSubtitleAiModelClick: () -> Unit = {},
     onSubtitleAiAutoSelectToggle: (Boolean) -> Unit = {},
     onSubtitleAiFindBestMatchToggle: (Boolean) -> Unit = {},
+    onSubtitleHearingSyncToggle: (Boolean) -> Unit = {},
     onSubtitlePreloadToggle: (Boolean) -> Unit = {},
     onDolbyVisionCompatToggle: (Boolean) -> Unit = {},
     onSubtitleRemoveHearingImpairedToggle: (Boolean) -> Unit = {},
@@ -7259,6 +7279,7 @@ private fun TvGeneralSettingsRows(
                 30 -> SettingsToggleRow(stringResource(R.string.ai_auto_select_title), stringResource(R.string.ai_auto_select_desc), subtitleAiAutoSelect, focusedIndex == localIndex, onSubtitleAiAutoSelectToggle, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
                 // AI-independent: the timing-based match scan needs no API key.
                 38 -> SettingsToggleRow(stringResource(R.string.ai_find_best_match_title), stringResource(R.string.ai_find_best_match_desc), subtitleAiFindBestMatch, focusedIndex == localIndex, onSubtitleAiFindBestMatchToggle, Modifier.settingsFocusSlot(localIndex))
+                48 -> SettingsToggleRow(stringResource(R.string.subtitle_hearing_sync_title), stringResource(R.string.subtitle_hearing_sync_desc), subtitleHearingSync, focusedIndex == localIndex, onSubtitleHearingSyncToggle, Modifier.settingsFocusSlot(localIndex))
                 39 -> SettingsToggleRow(stringResource(R.string.subtitle_preload_title), stringResource(R.string.subtitle_preload_desc), subtitlePreloadEnabled, focusedIndex == localIndex, onSubtitlePreloadToggle, Modifier.settingsFocusSlot(localIndex))
                 40 -> SettingsToggleRow(stringResource(R.string.dv_compat_title), stringResource(R.string.dv_compat_desc), dolbyVisionCompatEnabled, focusedIndex == localIndex, onDolbyVisionCompatToggle, Modifier.settingsFocusSlot(localIndex))
                 31 -> SettingsToggleRow(stringResource(R.string.ai_remove_hi_title), stringResource(R.string.ai_remove_hi_desc), subtitleRemoveHearingImpaired, focusedIndex == localIndex, onSubtitleRemoveHearingImpairedToggle, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))

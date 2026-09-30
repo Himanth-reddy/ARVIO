@@ -31,6 +31,30 @@ class SubtitleRetimeRewriteTest {
     }
 
     @Test
+    fun `a cue the map has no place for is dropped with its number and text`() {
+        val out = SubtitleSyncMatcher.retimeOrDropCues(srt) { start, end ->
+            if (start == 1_000L) null else (start + 500L) to (end + 500L)
+        }
+
+        assertThat(out).doesNotContain("First line")
+        assertThat(out).contains("00:00:10,500 --> 00:00:12,500 X1:10\r\nSecond line")
+        assertThat(SubtitleSyncMatcher.parseCues(out).map { it.startMs }).containsExactly(10_500L)
+    }
+
+    @Test
+    fun `a WEBVTT header block survives dropping`() {
+        val vtt = "WEBVTT\n\n00:01.000 --> 00:02.000\nGone\n\n00:05.000 --> 00:06.000\nKept\n"
+
+        val out = SubtitleSyncMatcher.retimeOrDropCues(vtt) { start, end ->
+            if (start == 1_000L) null else start to end
+        }
+
+        assertThat(out).startsWith("WEBVTT")
+        assertThat(out).doesNotContain("Gone")
+        assertThat(out).contains("Kept")
+    }
+
+    @Test
     fun `keys match what the parser reads, so retimer output maps straight back`() {
         val cues = SubtitleSyncMatcher.parseCues(srt)
         val moved = cues.associate { (it.startMs to it.endMs) to (it.startMs * 2 to it.endMs * 2) }

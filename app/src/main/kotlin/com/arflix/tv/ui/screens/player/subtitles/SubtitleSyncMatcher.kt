@@ -483,6 +483,28 @@ object SubtitleSyncMatcher {
             "${formatTimestamp(newStart, useComma)} --> ${formatTimestamp(newEnd.coerceAtLeast(newStart + 1), useComma)}"
         }
 
+    /**
+     * [retimeTimestamps] that can also DROP a cue: [map] returning null removes the cue's whole
+     * block (number, timing and text). The audio sync's mapping has no place for a line of a scene
+     * the release cuts, and such lines are dropped rather than shown at a guessed time. Blocks
+     * without a timing line (a WEBVTT header, NOTE, STYLE) are kept.
+     */
+    fun retimeOrDropCues(raw: String, map: (startMs: Long, endMs: Long) -> Pair<Long, Long>?): String {
+        val newline = if (raw.contains("\r\n")) "\r\n" else "\n"
+        val blocks = raw.split(BLOCK_BREAK)
+        return blocks.mapNotNull { block ->
+            val m = TIME_LINE.find(block) ?: return@mapNotNull block
+            val start = parseTimestamp(m.groupValues[1]) ?: return@mapNotNull block
+            val end = parseTimestamp(m.groupValues[2]) ?: return@mapNotNull block
+            val (newStart, newEnd) = map(start, end) ?: return@mapNotNull null
+            val useComma = m.groupValues[1].contains(',')
+            block.replaceRange(
+                m.range,
+                "${formatTimestamp(newStart, useComma)} --> ${formatTimestamp(newEnd.coerceAtLeast(newStart + 1), useComma)}",
+            )
+        }.joinToString(newline + newline)
+    }
+
     private fun formatTimestamp(ms: Long, useComma: Boolean): String {
         val v = ms.coerceAtLeast(0L)
         val h = v / 3_600_000
@@ -543,6 +565,7 @@ object SubtitleSyncMatcher {
         """(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}|\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}|\d{1,2}:\d{2}[.,]\d{1,3})"""
     )
     private val TAG_STRIP = Regex("<[^>]*>")
+    private val BLOCK_BREAK = Regex("""\r?\n[ \t]*\r?\n""")
 
     fun parseCues(content: String): List<TimedCue> {
         val normalized = content.replace("\r\n", "\n").replace('\r', '\n')

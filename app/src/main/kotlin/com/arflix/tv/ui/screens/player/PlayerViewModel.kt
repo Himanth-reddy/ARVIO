@@ -241,6 +241,8 @@ data class PlayerUiState(
     val isLiveAudioTranslating: Boolean = false,
     // True while "Find best match" is scanning subtitles; message shown as a transient toast.
     val isFindingBestMatch: Boolean = false,
+    /** Sync by hearing is working on the subtitle and has not confirmed its timing yet. */
+    val isHearingSync: Boolean = false,
     val matchToast: PlayerMessage? = null,
     // Persistent status shown on screen for the whole duration of a "Find best match" scan.
     // Null while no scan is running.
@@ -421,6 +423,9 @@ class PlayerViewModel @Inject constructor(
     private val aiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
     private val aiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val aiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
+    /** "Sync by hearing" (sideload build only): the audio sync after an unverified scan. */
+    private val hearingSyncKey = booleanPreferencesKey("subtitle_hearing_sync")
+    private var hearingSyncEnabled = true
     private val subtitlePreloadKey = booleanPreferencesKey("subtitle_preload_enabled")
     private val dolbyVisionCompatPrefKey = booleanPreferencesKey("dolby_vision_compat")
     private val aiApiKeyKey = globalStringPreferencesKey("subtitle_ai_api_key")
@@ -662,6 +667,11 @@ class PlayerViewModel @Inject constructor(
             holdsTelegramQuiet = false
             streamRepository.onPlaybackEnded()
         }
+        // Sync by hearing lives on its own threads (audio sampling, decoding, speech recognition):
+        // without this every video played kept its hearing running on the old stream, and the
+        // next one's model load and recognition competed with them (70s loads, no words in 90s).
+        audioSyncInstance?.release()
+        audioSyncInstance = null
         super.onCleared()
     }
 
@@ -827,6 +837,7 @@ class PlayerViewModel @Inject constructor(
             aiSubtitleEnabled = prefs[aiEnabledKey] ?: false
             aiSubtitleAutoSelect = prefs[aiAutoSelectKey] ?: false
             aiFindBestMatchFirst = prefs[aiFindBestMatchKey] ?: false
+            hearingSyncEnabled = prefs[hearingSyncKey] ?: true
             subtitlePreloadEnabled = prefs[subtitlePreloadKey] ?: true
             aiApiKey = prefs[aiApiKeyKey] ?: ""
             aiModel = runCatching {
@@ -981,6 +992,7 @@ class PlayerViewModel @Inject constructor(
                     savedPosition = resumeData.positionMs
                 )
                 prefetchSubtitleIndex(onlyForAutoScan = true)
+                audioSyncOnStream()
                 // NOTE: these background children share the load job — an uncaught exception in
                 // any of them cancels ALL siblings (that silently killed the subtitle flow).
                 // Every body is therefore failure-isolated and logged.
@@ -3176,6 +3188,7 @@ class PlayerViewModel @Inject constructor(
                 isSetupError = false
             )
             prefetchSubtitleIndex(onlyForAutoScan = true)
+            audioSyncOnStream()
 
             // Re-run subtitle selection now that streamSrc is known — scores are now meaningful
             scheduleSubtitleSelection(currentOriginalLanguage)
@@ -3470,10 +3483,18 @@ class PlayerViewModel @Inject constructor(
             // owns its timing from here on (the manual delay knob still applies).
             cancelFindBestMatch("user picked a subtitle")
             updateMatchCacheForManualPick(subtitle)
+            if (!audioSyncSwitching) {
+                audioSyncTarget = null
+                audioSync?.stop()
+            }
         }
         subtitleSelectionJob?.cancel()
         cancelSubtitleLocalization()
-        translationManager.isEnabled = false
+        // Translation goes off when the new subtitle LANDS (applySelectedSubtitle), not here: a
+        // pick that is still being downloaded left the AI source track on screen, marked as AI,
+        // with translation already off — its English lines shown as the "AI" subtitle until the
+        // download finished, or for good when the download was superseded (The Office S05E02,
+        // Sept 2026: AI after a failed audio sync appeared in English; picking AI again fixed it).
 
         // Handing ExoPlayer the addon URL makes media3 decode the file as UTF-8, which turns a
         // legacy code page (windows-1255 Hebrew is still common) into rows of U+FFFD. Only a
@@ -3543,6 +3564,7 @@ class PlayerViewModel @Inject constructor(
 
     /** Commits [served] as the playing subtitle (a local copy of the user's pick, or the pick). */
     private fun applySelectedSubtitle(served: Subtitle) {
+        translationManager.isEnabled = false
         // Keep isAiAvailable/aiTargetLanguageName so the AI entry stays in the menu for re-selection
         _uiState.value = _uiState.value.copy(
             selectedSubtitle = served,
@@ -3897,6 +3919,7 @@ class PlayerViewModel @Inject constructor(
         // source's timing — keep the cached one only when nothing better is available now.
         val source = findAiSourceSubtitle(_uiState.value.subtitles) ?: aiSourceSubtitle ?: return
         aiSourceSubtitle = source
+        cancelSubtitleLocalization()
         hasManualSubtitleSelection = true
         // AI activation is not a specific user track pick — a late embedded preferred-language
         // track may still displace it.
@@ -4404,6 +4427,8 @@ class PlayerViewModel @Inject constructor(
             // a verdict from a user report needs all three, and none was logged: which source it
             // was, why an embedded track was or was not a reference, and whether a subtitle the
             // user later picked by hand was even in the pool.
+            // Sync by hearing: listen while the scan runs, so a takeover starts with audio heard.
+            armAudioSync()
             _uiState.value.selectedStream?.let { stream ->
                 android.util.Log.i(
                     "SubMatch",
@@ -4657,8 +4682,14 @@ class PlayerViewModel @Inject constructor(
             if (loaded.isEmpty()) {
                 endMatch()
                 restoreSubtitle(previousSubtitle)
-                noMatch(null)
-                selectLastResort()
+                // Nothing verified: the audio next, then the usual fallback (AI, or the pick as is).
+                val hearing = candidates.firstOrNull()?.let { pick ->
+                    startHearingFallback(pick) { noMatch(null); selectLastResort() }
+                } == true
+                if (!hearing) {
+                    noMatch(null)
+                    selectLastResort()
+                }
                 return@launch
             }
 
@@ -5083,9 +5114,17 @@ class PlayerViewModel @Inject constructor(
                         )
                         if (result == null || !result.confident) continue
                         // Confident means "lines found partners", not "lines are close". Refuse a
-                        // map whose error walks across the episode — see RetimeConsistency.
+                        // map whose error walks across the episode — see RetimeConsistency. The
+                        // Shards S01E08 (Sept 2026) passed as confident, spread ~2.4s across the
+                        // episode, and put the subtitle ~5s late from the first minute. A refused
+                        // episode goes to the audio sync instead.
                         val consistency = com.arflix.tv.ui.screens.player.subtitles.RetimeConsistency
                             .check(com.arflix.tv.ui.screens.player.subtitles.RetimeConsistency.pairs(result, ref.cues, target))
+                        Log.i(
+                            "SubMatch",
+                            "[retime-check] \"${sub.label}\" vs ${ref.label}: served shift per part " +
+                                "${com.arflix.tv.ui.screens.player.subtitles.RetimeConsistency.placementProfile(result)}ms"
+                        )
                         if (!consistency.fits) {
                             Log.i(
                                 "SubMatch",
@@ -5229,6 +5268,16 @@ class PlayerViewModel @Inject constructor(
             // Subtitles the model confirmed are not this dialogue. Kept across a re-score, which
             // would otherwise hand back the same coincidental timing score that fooled us.
             val aiRejected = HashSet<String>()
+            // The model's own measurement at the playhead for a subtitle AS AUTHORED: handed to the
+            // audio sync if the scan ends unverified, as the timing to show until the audio has
+            // measured that part of the episode itself (see ArvioAudioSync.LocalAnchor).
+            // Per subtitle: each candidate the model checked has its own measurement, and the one
+            // checked last must not stand in for the one the audio takes over (The Shards S01E04,
+            // Sept 2026: Ktuvit's anchor replaced Wizdom's, and Wizdom went to the audio with none).
+            val aiAnchors = HashMap<String, com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync.LocalAnchor>()
+            // Per subtitle the model answered for: true when it paired none of the lines (not this
+            // episode's dialogue). A failed request leaves no entry.
+            val aiNotThisDialogue = HashMap<String, Boolean>()
 
             // Escalation. Only the first choice was parsed and scored; the rest of the pack is
             // loaded HERE, once that one has actually failed. In the common case (it passes) the
@@ -5318,8 +5367,20 @@ class PlayerViewModel @Inject constructor(
                         }
                     )
                     val aiSync = measureOffsetWithAi(referenceCues, targetCues, aiTarget.sub.label)
+                    if (aiSync != null) aiNotThisDialogue["${aiTarget.sub.provider}|${aiTarget.sub.id}"] = aiSync.notThisDialogue
                     outcome = aiSync.verdict()
                     val aiOffset = aiSync?.offsetMs
+                    // Also a shift too large for a constant fix (a different cut): it is still
+                    // exactly right AT the playhead, which is all an anchor claims.
+                    val localShift = aiOffset ?: aiSync?.unfixableShiftMs
+                    if (localShift != null && aiTarget.retime == null && aiTarget.offsetMs == 0L &&
+                        (aiSync?.pairs ?: 0) >= MATCH_AI_ANCHOR_MIN_PAIRS && referenceCues.isNotEmpty()
+                    ) {
+                        val at = referenceCues.map { it.startMs }.sorted().let { it[it.size / 2] }
+                        aiAnchors["${aiTarget.sub.provider}|${aiTarget.sub.id}"] =
+                            com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync.LocalAnchor(at, localShift)
+                        Log.i("SubMatch", "[ai-sync] anchor for the audio sync: ${localShift}ms at ${at / 1_000}s (${aiSync?.pairs} lines)")
+                    }
                     suspend fun scoreAt(
                         offsetMs: Long,
                         toleranceMs: Long = MATCH_OVERLAP_TOLERANCE_MS,
@@ -5380,6 +5441,28 @@ class PlayerViewModel @Inject constructor(
                             matchStep(
                                 "3· \"${aiTarget.sub.label}\" is a different cut " +
                                     "(${formatMatchOffset(aiSync.unfixableShiftMs)} out) — rejecting"
+                            )
+                            aiRejected.add("${aiTarget.sub.provider}|${aiTarget.sub.id}")
+                            replaceTarget(0.0, 0L)
+                        }
+
+                        // The model paired the lines AS THE RETIME PLACES THEM and they are still out:
+                        // the retime is wrong here, whatever its whole-file pairing says. Only when
+                        // both measured against the same track (the model reads the built-in
+                        // reference), so a mistimed track cannot veto a retime against another one.
+                        // The Shards S01E08 (Sept 2026): 7/8 lines paired at 1:27, the retimed
+                        // subtitle 4.6s late, and the retime was served anyway — "really off".
+                        // Rejected, the scan ends unverified and the audio sync takes over.
+                        aiTarget.retime != null && !alternateReferenceInUse && aiOffset != null &&
+                            aiTarget.retime.referenceLabel == primaryTimeline?.label &&
+                            kotlin.math.abs(aiOffset) > MATCH_AI_RETIME_VETO_MS -> {
+                            Log.w(
+                                "SubMatch",
+                                "[ai-sync] \"${aiTarget.sub.label}\": ${aiSync?.pairs} lines paired as re-timed are " +
+                                    "${aiOffset}ms out at the playhead (> ${MATCH_AI_RETIME_VETO_MS}ms) — rejecting the retime"
+                            )
+                            matchStep(
+                                "3· re-timed \"${aiTarget.sub.label}\" is ${formatMatchOffset(aiOffset)} out here — rejecting"
                             )
                             aiRejected.add("${aiTarget.sub.provider}|${aiTarget.sub.id}")
                             replaceTarget(0.0, 0L)
@@ -5607,6 +5690,7 @@ class PlayerViewModel @Inject constructor(
             }
 
             if (winner != null) {
+                audioSync?.stop()
                 val sync = SubtitleAutoSync.ofMs(winner.offsetMs)
                 // A cue-by-cue retime is a different FILE, not a live offset, so it can never be
                 // "kept" on screen — the rewritten copy has to be loaded.
@@ -5711,15 +5795,52 @@ class PlayerViewModel @Inject constructor(
                             PlayerMessage.Res(R.string.player_match_sync_unverified, listOf(first.label))
                         )
                         matchStep("4· reference track has no dialogue — showing \"${first.label}\" unverified")
+                        // AI has nothing to translate here, so the audio is the only fallback left.
+                        startHearingFallback(first) {}
                         return@launch
                     }
                 }
-                noMatch(best?.score)
-                selectLastResort()
-                matchStep(
-                    "4· nothing verified (best " +
-                        "${best?.let { "${(it.score * 100).toInt()}%" } ?: "n/a"}) — unverified pick"
-                )
+                // Nothing verified. The order is: this scan, then the audio, then the usual fallback
+                // (AI translation, or the unverified pick as is when AI can't run). The audio syncs
+                // the pick the user is already watching, else the best-named candidate.
+                val bestPct = best?.let { "${(it.score * 100).toInt()}%" } ?: "n/a"
+                val hearingPick = provisional?.takeIf { !provisionalDisplaced } ?: candidates.firstOrNull()
+                val anchor = hearingPick?.let { aiAnchors["${it.provider}|${it.id.removeSuffix(RETIMED_SUBTITLE_ID_SUFFIX)}"] }
+                // The model read every subtitle on offer and none of them holds this episode's
+                // dialogue: syncing one to the audio cannot help — it would only download ~130MB of
+                // audio samples and run speech recognition for a minute before ending on AI anyway.
+                // The Office S05E02 (Sept 2026): Amazon's "Weight Loss Pt. 2" is numbered E02, the
+                // subtitle sites' E02 is the next episode, and all 5 came back "not this dialogue".
+                // Only when EVERY candidate got that answer — itself, or through an identical copy
+                // (the model checks one file per timing family: The Office's OpenSubtitles 3437610
+                // and Wizdom's XviD-LOL are the same file). Any answer other than "not this
+                // dialogue", or a candidate nobody checked, keeps the audio in play.
+                // Identical copies live only in familyMembers (keyed by the file the scan kept), not in
+                // `loaded`, so a verdict reaches its copies through there.
+                val rejectedKeys = HashSet<String>()
+                aiNotThisDialogue.filterValues { it }.keys.forEach { key ->
+                    rejectedKeys += key
+                    familyMembers[key].orEmpty().forEach { (member, _) -> rejectedKeys += "${member.provider}|${member.id}" }
+                }
+                val wrongEpisode = candidates.isNotEmpty() && aiNotThisDialogue.values.all { it } &&
+                    candidates.all { "${it.provider}|${it.id}" in rejectedKeys }
+                if (wrongEpisode) {
+                    Log.i(
+                        "SubMatch",
+                        "audio sync: skipped — the model found none of the ${candidates.size} subtitles to be this episode's dialogue"
+                    )
+                }
+                val hearing = !wrongEpisode && hearingPick != null && startHearingFallback(hearingPick, anchor) {
+                    noMatch(best?.score)
+                    selectLastResort()
+                }
+                if (hearing) {
+                    matchStep("4· nothing verified (best $bestPct) — syncing \"${hearingPick?.label}\" by the audio")
+                } else {
+                    noMatch(best?.score)
+                    selectLastResort()
+                    matchStep("4· nothing verified (best $bestPct) — unverified pick")
+                }
             }
         }
     }
@@ -6035,6 +6156,214 @@ class PlayerViewModel @Inject constructor(
      * per candidate; a few dozen windows spread across the film carry the same alignment evidence
      * for a fraction of the work, which matters on the TV boxes this runs on.
      */
+    // ── Sync by hearing (audio subtitle sync, see audiosync.ArvioAudioSync) ─────────────────────
+
+    /** Created on first use (a scan), so a session that never scans never loads any of it. */
+    @Volatile private var audioSyncInstance: com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync? = null
+    private val audioSync: com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync? get() = audioSyncInstance
+
+    /** The original addon subtitle the audio sync took over, and its text. */
+    private var audioSyncTarget: Subtitle? = null
+    private var audioSyncRaw: String? = null
+    private var audioSyncSwitching = false
+
+    /** The playhead, the duration and the selected audio format, from the player screen. */
+    private var audioSyncPositionMs: () -> Long = { 0L }
+    private var audioSyncDurationMs: () -> Long = { 0L }
+    private var audioSyncAudioFormat: androidx.media3.common.Format? = null
+
+    /** Sync by hearing can run: the sideload build (Play allows no model download) and the setting on. */
+    private val hearingAvailable: Boolean get() = BuildConfig.AUDIO_SYNC_AVAILABLE && hearingSyncEnabled
+
+    internal fun bindAudioSyncPlayer(positionMs: () -> Long, durationMs: () -> Long) {
+        audioSyncPositionMs = positionMs
+        audioSyncDurationMs = durationMs
+    }
+
+    internal fun onAudioSyncTrackSelected(format: androidx.media3.common.Format?) {
+        audioSyncAudioFormat = format
+        audioSyncInstance?.onAudioTrackSelected(format)
+    }
+
+    /** Created on first use (a scan), and never where sync by hearing can't run. */
+    private fun audioSyncOrNull(): com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync? {
+        audioSyncInstance?.let { return it }
+        if (!hearingAvailable) return null
+        return com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync(
+            context = context,
+            scope = viewModelScope,
+            onModel = ::applyAudioSyncModel,
+            onSwitch = ::switchToAudioSyncedSubtitle,
+            onListening = { listening -> _uiState.value = _uiState.value.copy(isHearingSync = listening) },
+        ).also { created ->
+            audioSyncInstance = created
+            // Read through, so a later rebind (a new player) reaches it too.
+            created.positionMs = { audioSyncPositionMs() }
+            created.durationMs = { audioSyncDurationMs() }
+            created.onAudioTrackSelected(audioSyncAudioFormat)
+            _uiState.value.selectedStreamUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                created.onStream(url, _uiState.value.selectedStream?.behaviorHints?.proxyHeaders?.request.orEmpty())
+            }
+        }
+    }
+
+    private fun audioSyncOnStream() {
+        audioSyncTarget = null
+        val url = _uiState.value.selectedStreamUrl?.takeIf { it.isNotBlank() } ?: return
+        audioSync?.onStream(url, _uiState.value.selectedStream?.behaviorHints?.proxyHeaders?.request.orEmpty())
+    }
+
+    private fun armAudioSync() {
+        val sync = audioSyncOrNull() ?: return
+        val references = _uiState.value.subtitles
+            .filter { !it.isEmbedded && (it.url.startsWith("http://") || it.url.startsWith("https://")) }
+            .distinctBy { it.url }
+            .map { sub ->
+                com.arflix.tv.ui.screens.player.audiosync.AudioSubtitleSyncController.ReferenceCandidate(
+                    url = sub.url,
+                    language = sub.lang,
+                    headers = emptyMap(),
+                    label = sub.provider,
+                )
+            }
+        val imdb = currentImdbId?.takeIf { it.startsWith("tt") }
+        val (type, videoId) = when {
+            imdb == null -> null to null
+            currentMediaType == MediaType.MOVIE -> "movie" to imdb
+            else -> "series" to "$imdb:${currentSeason ?: 1}:${currentEpisode ?: 1}"
+        }
+        sync.arm(references, type, videoId)
+    }
+
+    /**
+     * The scan verified nothing: show [pick] (replacing AI translation if it held the screen during
+     * the scan) and sync it to the audio. [onFailed] — the scan's own no-match fallback — runs when
+     * the audio can't confirm it. False when the audio sync can't take over at all (the caller
+     * falls back at once).
+     */
+    private fun startHearingFallback(
+        pick: Subtitle,
+        anchor: com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync.LocalAnchor? = null,
+        onFailed: () -> Unit,
+    ): Boolean {
+        val sync = audioSync ?: return false
+        if (!hearingAvailable || !sync.canTakeOver || pick.isEmbedded) return false
+        // Where AI can run, its timing (from the file's own track) is right, and the audio may
+        // only replace it once the model's own measurement confirms the audio's timing. Without
+        // that measurement there is nothing to confirm it against: AI stays, and the audio does
+        // not run at all.
+        val aiPossible = aiSubtitleEnabled && aiApiKey.isNotBlank() && findAiSourceSubtitle(_uiState.value.subtitles) != null
+        if (aiPossible && anchor == null) {
+            Log.i("SubMatch", "audio sync: skipped — AI translation can run and the model measured nothing to check the audio against")
+            return false
+        }
+        // The addon entry (its http url is what the controller's candidates are keyed by), not a
+        // localized file:// copy.
+        val original = _uiState.value.subtitles.firstOrNull {
+            !it.isEmbedded && it.provider == pick.provider && it.id == pick.id.removeSuffix(RETIMED_SUBTITLE_ID_SUFFIX)
+        } ?: pick
+        val streamUrl = _uiState.value.selectedStreamUrl
+        viewModelScope.launch {
+            val raw = (preloadedCopyFor(original)?.url?.let { SubtitleSyncMatcher.loadRaw(it, original.lang) })
+                ?: SubtitleSyncMatcher.loadRaw(original.url, original.lang)
+            // The user moved on meanwhile (another stream, their own pick): nothing to fall back from.
+            if (_uiState.value.selectedStreamUrl != streamUrl || userPickedSubtitle) return@launch
+            if (raw == null) {
+                Log.i("SubMatch", "audio sync: \"${original.label}\" unreadable — next fallback")
+                onFailed()
+                return@launch
+            }
+            val cues = withContext(Dispatchers.Default) { SubtitleSyncMatcher.parseCues(raw) }
+            audioSyncTarget = original
+            audioSyncRaw = raw
+            val aiCanTakeOver = { aiSubtitleEnabled && aiApiKey.isNotBlank() && findAiSourceSubtitle(_uiState.value.subtitles) != null }
+            // Where AI can run it holds the screen while the audio works (its timing comes from the
+            // built-in track, so it is right from the first line), and the subtitle replaces it
+            // only once the audio has confirmed its timing. Otherwise the subtitle is shown now and
+            // corrected as the audio finds its timing. The Office S05E02 (Sept 2026): a minute of
+            // a badly timed subtitle while the audio listened, then AI anyway.
+            val behindAi = aiCanTakeOver()
+            if (behindAi) {
+                if (!_uiState.value.isAiTranslating) activateAiTranslation()
+            } else {
+                val shown = _uiState.value.selectedSubtitle
+                val showing = !_uiState.value.isAiTranslating && shown != null && !shown.isEmbedded &&
+                    shown.provider == original.provider && shown.id.removeSuffix(RETIMED_SUBTITLE_ID_SUFFIX) == original.id
+                if (!showing) {
+                    applyAutoSync(original, null)
+                    selectSubtitle(localizeSubtitle(original, raw), isUserAction = false)
+                }
+            }
+            Log.i(
+                "SubMatch",
+                "audio sync: taking over \"${original.label}\" (${cues.size} cues) — no verified timing" +
+                    (if (behindAi) ", AI translation on screen until the audio confirms it" else "")
+            )
+            if (!sync.takeOver(original.url, cues, onFailed, anchor, aiCanTakeOver, holdUntilConfirmed = behindAi)) onFailed()
+        }
+        return true
+    }
+
+    /**
+     * A mapping from the audio: a constant shift is applied live (like a scan's offset); a
+     * frame-rate stretch or cut scenes rewrite the file (like a retimed scan result). Null puts
+     * the subtitle back on its own timing.
+     */
+    private fun applyAudioSyncModel(key: String, model: com.arflix.tv.ui.screens.player.audiosync.SubtitleSyncModel?) {
+        val sub = audioSyncTarget?.takeIf { it.url == key } ?: return
+        val raw = audioSyncRaw ?: return
+        val single = model?.segments?.singleOrNull()
+        when {
+            model == null -> {
+                Log.i("SubMatch", "audio sync: back to \"${sub.label}\"'s own timing")
+                applyAutoSync(sub, null)
+                selectSubtitle(localizeSubtitle(sub, raw), isUserAction = false)
+            }
+            single != null && kotlin.math.abs(single.scale - 1.0) < 1e-4 -> {
+                val offsetMs = kotlin.math.round(single.shiftMs).toLong()
+                Log.i("SubMatch", "audio sync: \"${sub.label}\" shifted ${offsetMs}ms")
+                val local = localizeSubtitle(sub, raw)
+                applyAutoSync(sub, SubtitleAutoSync.ofMs(offsetMs))
+                if (_uiState.value.selectedSubtitle?.id != local.id || _uiState.value.selectedSubtitle?.url != local.url) {
+                    selectSubtitle(local, isUserAction = false)
+                }
+            }
+            else -> {
+                Log.i(
+                    "SubMatch",
+                    "audio sync: \"${sub.label}\" re-timed — ${model.segments.size} part(s), " +
+                        model.segments.joinToString { "x${"%.4f".format(it.scale)} ${kotlin.math.round(it.shiftMs).toLong()}ms from ${it.fromMediaMs}ms" }
+                )
+                val rewritten = com.arflix.tv.ui.screens.player.audiosync.ArvioAudioSync.retime(raw, model)
+                applyAutoSync(sub, null)
+                selectSubtitle(localizeSubtitle(sub.copy(id = sub.id + RETIMED_SUBTITLE_ID_SUFFIX), rewritten), isUserAction = false)
+            }
+        }
+    }
+
+    /** The audio fits another addon subtitle of the same language: show it and sync that one. */
+    private fun switchToAudioSyncedSubtitle(url: String) {
+        val next = _uiState.value.subtitles.firstOrNull { !it.isEmbedded && it.url == url } ?: return
+        val sync = audioSync ?: return
+        viewModelScope.launch {
+            val raw = SubtitleSyncMatcher.loadRaw(next.url, next.lang) ?: return@launch
+            val cues = withContext(Dispatchers.Default) { SubtitleSyncMatcher.parseCues(raw) }
+            Log.i("SubMatch", "audio sync: switching to \"${next.label}\" — it fits the audio better")
+            audioSyncTarget = next
+            audioSyncRaw = raw
+            if (!sync.holdingForConfirmation) {
+                audioSyncSwitching = true
+                try {
+                    applyAutoSync(next, null)
+                    selectSubtitle(localizeSubtitle(next, raw), isUserAction = false)
+                } finally {
+                    audioSyncSwitching = false
+                }
+            }
+            sync.takeOver(next.url, cues)
+        }
+    }
+
     private fun prefetchSubtitleIndex(onlyForAutoScan: Boolean) {
         if (onlyForAutoScan && !aiFindBestMatchFirst) return
         val url = _uiState.value.selectedStreamUrl?.takeIf { it.isNotBlank() } ?: return
@@ -8131,6 +8460,14 @@ class PlayerViewModel @Inject constructor(
         private const val MATCH_AI_CANDIDATE_LINES = 40  // candidate window sent per request
         private const val MATCH_AI_MIN_PAIRS = 3         // fewer pairs than this can't measure an offset
         private const val MATCH_AI_OUTLIER_MS = 450L     // pairs this far from the median are mis-pairings
+        /**
+         * Paired lines the model needs before its playhead measurement is the audio sync's check.
+         * The same bar the model needs to report a shift at all: The Shards S01E04 (Sept 2026) had
+         * 4 buffered lines, no check, and the audio's +13.5s replaced a correct AI at +11.8s.
+         */
+        private const val MATCH_AI_ANCHOR_MIN_PAIRS = MATCH_AI_MIN_PAIRS
+        /** A retime whose placed lines the model finds further out than this at the playhead is wrong. */
+        private const val MATCH_AI_RETIME_VETO_MS = 1_000L
         /**
          * How much a MODEL-measured shift must improve the timing score. Deliberately far smaller
          * than [MATCH_OFFSET_MIN_GAIN]: that one has to distinguish a real offset from the sweep's
