@@ -92,6 +92,6 @@ The optional collection import example retains credit to [Kaptain / ImKaptain](h
 - **ARVIO-v2.0.1-sideload-release.apk:** signed, optimized ARMv7/ARM64 release for supported Android TVs, phones and tablets. Install over the existing app to retain your account and settings.
 - **ARVIO-v2.0.1-source.zip:** source snapshot of this release.
 
-Google Play receives a separate Play-flavor app bundle, subject to Google's review.
+Google Play receives a separate Play-flavor app bundle requiring Android 7.0 or newer, subject to Google's review. The GitHub APK retains Android 6.0 support.
 
-**Version 2.0.1 | Build 318 | Android 6.0 or newer | Target SDK 36**
+**Version 2.0.1 | Build 318 | GitHub: Android 6.0+ | Google Play: Android 7.0+ | Target SDK 36**

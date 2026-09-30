@@ -141,6 +141,8 @@ android {
     productFlavors {
         create("play") {
             dimension = "distribution"
+            // Automatic Play protection requires Android 7.0 or newer.
+            minSdk = 24
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "false")
             buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
             // The initial Sync by Hearing rollout is limited to sideload builds.
