@@ -2,8 +2,10 @@
 
 ## Scope
 
-The report does not yet identify the exact Fire Stick model, Fire OS version,
-AFR setting, or failure symptom. These fixes address reproducible problems in
+The reporter identifies a latest-generation Fire Stick 4K Max: the HDMI refresh
+rate never changes, although other players trigger a brief black screen and
+switch successfully. Fire OS version and selected AFR setting are unconfirmed.
+These fixes address reproducible problems in
 ARVIO's refresh-rate selection and request lifecycle; they are not a claim that
 the reporter's HDMI setup has been tested.
 
@@ -14,6 +16,14 @@ the reporter's HDMI setup has been tested.
 - Cancel an obsolete pending preference when the next video needs another rate.
 - Canonicalize small timestamp rounding differences without confusing 23.976
   with 24, or 59.94 with 60. Require stable declared-rate changes after startup.
+- If no exact cadence exists, permit a nearby integer/fractional counterpart
+  (maximum 0.11% difference per video frame). For example, 23.976fps can use 24Hz
+  instead of remaining at 60Hz. This is not an exact match and can still have
+  occasional cadence correction; an advertised 23.976Hz mode always wins.
+- Confirm the selected mode, not an arbitrary rate close to the source FPS.
+- Seed AFR from the decoder input-format event, so a valid declared FPS does not
+  depend on the renderer providing per-frame callbacks. Timestamp estimation
+  remains available when format metadata is missing.
 - Restore the original preference per window, including after a switch timeout.
 - No additional stream probing or provider connection is introduced.
 - Off and Seamless only retain their existing meanings.
@@ -23,10 +33,12 @@ the reporter's HDMI setup has been tested.
 `PlaybackFrameRateTest` covers timestamp estimation, unstable metadata, seeks,
 source resets, fractional rates, and compatible active display modes.
 
-`FrameRateUtilsTest` uses simulated Android displays to cover pending requests,
+`FrameRateUtilsTest` uses simulated API 28 and API 30 Android displays to cover pending requests,
 source changes, resolution preservation, independent window restoration,
 rejected requests, delayed confirmation, and the four-second timeout. The timeout
 is asynchronous; it does not pause playback or block the main thread.
+It also covers UHD mode lists containing 24Hz but not 23.976Hz, preserving UHD
+resolution, and not reporting a silently ignored fallback as success.
 
 ## Required hardware follow-up
 

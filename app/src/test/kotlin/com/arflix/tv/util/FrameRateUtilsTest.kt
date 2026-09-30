@@ -33,7 +33,7 @@ import org.robolectric.annotation.Implements
 import org.robolectric.shadow.api.Shadow
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28], application = Application::class, manifest = Config.NONE,
+@Config(sdk = [28, 30], application = Application::class, manifest = Config.NONE,
     shadows = [FrameRateUtilsTest.SimulatedDisplay::class])
 @ConscryptMode(ConscryptMode.Mode.OFF)
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -158,6 +158,31 @@ class FrameRateUtilsTest {
         screen.active = screen.modes[1]
         assertFalse(FrameRateUtils.matchFrameRateAndWait(screen.activity, 24000f / 1001f))
         assertEquals(0, screen.attributes.preferredDisplayModeId)
+    }
+
+    @Test fun uhdFilmSwitchesWhenOnlyIntegerFilmModeIsAdvertised() = runTest {
+        val screen = Screen()
+        screen.active = mode(1, 60f, 3840, 2160)
+        screen.modes = arrayOf(screen.active, mode(2, 24f, 3840, 2160))
+        launch { delay(2000); screen.active = screen.modes[1] }
+        assertTrue(FrameRateUtils.matchFrameRateAndWait(screen.activity, 24000f / 1001f))
+        assertEquals(2, screen.attributes.preferredDisplayModeId)
+        verify(exactly = 1) { screen.window.attributes = any() }
+    }
+
+    @Test fun ignoredIntegerFallbackIsNotReportedAsSuccess() = runTest {
+        val screen = Screen()
+        screen.modes = arrayOf(screen.active, screen.modes[1])
+        assertFalse(FrameRateUtils.matchFrameRateAndWait(screen.activity, 24000f / 1001f))
+        assertEquals(0, screen.attributes.preferredDisplayModeId)
+    }
+
+    @Test fun lowerResolutionFallbackIsStillExcluded() {
+        val screen = Screen()
+        screen.active = mode(1, 60f, 3840, 2160)
+        screen.modes = arrayOf(screen.active, mode(2, 24f))
+        assertFalse(FrameRateUtils.applyFrameRateMode(screen.activity, 24000f / 1001f))
+        verify(exactly = 0) { screen.window.attributes = any() }
     }
 
     companion object {

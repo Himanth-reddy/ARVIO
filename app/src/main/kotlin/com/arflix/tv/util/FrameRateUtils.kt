@@ -4,6 +4,7 @@ import android.app.Activity
 import android.media.MediaExtractor
 import android.net.Uri
 import android.os.Build
+import android.view.Display
 import android.view.Window
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -15,7 +16,7 @@ import java.util.WeakHashMap
 /**
  * Auto frame rate matching utility.
  * Switches the display refresh rate to match the video frame rate for judder-free playback.
- * Simplified frame-rate helper using MediaExtractor only (no NextLib dependency).
+ * Playback uses decoder metadata; the legacy extractor helpers are not on its hot path.
  */
 object FrameRateUtils {
 
@@ -179,8 +180,11 @@ object FrameRateUtils {
                     it.physicalHeight == activeMode.physicalHeight
             }
             val index = matchingRefreshRateIndex(sameSizeModes.map { it.refreshRate }, frameRate,
-                sameSizeModes.indexOfFirst { it.modeId == activeMode.modeId })
+                sameSizeModes.indexOfFirst { it.modeId == activeMode.modeId },
+                allowFractionalFallback = true)
                 ?: run {
+                    android.util.Log.w("FrameRateMatch", "No compatible mode for ${frameRate}fps on ${Build.MODEL}; " +
+                        "current=$activeMode supported=${display.supportedModes.contentToString()}")
                     restoreOriginalMode(activity)
                     return false
                 }
@@ -196,7 +200,8 @@ object FrameRateUtils {
             window.attributes = params
             android.util.Log.i("FrameRateMatch", "Requested ${best.refreshRate}Hz for ${frameRate}fps (was ${activeMode.refreshRate}Hz)")
             true
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            android.util.Log.w("FrameRateMatch", "Display-mode request failed on ${Build.MODEL}", error)
             false
         }
     }
@@ -210,14 +215,27 @@ object FrameRateUtils {
         frameRate: Float
     ): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
-        if (!withContext(Dispatchers.Main) { applyFrameRateMode(activity, frameRate) }) return false
+        val target: Display.Mode = withContext(Dispatchers.Main) {
+            if (!applyFrameRateMode(activity, frameRate)) return@withContext null
+            runCatching {
+                val window = activity.window ?: return@runCatching null
+                val display = window.decorView.display ?: return@runCatching null
+                val requestedId = window.attributes.preferredDisplayModeId
+                if (requestedId == 0) display.mode
+                else display.supportedModes.firstOrNull { it.modeId == requestedId }
+            }.getOrNull()
+        } ?: return false
         val confirmed = withTimeoutOrNull(SWITCH_TIMEOUT_MS) {
             var stablePolls = 0
             while (stablePolls < STABLE_POLLS_REQUIRED) {
                 val matches = withContext(Dispatchers.Main) {
                     runCatching {
                         val display = activity.window?.decorView?.display ?: return@runCatching false
-                        matchingRefreshRateIndex(listOf(display.mode.refreshRate), frameRate) != null
+                        val current = display.mode
+                        current.modeId == target.modeId &&
+                            current.physicalWidth == target.physicalWidth &&
+                            current.physicalHeight == target.physicalHeight &&
+                            kotlin.math.abs(current.refreshRate - target.refreshRate) <= 0.012f
                     }.getOrDefault(false)
                 }
                 stablePolls = if (matches) stablePolls + 1 else 0
@@ -228,6 +246,8 @@ object FrameRateUtils {
         if (!confirmed) {
             withContext(Dispatchers.Main) { restoreOriginalMode(activity) }
             android.util.Log.w("FrameRateMatch", "Display did not confirm ${frameRate}fps; released mode preference")
+        } else {
+            android.util.Log.i("FrameRateMatch", "Confirmed ${target.refreshRate}Hz for ${frameRate}fps on ${Build.MODEL}")
         }
         return confirmed
     }

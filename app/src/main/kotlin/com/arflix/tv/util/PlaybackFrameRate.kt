@@ -23,6 +23,14 @@ class PlaybackFrameRate {
         mutableRate.value = 0f
     }
 
+    /** Seed AFR even on renderers that do not dispatch per-frame metadata callbacks. */
+    @Synchronized
+    fun onInputFormat(frameRate: Float) {
+        if (mutableRate.value == 0f && frameRate.isFinite() && frameRate in 10f..120f) {
+            mutableRate.value = stablePlaybackRate(frameRate)
+        }
+    }
+
     @Synchronized
     fun onFrame(timeUs: Long, declaredRate: Float) {
         if (declaredRate.isFinite() && declaredRate in 10f..120f) {
@@ -71,7 +79,12 @@ internal fun stablePlaybackRate(fps: Float): Float {
         ?.takeIf { abs(it - fps) <= 0.01f } ?: fps
 }
 
-internal fun matchingRefreshRateIndex(rates: List<Float>, fps: Float, activeIndex: Int? = null): Int? {
+internal fun matchingRefreshRateIndex(
+    rates: List<Float>,
+    fps: Float,
+    activeIndex: Int? = null,
+    allowFractionalFallback: Boolean = false,
+): Int? {
     if (!fps.isFinite() || fps !in 10f..120f) return null
     val matches = rates.indices.filter { index ->
         val rate = rates[index]
@@ -81,5 +94,16 @@ internal fun matchingRefreshRateIndex(rates: List<Float>, fps: Float, activeInde
         }
     }
     // Keep a compatible active mode (e.g. 120Hz for 24fps) instead of blanking HDMI.
-    return activeIndex?.takeIf { it in matches } ?: matches.minByOrNull { rates[it] }
+    if (matches.isNotEmpty()) {
+        return activeIndex?.takeIf { it in matches } ?: matches.minByOrNull { rates[it] }
+    }
+    if (!allowFractionalFallback) return null
+    // Some HDMI mode lists expose only the integer counterpart (24 rather than 23.976).
+    // Prefer that cadence to 60Hz pulldown, but never override an available exact match.
+    val nearMatches = rates.indices.filter { index ->
+        val rate = rates[index]
+        val multiple = if (rate.isFinite() && rate > 0f) (rate / fps).roundToInt() else 0
+        multiple >= 1 && abs(rate / multiple - fps) / fps <= 0.0011f
+    }
+    return activeIndex?.takeIf { it in nearMatches } ?: nearMatches.minByOrNull { rates[it] }
 }

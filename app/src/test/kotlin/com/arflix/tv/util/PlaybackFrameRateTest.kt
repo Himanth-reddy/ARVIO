@@ -109,4 +109,39 @@ class PlaybackFrameRateTest {
         assertEquals(60000f / 1001f, stablePlaybackRate(59.941f), 0f)
         assertEquals(60f, stablePlaybackRate(59.999f), 0f)
     }
+
+    @Test fun decoderFormatStartsAfrWithoutFrameCallbacks() {
+        val detector = PlaybackFrameRate()
+        detector.onInputFormat(24000f / 1001f)
+        assertEquals(24000f / 1001f, detector.rate.value, 0f)
+    }
+
+    @Test fun invalidInputFormatDoesNotPoisonTimestampDetection() {
+        val detector = PlaybackFrameRate()
+        listOf(-1f, 0f, Float.NaN, Float.POSITIVE_INFINITY).forEach(detector::onInputFormat)
+        assertEquals(0f, detector.rate.value, 0f)
+        repeat(49) { detector.onFrame(it * 40_000L, -1f) }
+        detector.onInputFormat(30f)
+        assertEquals(25f, detector.rate.value, 0f)
+    }
+
+    @Test fun sourceResetAllowsNewDecoderFormatWithoutFrames() {
+        val detector = PlaybackFrameRate()
+        detector.onInputFormat(24f)
+        detector.reset()
+        detector.onInputFormat(25f)
+        assertEquals(25f, detector.rate.value, 0f)
+    }
+
+    @Test fun fractionalFallbackUsesIntegerCounterpartOnlyWhenNecessary() {
+        assertEquals(1, matchingRefreshRateIndex(listOf(60f, 24f), 24000f / 1001f, 0, true))
+        assertEquals(0, matchingRefreshRateIndex(listOf(60f, 50f), 30000f / 1001f, 1, true))
+        assertEquals(2, matchingRefreshRateIndex(listOf(60f, 24f, 23.976f), 24000f / 1001f, 1, true))
+    }
+
+    @Test fun fallbackNeverTreatsPulldownOrPalMismatchAsCompatible() {
+        assertNull(matchingRefreshRateIndex(listOf(60f, 50f), 24000f / 1001f, 0, true))
+        assertNull(matchingRefreshRateIndex(listOf(24f, 60f), 25f, 0, true))
+        assertNull(matchingRefreshRateIndex(listOf(25f), 50f, 0, true))
+    }
 }

@@ -1218,6 +1218,15 @@ fun PlayerScreen(
                     lastRenderedVideoFrameUs.set(presentationTimeUs)
                     playbackFrameRate.onFrame(presentationTimeUs, format.frameRate)
                 }
+                addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+                    override fun onVideoInputFormatChanged(
+                        eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                        format: androidx.media3.common.Format,
+                        decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?,
+                    ) {
+                        playbackFrameRate.onInputFormat(format.frameRate)
+                    }
+                })
 
                 // Add error listener to try next stream on codec errors
                 addListener(object : Player.Listener {
