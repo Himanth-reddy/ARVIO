@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { standaloneGuideRoutes } from "./standalone-guide-routes.mjs";
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const baseUrl = "https://arvio.tv";
@@ -27,6 +28,7 @@ for (const directory of [
   "debrid-usenet-android-tv", "trakt-simkl-sync", "live-tv-epg",
   "ai-subtitles-android-tv", "fire-tv-media-player", "arvio-web"
 ]) knownRoutes.add(`/${directory}/`);
+for (const { route } of standaloneGuideRoutes) knownRoutes.add(route);
 
 for (const file of pages) {
   const html = fs.readFileSync(file, "utf8");
@@ -56,7 +58,25 @@ for (const file of pages) {
 
 const sitemap = fs.readFileSync(path.join(siteRoot, "sitemap.xml"), "utf8");
 const sitemapUrls = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/gu)].map((match) => match[1]);
-if (sitemapUrls.length !== 36) errors.push(`sitemap: expected 36 URLs, got ${sitemapUrls.length}`);
+const expectedSitemapCount = 33 + 2 + standaloneGuideRoutes.length;
+if (sitemapUrls.length !== expectedSitemapCount) errors.push(`sitemap: expected ${expectedSitemapCount} URLs, got ${sitemapUrls.length}`);
+if (new Set(sitemapUrls).size !== sitemapUrls.length) errors.push("sitemap: duplicate URLs");
+for (const { route } of standaloneGuideRoutes) {
+  if (!sitemapUrls.includes(`${baseUrl}${route}`)) errors.push(`sitemap: missing ${baseUrl}${route}`);
+  const file = path.join(siteRoot, route.replace(/^\//u, ""), "index.html");
+  if (!fs.existsSync(file)) { errors.push(`${route}: standalone guide does not exist`); continue; }
+  const html = fs.readFileSync(file, "utf8");
+  if (!html.includes('<html lang="en">')) errors.push(`${route}: incorrect document language`);
+  if (!html.includes(`<link rel="canonical" href="${baseUrl}${route}">`)) errors.push(`${route}: missing canonical`);
+  for (const [, json] of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/gu)) {
+    try { JSON.parse(json); } catch (error) { errors.push(`${route}: invalid JSON-LD (${error.message})`); }
+  }
+  for (const [, href] of html.matchAll(/(?:href|src)="(\/[^"?#]*)/gu)) {
+    if (href === "/privacy") continue;
+    const localPath = path.join(siteRoot, href.replace(/^\//u, ""), href.endsWith("/") ? "index.html" : "");
+    if (!fs.existsSync(localPath)) errors.push(`${route}: local resource does not resolve (${href})`);
+  }
+}
 for (const file of pages) {
   const url = `${baseUrl}${routeForFile(file)}`;
   if (!sitemapUrls.includes(url)) errors.push(`sitemap: missing ${url}`);
