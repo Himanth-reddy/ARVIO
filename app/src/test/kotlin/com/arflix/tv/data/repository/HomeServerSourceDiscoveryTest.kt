@@ -62,7 +62,8 @@ class HomeServerSourceDiscoveryTest {
         every { client.newCall(any()) } answers {
             val request = firstArg<Request>()
             val (code, body) = response(request)
-            mockk<okhttp3.Call> { every { execute() } returns Response.Builder().request(request)
+            mockk<okhttp3.Call> { every { timeout() } returns okio.Timeout()
+                every { execute() } returns Response.Builder().request(request)
                 .protocol(Protocol.HTTP_1_1).code(code).message("fixture")
                 .body(body.toResponseBody("application/json".toMediaType())).build() }
         }

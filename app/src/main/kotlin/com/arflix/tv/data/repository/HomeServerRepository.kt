@@ -26,6 +26,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -38,6 +40,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.HttpUrl
+import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
@@ -45,10 +48,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLDecoder
+import java.io.IOException
 import java.net.URLEncoder
 import java.text.Normalizer
 import java.time.Instant
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -303,6 +308,7 @@ class HomeServerRepository @Inject constructor(
 
     private val gson = Gson()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+    private class HomeServerRequestException(val statusCode: Int, message: String) : IllegalStateException(message)
     private data class CachedHomeServerSources(
         val sources: List<StreamSource>,
         val createdAtMs: Long
@@ -363,13 +369,13 @@ class HomeServerRepository @Inject constructor(
                 val trimmedUsername = username.trim()
                 val trimmedDisplayName = displayName.trim()
                 require(serverUrl.isNotBlank()) { context.getString(R.string.homeserver_enter_url) }
-                require(password.isNotBlank()) { context.getString(R.string.homeserver_enter_password) }
 
                 val publicInfo = fetchPublicInfo(serverUrl)
                 val detectedKind = publicInfo.serverKind
                     .takeUnless { it == HomeServerKind.UNKNOWN }
                     ?: detectServerKind(publicInfo.productName, publicInfo.serverName)
                 if (detectedKind == HomeServerKind.PLEX) {
+                    require(password.isNotBlank()) { context.getString(R.string.homeserver_enter_password) }
                     val connection = buildPlexConnection(
                         accountToken = password,
                         preferredServerUrl = serverUrl,
@@ -397,7 +403,8 @@ class HomeServerRepository @Inject constructor(
                     accountToken = auth.accountToken,
                     lastConnectedAt = System.currentTimeMillis()
                 )
-                val connection = connectionShell.copy(collections = fetchCollections(connectionShell))
+                val connection = withInitialLibraries(connectionShell)
+                currentCoroutineContext().ensureActive()
                 saveConnection(connection)
                 Result.success(connection)
             } catch (e: Throwable) {
@@ -622,9 +629,26 @@ class HomeServerRepository @Inject constructor(
             accountToken = auth.accountToken,
             lastConnectedAt = System.currentTimeMillis()
         )
-        val connection = connectionShell.copy(collections = fetchCollections(connectionShell))
+        val connection = withInitialLibraries(connectionShell)
+        currentCoroutineContext().ensureActive()
         saveConnection(connection)
         return connection
+    }
+
+    private suspend fun withInitialLibraries(connection: HomeServerConnection): HomeServerConnection {
+        val collections = try {
+            fetchCollections(connection, setupRequest = true)
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            if (error is HomeServerRequestException && error.statusCode == 401) throw error
+            currentCoroutineContext().ensureActive()
+            // Authentication succeeded. Keep its token so Library can retry discovery later.
+            // Never carry another account's libraries into a new login on the same server.
+            currentConnections().firstOrNull {
+                it.userId == connection.userId && it.serverUrl == connection.serverUrl
+            }?.collections.orEmpty()
+        }
+        return connection.copy(collections = collections)
     }
 
     suspend fun currentConnection(): HomeServerConnection? {
@@ -1073,16 +1097,7 @@ class HomeServerRepository @Inject constructor(
         requests.forEach { it.cancel() }
     }
 
-    private fun normalizeServerUrl(rawUrl: String): String {
-        val trimmed = rawUrl.trim().trimEnd('/')
-        if (trimmed.isBlank()) return ""
-        val withScheme = if (trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true)) {
-            trimmed
-        } else {
-            "http://$trimmed"
-        }
-        return withScheme.toHttpUrlOrNull()?.toString()?.trimEnd('/').orEmpty()
-    }
+    private fun normalizeServerUrl(rawUrl: String): String = normalizeHomeServerUrl(rawUrl)
 
     private fun detectServerKind(productName: String, serverName: String): HomeServerKind {
         val text = "$productName $serverName".lowercase(Locale.US)
@@ -1207,20 +1222,30 @@ class HomeServerRepository @Inject constructor(
         }
     }
 
-    private fun getJson(url: String, connection: HomeServerConnection? = null): JsonObject {
+    private fun newHomeServerCall(request: Request, setupRequest: Boolean): Call =
+        okHttpClient.newCall(request).also { call ->
+            if (setupRequest) {
+                val timeout = call.timeout()
+                // Probe quickly, but allow server-side password hashing the normal 30s budget.
+                val setupTimeout = TimeUnit.SECONDS.toNanos(if (request.method == "POST") 30 else 12)
+                timeout.timeout(timeout.timeoutNanos().takeIf { it in 1..setupTimeout } ?: setupTimeout, TimeUnit.NANOSECONDS)
+            }
+        }
+
+    private fun getJson(url: String, connection: HomeServerConnection? = null, setupRequest: Boolean = false): JsonObject {
         val request = requestBuilder(url, connection).get().build()
-        okHttpClient.newCall(request).execute().use { response ->
+        newHomeServerCall(request, setupRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                error(context.getString(R.string.homeserver_request_failed, response.code))
+                throw HomeServerRequestException(response.code, context.getString(R.string.homeserver_request_failed, response.code))
             }
             return JsonParser().parse(body).asJsonObjectOrNull() ?: JsonObject()
         }
     }
 
-    private fun getText(url: String, connection: HomeServerConnection? = null): String {
+    private fun getText(url: String, connection: HomeServerConnection? = null, setupRequest: Boolean = false): String {
         val request = requestBuilder(url, connection).get().build()
-        okHttpClient.newCall(request).execute().use { response ->
+        newHomeServerCall(request, setupRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 error(context.getString(R.string.homeserver_request_failed, response.code))
@@ -1229,12 +1254,12 @@ class HomeServerRepository @Inject constructor(
         }
     }
 
-    private fun postJson(url: String, bodyJson: JsonObject, connection: HomeServerConnection? = null): JsonObject {
+    private fun postJson(url: String, bodyJson: JsonObject, connection: HomeServerConnection? = null, setupRequest: Boolean = false): JsonObject {
         val request = requestBuilder(url, connection)
             .post(gson.toJson(bodyJson).toRequestBody(jsonMediaType))
             .header("Content-Type", "application/json")
             .build()
-        okHttpClient.newCall(request).execute().use { response ->
+        newHomeServerCall(request, setupRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (request.url.encodedPath.endsWith("/Users/AuthenticateByName")) {
                 val message = when (HomeServerLoginFailure.detect(response.code, body)) {
@@ -1254,8 +1279,11 @@ class HomeServerRepository @Inject constructor(
 
     private fun fetchPublicInfo(serverUrl: String): ServerInfo {
         val info = try {
-            getJson(buildUrl(serverUrl, "/System/Info/Public"))
+            getJson(buildUrl(serverUrl, "/System/Info/Public"), setupRequest = true)
         } catch (e: Exception) {
+            // A transport failure cannot be fixed by probing two more paths on the same host.
+            if (e is CancellationException || e is IOException) throw e
+            if (e is HomeServerRequestException && (e.statusCode == 429 || e.statusCode >= 500)) throw e
             null
         }
         if (info != null && info.entrySet().isNotEmpty()) {
@@ -1268,8 +1296,9 @@ class HomeServerRepository @Inject constructor(
         }
 
         val plexIdentity = try {
-            getText(buildUrl(serverUrl, "/identity"))
+            getText(buildUrl(serverUrl, "/identity"), setupRequest = true)
         } catch (e: Exception) {
+            if (e is CancellationException || e is IOException) throw e
             null
         }
         val (plexName, plexId) = parsePlexIdentity(plexIdentity.orEmpty())
@@ -1307,7 +1336,7 @@ class HomeServerRepository @Inject constructor(
             addProperty("Pw", password)
             addProperty("Password", password)
         }
-        val response = postJson(buildUrl(serverUrl, "/Users/AuthenticateByName"), body)
+        val response = postJson(buildUrl(serverUrl, "/Users/AuthenticateByName"), body, setupRequest = true)
         val user = response.obj("User")
         return AuthResponse(
             accessToken = response.string("AccessToken"),
@@ -1612,7 +1641,7 @@ class HomeServerRepository @Inject constructor(
         }
     }
 
-    private fun fetchCollections(connection: HomeServerConnection): List<HomeServerCollection> {
+    private fun fetchCollections(connection: HomeServerConnection, setupRequest: Boolean = false): List<HomeServerCollection> {
         if (connection.serverKind == HomeServerKind.PLEX) {
             val response = getJson(buildUrl(connection.serverUrl, "/library/sections"), connection)
             return response.array("MediaContainer", "Directory")
@@ -1629,7 +1658,7 @@ class HomeServerRepository @Inject constructor(
                 }
         }
 
-        val response = getJson(buildUrl(connection.serverUrl, "/Users/${connection.userId}/Views"), connection)
+        val response = getJson(buildUrl(connection.serverUrl, "/Users/${connection.userId}/Views"), connection, setupRequest)
         return response.itemsArray()
             .mapNotNull { it.asJsonObjectOrNull() }
             .mapNotNull { item ->
