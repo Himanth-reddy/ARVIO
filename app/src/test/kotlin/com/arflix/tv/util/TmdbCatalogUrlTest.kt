@@ -63,6 +63,8 @@ class TmdbCatalogUrlTest {
         // A single movie page is a title, not a catalog.
         assertNull(CatalogUrlParser.parseTmdb("https://www.themoviedb.org/movie/27205-inception"))
         assertNull(CatalogUrlParser.parseTmdb("https://www.themoviedb.org/list/not-a-number"))
+        assertNull(CatalogUrlParser.parseTmdb("https://www.themoviedb.org/list/0"))
+        assertNull(CatalogUrlParser.parseTmdb("https://www.themoviedb.org/list/-1"))
         assertNull(CatalogUrlParser.parseTmdb("https://www.themoviedb.org/"))
         assertNull(CatalogUrlParser.parseTmdb("https://trakt.tv/lists/123"))
     }

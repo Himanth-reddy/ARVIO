@@ -155,6 +155,7 @@ class MediaRepository @Inject constructor(
         synchronized(reviewsCache) { reviewsCache.clear() }
         synchronized(seasonEpisodesCache) { seasonEpisodesCache.clear() }
         collectionRefsCache.clear()
+        tmdbCatalogRefsCache.clear()
     }
 
     private data class MediaCacheEntry(val item: MediaItem, val timestamp: Long, val complete: Boolean)
@@ -175,6 +176,7 @@ class MediaRepository @Inject constructor(
     private val addonTitleToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val homeServerLogoRefCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val collectionRefsCache = ConcurrentHashMap<String, CacheEntry<CollectionRefs>>()
+    private val tmdbCatalogRefsCache = ConcurrentHashMap<String, CacheEntry<List<Pair<MediaType, Int>>>>()
     private val _episodeRatingsUpdated = MutableSharedFlow<Pair<Int, Int>>(extraBufferCapacity = 64)
     val episodeRatingsUpdated = _episodeRatingsUpdated.asSharedFlow()
 
@@ -3081,7 +3083,33 @@ class MediaRepository @Inject constructor(
         val parsed = parseTmdbCatalogRef(sourceRef)
             ?: sourceUrl?.let { CatalogUrlParser.parseTmdb(it) }
             ?: return@coroutineScope emptyList()
+        val requestLanguage = contentLanguage
+        val cacheKey = "$requestLanguage:${parsed.kind}:${parsed.id}:${parsed.mediaType.orEmpty()}"
+        getFromCache(tmdbCatalogRefsCache, cacheKey)?.let { return@coroutineScope it }
         val limit = TMDB_CATALOG_MAX_ITEMS
+        if (parsed.kind == "person") {
+            val credits = try {
+                tmdbApi.getPersonDetails(parsed.id, apiKey, language = requestLanguage).combinedCredits
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                return@coroutineScope emptyList()
+            }
+            val refs = (credits?.cast.orEmpty() + credits?.crew.orEmpty())
+                .filter { it.id > 0 && !it.adult && it.mediaType in tmdbMediaScopes(parsed.mediaType) }
+                .sortedByDescending { it.popularity }
+                .distinctBy { it.mediaType to it.id }
+                .take(limit)
+                .map { item ->
+                    val type = if (item.mediaType == "tv") MediaType.TV else MediaType.MOVIE
+                    cacheCollectionPreview(item, type, requestLanguage)
+                    type to item.id
+                }
+            if (requestLanguage == contentLanguage) {
+                tmdbCatalogRefsCache[cacheKey] = CacheEntry(refs, System.currentTimeMillis())
+            }
+            return@coroutineScope refs
+        }
         fun discover(mediaType: String, param: String) = CollectionSourceConfig(
             kind = CollectionSourceKind.TMDB_DISCOVER,
             mediaType = mediaType,
@@ -3098,27 +3126,30 @@ class MediaRepository @Inject constructor(
             "company" -> tmdbMediaScopes(parsed.mediaType).map { discover(it, "with_companies") }
             "keyword" -> tmdbMediaScopes(parsed.mediaType).map { discover(it, "with_keywords") }
             "genre" -> tmdbMediaScopes(parsed.mediaType).map { discover(it, "with_genres") }
-            "person" -> tmdbMediaScopes(parsed.mediaType).map { mediaType ->
-                discover(mediaType, if (mediaType == "tv") "with_people" else "with_cast")
-            }
             else -> emptyList()
         }
         if (sources.isEmpty()) return@coroutineScope emptyList()
         val perSource = sources.map { source ->
             async {
-                runCatching {
-                    resolveCollectionSourceRefs(source, offset = 0, limit = limit, mediaType = null).refs
-                }.getOrDefault(emptyList())
+                val type = when (parsed.mediaType) {
+                    "movie" -> MediaType.MOVIE
+                    "tv" -> MediaType.TV
+                    else -> null
+                }
+                resolveCollectionSourceRefs(source, offset = 0, limit = limit, mediaType = type)
             }
         }.map { it.await() }
-        if (perSource.size == 1) return@coroutineScope perSource.first().take(limit)
         // Interleave movies and series so a mixed page doesn't start with 100 movies.
-        val queues = perSource.map { ArrayDeque(it) }
+        val queues = perSource.map { ArrayDeque(it.refs) }
         val refs = LinkedHashSet<Pair<MediaType, Int>>()
         while (queues.any { it.isNotEmpty() } && refs.size < limit) {
             queues.forEach { queue -> if (queue.isNotEmpty() && refs.size < limit) refs.add(queue.removeFirst()) }
         }
-        refs.toList()
+        refs.toList().also { result ->
+            if (perSource.none { it.failed } && requestLanguage == contentLanguage) {
+                tmdbCatalogRefsCache[cacheKey] = CacheEntry(result, System.currentTimeMillis())
+            }
+        }
     }
 
     private fun tmdbMediaScopes(mediaType: String?): List<String> = when (mediaType) {
@@ -3133,8 +3164,9 @@ class MediaRepository @Inject constructor(
         val parts = raw.split(':')
         if (parts.size < 3) return null
         val kind = parts[1].lowercase(Locale.US).takeIf { it in CatalogUrlParser.TMDB_KINDS } ?: return null
-        val id = parts[2].toIntOrNull() ?: return null
+        val id = parts[2].toIntOrNull()?.takeIf { it > 0 } ?: return null
         val mediaType = parts.getOrNull(3)?.takeIf { it.isNotBlank() }?.lowercase(Locale.US)
+        if (mediaType != null && mediaType !in setOf("movie", "tv")) return null
         return ParsedCatalogUrl.Tmdb(kind = kind, id = id, mediaType = mediaType, slug = null)
     }
 

@@ -102,7 +102,7 @@ data object CatalogUrlParser {
         if (kind !in TMDB_KINDS) return null
         // The id segment is either "1241" or "1241-harry-potter-collection".
         val idSegment = parts.getOrNull(offset + 1) ?: return null
-        val id = idSegment.substringBefore('-').toIntOrNull() ?: return null
+        val id = idSegment.substringBefore('-').toIntOrNull()?.takeIf { it > 0 } ?: return null
         val slug = idSegment.substringAfter('-', "").takeIf { it.isNotBlank() }
         val mediaType = parts.drop(offset + 2)
             .map { it.lowercase(Locale.US) }
