@@ -1075,6 +1075,17 @@ class CatalogRepository @Inject constructor(
                     sourceType = CatalogSourceType.MDBLIST
                 )
             }
+            host == "themoviedb.org" || host.endsWith(".themoviedb.org") -> {
+                if (CatalogUrlParser.parseTmdb(normalized) == null) {
+                    CatalogValidationResult(isValid = false, errorRes = R.string.catalog_url_tmdb_hint)
+                } else {
+                    CatalogValidationResult(
+                        isValid = true,
+                        normalizedUrl = normalized,
+                        sourceType = CatalogSourceType.TMDB
+                    )
+                }
+            }
             else -> CatalogValidationResult(
                 isValid = false,
                 errorRes = R.string.catalog_url_unsupported
@@ -1086,6 +1097,7 @@ class CatalogRepository @Inject constructor(
         return when (sourceType) {
             CatalogSourceType.TRAKT -> resolveTraktMetadata(url)
             CatalogSourceType.MDBLIST -> resolveMdblistMetadata(url)
+            CatalogSourceType.TMDB -> resolveTmdbMetadata(url)
             CatalogSourceType.PREINSTALLED -> null
             CatalogSourceType.ADDON -> null
             CatalogSourceType.HOME_SERVER -> null
@@ -1115,11 +1127,50 @@ class CatalogRepository @Inject constructor(
                 title = context.getString(R.string.catalog_mdblist_title),
                 sourceRef = "mdblist:$url"
             )
+            CatalogSourceType.TMDB -> CatalogUrlParser.parseTmdb(url)?.let { parsed ->
+                ResolvedCatalog(
+                    title = parsed.slug?.replace('-', ' ')?.toDisplayTitle()
+                        ?: context.getString(R.string.catalog_tmdb_title),
+                    sourceRef = tmdbSourceRef(parsed)
+                )
+            }
             CatalogSourceType.PREINSTALLED -> null
             CatalogSourceType.ADDON -> null
             CatalogSourceType.HOME_SERVER -> null
         }
     }
+
+    /** The TMDB page's own name, so the row isn't named after a URL slug. */
+    private suspend fun resolveTmdbMetadata(url: String): ResolvedCatalog? {
+        val parsed = CatalogUrlParser.parseTmdb(url) ?: return null
+        val apiKey = Constants.TMDB_API_KEY
+        val endpoint = when (parsed.kind) {
+            "list" -> "list/${parsed.id}"
+            "collection" -> "collection/${parsed.id}"
+            "company" -> "company/${parsed.id}"
+            "network" -> "network/${parsed.id}"
+            "person" -> "person/${parsed.id}"
+            "keyword" -> "keyword/${parsed.id}"
+            // Genre pages have no detail endpoint; the slug names them well enough.
+            else -> null
+        }
+        val name = if (endpoint == null || apiKey.isBlank()) {
+            null
+        } else {
+            val body = fetchUrl("https://api.themoviedb.org/3/$endpoint?api_key=$apiKey")
+            body?.let {
+                runCatching { org.json.JSONObject(it).optString("name").trim().takeIf { n -> n.isNotEmpty() } }
+                    .getOrNull()
+            }
+        }
+        val title = name
+            ?: parsed.slug?.replace('-', ' ')?.toDisplayTitle()
+            ?: context.getString(R.string.catalog_tmdb_title)
+        return ResolvedCatalog(title = title, sourceRef = tmdbSourceRef(parsed))
+    }
+
+    private fun tmdbSourceRef(parsed: ParsedCatalogUrl.Tmdb): String =
+        "tmdb:${parsed.kind}:${parsed.id}:${parsed.mediaType.orEmpty()}"
 
     private fun canonicalizeTraktUrl(url: String): String {
         val parsed = CatalogUrlParser.parseTrakt(url) ?: return CatalogUrlParser.normalize(url)
@@ -1451,16 +1502,20 @@ class CatalogRepository @Inject constructor(
             sourceRef?.startsWith(ADDON_SOURCE_REF_PREFIX, ignoreCase = true) == true -> CatalogSourceType.ADDON
             sourceRef?.startsWith("trakt_", ignoreCase = true) == true -> CatalogSourceType.TRAKT
             sourceRef?.startsWith("mdblist", ignoreCase = true) == true -> CatalogSourceType.MDBLIST
+            sourceRef?.startsWith("tmdb:", ignoreCase = true) == true -> CatalogSourceType.TMDB
             sourceUrl?.contains("trakt.tv", ignoreCase = true) == true -> CatalogSourceType.TRAKT
             sourceUrl?.contains("mdblist.com", ignoreCase = true) == true -> CatalogSourceType.MDBLIST
+            sourceUrl?.contains("themoviedb.org", ignoreCase = true) == true -> CatalogSourceType.TMDB
             normalized == CatalogSourceType.TRAKT.name -> CatalogSourceType.TRAKT
             normalized == CatalogSourceType.MDBLIST.name -> CatalogSourceType.MDBLIST
+            normalized == CatalogSourceType.TMDB.name -> CatalogSourceType.TMDB
             normalized == CatalogSourceType.ADDON.name -> CatalogSourceType.ADDON
             normalized == CatalogSourceType.HOME_SERVER.name -> CatalogSourceType.HOME_SERVER
             normalized == CatalogSourceType.PREINSTALLED.name -> CatalogSourceType.PREINSTALLED
             normalized.contains("HOME_SERVER") || normalized.contains("HOME SERVER") -> CatalogSourceType.HOME_SERVER
             normalized.contains("ADDON") -> CatalogSourceType.ADDON
             normalized.contains("TRAKT") -> CatalogSourceType.TRAKT
+            normalized.contains("TMDB") -> CatalogSourceType.TMDB
             normalized.contains("MDB") || normalized.contains("MDL") -> CatalogSourceType.MDBLIST
             sourceUrl.isNullOrBlank() -> CatalogSourceType.PREINSTALLED
             else -> CatalogSourceType.TRAKT

@@ -4,12 +4,38 @@ import android.content.Context
 import com.arflix.tv.data.api.TraktApi
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogSourceType
 import io.mockk.mockk
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CatalogRepositoryLegacyCompatibilityTest {
+    @Test
+    fun `TMDB restores from enum reference or URL without losing titles or order`() {
+        val repository = CatalogRepository(
+            context = mockk<Context>(relaxed = true),
+            profileManager = mockk<ProfileManager>(relaxed = true),
+            traktApi = mockk<TraktApi>(relaxed = true),
+            okHttpClient = mockk<OkHttpClient>(relaxed = true),
+            invalidationBus = mockk<CloudSyncInvalidationBus>(relaxed = true)
+        )
+        val parse = CatalogRepository::class.java.getDeclaredMethod("parseCatalogsJson", String::class.java)
+            .apply { isAccessible = true }
+        val json = """[
+            {"id":"enum","title":"Renamed","sourceType":"TMDB","sourceRef":"tmdb:list:99:"},
+            {"id":"ref","title":"Reference","sourceType":"UNKNOWN","sourceRef":"tmdb:company:3:tv"},
+            {"id":"url","title":"URL","sourceType":"TRAKT","sourceUrl":"https://www.themoviedb.org/collection/1241"}
+        ]"""
+        @Suppress("UNCHECKED_CAST")
+        val restored = parse.invoke(repository, json) as List<CatalogConfig>
+        assertEquals(3, restored.size)
+        assertEquals(listOf(CatalogSourceType.TMDB, CatalogSourceType.TMDB, CatalogSourceType.TMDB), restored.map { it.sourceType })
+        assertEquals("Renamed", restored.first().title)
+        assertEquals("tmdb:list:99:", restored.first().sourceRef)
+        assertEquals(listOf("enum", "ref", "url"), restored.map { it.id })
+    }
+
     @Test
     fun `retired sports defaults are excluded but custom sports catalogs survive`() {
         val repository = CatalogRepository(

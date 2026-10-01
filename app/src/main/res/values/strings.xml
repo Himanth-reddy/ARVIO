@@ -227,7 +227,7 @@
     <string name="show_loading_stats_desc">Display stream resolution progress</string>
     <string name="volume_boost_desc">Amplify quiet sources (via system LoudnessEnhancer)</string>
     <string name="dns_desc">Resolve API and stream requests</string>
-    <string name="add_catalog_desc">Import a Trakt or MDBList catalog URL</string>
+    <string name="add_catalog_desc">Import a Trakt, MDBList or TMDB catalog URL</string>
 
     <!-- Player / audio -->
     <string name="audio_track">Audio Track</string>
@@ -740,7 +740,7 @@
     <string name="settings_badge_full_short">Full</string>
     <string name="settings_search_lists">Search Lists</string>
     <string name="settings_paste_url">Paste URL</string>
-    <string name="settings_ph_trakt_mdblist">Trakt or MDBList URL</string>
+    <string name="settings_ph_trakt_mdblist">Trakt, MDBList or TMDB URL</string>
     <string name="settings_add_url">Add URL</string>
     <string name="settings_searching_both_sources">Searching both sources</string>
     <string name="settings_lists_found">%1$d lists found</string>
@@ -1593,7 +1593,7 @@
     <string name="catalog_url_invalid_format">Invalid URL format</string>
     <string name="catalog_url_invalid_host">Invalid host</string>
     <string name="catalog_url_trakt_hint">Use a Trakt list URL: trakt.tv/users/{user}/lists/{list}</string>
-    <string name="catalog_url_unsupported">Only Trakt and MDBList URLs are supported</string>
+    <string name="catalog_url_unsupported">Only Trakt, MDBList and TMDB URLs are supported</string>
     <string name="iptv_progress_loading_channels">Loading channels from portal...</string>
     <string name="iptv_progress_loading_full_epg">Loading full EPG (%1$d/%2$d)...</string>
     <string name="iptv_progress_loading_live">Loading live streams...</string>
@@ -1853,5 +1853,7 @@
     <string name="settings_builtin_collections_desc">Show the built-in ARVIO Services / Genres / Franchises rails. Turn off to use only your own imported collections</string>
     <string name="settings_collections_installed">Installed collections: %1$s (%2$d rails)</string>
     <string name="catalog_collections_invalid">This is not a valid collections file (Nuvio collections export JSON expected)</string>
+    <string name="catalog_tmdb_title">TMDB catalog</string>
+    <string name="catalog_url_tmdb_hint">Use a TMDB list, collection, company, network, person, keyword or genre page URL</string>
 </resources>
 

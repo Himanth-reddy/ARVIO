@@ -128,7 +128,7 @@
     <string name="show_loading_stats_desc">הצג התקדמות רזולוציית הסטרים</string>
     <string name="volume_boost_desc">הגבר מקורות שקטים</string>
     <string name="dns_desc">פנה בקשות API ו-stream</string>
-    <string name="add_catalog_desc">ייבא כתובת URL של Trakt או MDBList</string>
+    <string name="add_catalog_desc">ייבא כתובת URL של Trakt, MDBList או TMDB</string>
 
     <!-- Missing translations -->
     <string name="default_subtitle">כתוביות ברירת מחדל</string>
@@ -258,4 +258,6 @@
     <string name="telegram_search_row_idle">לחץ לחיפוש בטלגרם</string>
     <string name="telegram_search_row_searching">מחפש בטלגרם…</string>
     <string name="telegram_search_row_none">לא נמצאו מקורות בטלגרם — לחץ לחיפוש חוזר</string>
+    <string name="catalog_tmdb_title">קטלוג TMDB</string>
+    <string name="catalog_url_tmdb_hint">השתמש בכתובת של דף TMDB מסוג list, collection, company, network, person, keyword או genre</string>
 </resources>

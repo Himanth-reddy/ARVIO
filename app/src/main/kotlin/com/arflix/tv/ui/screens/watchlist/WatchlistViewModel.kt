@@ -81,6 +81,7 @@ sealed interface WatchlistSourceItem {
         override val subtitle: String? = when {
             config.sourceType == CatalogSourceType.TRAKT -> "Trakt"
             config.sourceType == CatalogSourceType.MDBLIST -> "MDBList"
+            config.sourceType == CatalogSourceType.TMDB -> "TMDB"
             config.sourceType == CatalogSourceType.ADDON -> config.addonName ?: "Addon"
             config.sourceUrl?.contains("simkl", ignoreCase = true) == true -> "Simkl"
             else -> null

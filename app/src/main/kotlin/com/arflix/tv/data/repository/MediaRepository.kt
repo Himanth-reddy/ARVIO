@@ -155,6 +155,7 @@ class MediaRepository @Inject constructor(
         synchronized(reviewsCache) { reviewsCache.clear() }
         synchronized(seasonEpisodesCache) { seasonEpisodesCache.clear() }
         collectionRefsCache.clear()
+        tmdbCatalogRefsCache.clear()
     }
 
     private data class MediaCacheEntry(val item: MediaItem, val timestamp: Long, val complete: Boolean)
@@ -175,6 +176,7 @@ class MediaRepository @Inject constructor(
     private val addonTitleToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val homeServerLogoRefCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val collectionRefsCache = ConcurrentHashMap<String, CacheEntry<CollectionRefs>>()
+    private val tmdbCatalogRefsCache = ConcurrentHashMap<String, CacheEntry<List<Pair<MediaType, Int>>>>()
     private val _episodeRatingsUpdated = MutableSharedFlow<Pair<Int, Int>>(extraBufferCapacity = 64)
     val episodeRatingsUpdated = _episodeRatingsUpdated.asSharedFlow()
 
@@ -725,6 +727,9 @@ class MediaRepository @Inject constructor(
     companion object {
         const val STREAMING_COLLECTION_ADDON_URL = "https://pastebin.com/raw/P4gfd98n"
 
+        /** Upper bound for a TMDB page used as a catalog row (discover pages are endless). */
+        private const val TMDB_CATALOG_MAX_ITEMS = 200
+
         /**
          * Build the full preinstalled catalog list for a fresh profile:
          * top-level feeds (favorites, trending, mdblist-backed rows) plus the
@@ -958,6 +963,7 @@ class MediaRepository @Inject constructor(
         val mediaRefs = when (catalog.sourceType) {
             CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
             CatalogSourceType.MDBLIST -> loadMdblistCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
+            CatalogSourceType.TMDB -> loadTmdbCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
             CatalogSourceType.ADDON -> loadAddonCatalogRefsPage(catalog, offset = 0, limit = effectiveMaxItems).refs
             CatalogSourceType.PREINSTALLED -> emptyList()
             CatalogSourceType.HOME_SERVER -> emptyList()
@@ -1015,6 +1021,7 @@ class MediaRepository @Inject constructor(
             val mediaRefs = when (catalog.sourceType) {
                 CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
                 CatalogSourceType.MDBLIST -> loadMdblistCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
+                CatalogSourceType.TMDB -> loadTmdbCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
                 CatalogSourceType.ADDON -> emptyList()
                 CatalogSourceType.PREINSTALLED -> emptyList()
                 CatalogSourceType.HOME_SERVER -> emptyList()
@@ -3061,6 +3068,106 @@ class MediaRepository @Inject constructor(
     private fun normalizeWatchRegion(region: String?): String {
         val value = region?.trim()?.uppercase(Locale.US).orEmpty()
         return value.takeIf { it.length == 2 } ?: "US"
+    }
+
+    /**
+     * Items of a TMDB page added as a catalog (list / collection / company /
+     * network / person / keyword / genre). Each kind maps onto the collection
+     * source resolvers, so paging, sorting and caching stay in one place.
+     * Pages without an explicit movie/tv scope return both, interleaved.
+     */
+    private suspend fun loadTmdbCatalogRefs(
+        sourceUrl: String?,
+        sourceRef: String?
+    ): List<Pair<MediaType, Int>> = coroutineScope {
+        val parsed = parseTmdbCatalogRef(sourceRef)
+            ?: sourceUrl?.let { CatalogUrlParser.parseTmdb(it) }
+            ?: return@coroutineScope emptyList()
+        val requestLanguage = contentLanguage
+        val cacheKey = "$requestLanguage:${parsed.kind}:${parsed.id}:${parsed.mediaType.orEmpty()}"
+        getFromCache(tmdbCatalogRefsCache, cacheKey)?.let { return@coroutineScope it }
+        val limit = TMDB_CATALOG_MAX_ITEMS
+        if (parsed.kind == "person") {
+            val credits = try {
+                tmdbApi.getPersonDetails(parsed.id, apiKey, language = requestLanguage).combinedCredits
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                return@coroutineScope emptyList()
+            }
+            val refs = (credits?.cast.orEmpty() + credits?.crew.orEmpty())
+                .filter { it.id > 0 && !it.adult && it.mediaType in tmdbMediaScopes(parsed.mediaType) }
+                .sortedByDescending { it.popularity }
+                .distinctBy { it.mediaType to it.id }
+                .take(limit)
+                .map { item ->
+                    val type = if (item.mediaType == "tv") MediaType.TV else MediaType.MOVIE
+                    cacheCollectionPreview(item, type, requestLanguage)
+                    type to item.id
+                }
+            if (requestLanguage == contentLanguage) {
+                tmdbCatalogRefsCache[cacheKey] = CacheEntry(refs, System.currentTimeMillis())
+            }
+            return@coroutineScope refs
+        }
+        fun discover(mediaType: String, param: String) = CollectionSourceConfig(
+            kind = CollectionSourceKind.TMDB_DISCOVER,
+            mediaType = mediaType,
+            sortBy = "popularity.desc",
+            discoverParams = mapOf(param to parsed.id.toString())
+        )
+        val sources: List<CollectionSourceConfig> = when (parsed.kind) {
+            "list" -> listOf(CollectionSourceConfig(kind = CollectionSourceKind.TMDB_LIST, tmdbListId = parsed.id))
+            "collection" -> listOf(
+                CollectionSourceConfig(kind = CollectionSourceKind.TMDB_COLLECTION, tmdbCollectionId = parsed.id)
+            )
+            // TMDB has no with_networks for movies, so a network page is series only.
+            "network" -> listOf(discover("tv", "with_networks"))
+            "company" -> tmdbMediaScopes(parsed.mediaType).map { discover(it, "with_companies") }
+            "keyword" -> tmdbMediaScopes(parsed.mediaType).map { discover(it, "with_keywords") }
+            "genre" -> tmdbMediaScopes(parsed.mediaType).map { discover(it, "with_genres") }
+            else -> emptyList()
+        }
+        if (sources.isEmpty()) return@coroutineScope emptyList()
+        val perSource = sources.map { source ->
+            async {
+                val type = when (parsed.mediaType) {
+                    "movie" -> MediaType.MOVIE
+                    "tv" -> MediaType.TV
+                    else -> null
+                }
+                resolveCollectionSourceRefs(source, offset = 0, limit = limit, mediaType = type)
+            }
+        }.map { it.await() }
+        // Interleave movies and series so a mixed page doesn't start with 100 movies.
+        val queues = perSource.map { ArrayDeque(it.refs) }
+        val refs = LinkedHashSet<Pair<MediaType, Int>>()
+        while (queues.any { it.isNotEmpty() } && refs.size < limit) {
+            queues.forEach { queue -> if (queue.isNotEmpty() && refs.size < limit) refs.add(queue.removeFirst()) }
+        }
+        refs.toList().also { result ->
+            if (perSource.none { it.failed } && requestLanguage == contentLanguage) {
+                tmdbCatalogRefsCache[cacheKey] = CacheEntry(result, System.currentTimeMillis())
+            }
+        }
+    }
+
+    private fun tmdbMediaScopes(mediaType: String?): List<String> = when (mediaType) {
+        "movie" -> listOf("movie")
+        "tv" -> listOf("tv")
+        else -> listOf("movie", "tv")
+    }
+
+    /** Parses the stored "tmdb:{kind}:{id}:{mediaType}" reference. */
+    private fun parseTmdbCatalogRef(sourceRef: String?): ParsedCatalogUrl.Tmdb? {
+        val raw = sourceRef?.trim()?.takeIf { it.startsWith("tmdb:", ignoreCase = true) } ?: return null
+        val parts = raw.split(':')
+        if (parts.size < 3) return null
+        val kind = parts[1].lowercase(Locale.US).takeIf { it in CatalogUrlParser.TMDB_KINDS } ?: return null
+        val id = parts[2].toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val mediaType = parts.getOrNull(3)?.takeIf { it.isNotBlank() }?.lowercase(Locale.US)
+        if (mediaType != null && mediaType !in setOf("movie", "tv")) return null
+        return ParsedCatalogUrl.Tmdb(kind = kind, id = id, mediaType = mediaType, slug = null)
     }
 
     private suspend fun loadTraktCatalogRefs(sourceUrl: String?, sourceRef: String? = null): List<Pair<MediaType, Int>> {
