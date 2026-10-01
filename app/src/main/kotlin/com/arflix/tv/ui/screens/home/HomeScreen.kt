@@ -1223,6 +1223,9 @@ fun HomeScreen(
                         .drawWithCache {
                             val width = size.width
                             val height = size.height
+                            // Darkens the side the hero text is on: the start edge, which is
+                            // the right one in right-to-left languages.
+                            val isRtl = layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl
                             val leftScrim = Brush.horizontalGradient(
                                 colorStops = arrayOf(
                                     0.0f to Color.Black.copy(alpha = 0.95f),
@@ -1234,8 +1237,8 @@ fun HomeScreen(
                                     0.65f to Color.Transparent,
                                     1.0f to Color.Transparent
                                 ),
-                                startX = 0f,
-                                endX = width
+                                startX = if (isRtl) width else 0f,
+                                endX = if (isRtl) 0f else width
                             )
                             val topScrim = Brush.verticalGradient(
                                 colorStops = arrayOf(
@@ -1261,6 +1264,7 @@ fun HomeScreen(
                             onDrawBehind {
                                 drawRect(
                                     brush = leftScrim,
+                                    topLeft = Offset(if (isRtl) width * 0.34f else 0f, 0f),
                                     size = Size(width * 0.66f, height)
                                 )
                                 drawRect(
@@ -1833,13 +1837,14 @@ private fun HeroSection(
                     Text(
                         text = displayOverview,
                         style = ArflixTypography.body.copy(
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Normal,
-                            lineHeight = 15.sp,
+                            lineHeight = 19.sp,
                             shadow = textShadow
                         ),
-                        color = Color.White.copy(alpha = 0.9f),
-                        maxLines = if (configuration.screenHeightDp < 450) 3 else 4,
+                        color = Color.White,
+                        // Larger text, one line fewer: the block keeps its old height.
+                        maxLines = if (configuration.screenHeightDp < 450) 2 else 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

@@ -1890,7 +1890,10 @@ private fun DetailsContent(
         // === PREMIUM MULTI-LAYER SCRIM SYSTEM ===
 
         // Layer 1: Strong left gradient for hero text area (Netflix-style)
-        // Uses colorStops with percentages to work on any resolution
+        // Uses colorStops with percentages to work on any resolution.
+        // It darkens the start edge, where the hero text is: the right one in right-to-left languages.
+        val isRtlScrim = androidx.compose.ui.platform.LocalLayoutDirection.current ==
+            androidx.compose.ui.unit.LayoutDirection.Rtl
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1904,7 +1907,9 @@ private fun DetailsContent(
                             0.45f to Color.Black.copy(alpha = 0.15f),
                             0.55f to Color.Transparent,
                             1.0f to Color.Transparent
-                        )
+                        ),
+                        startX = if (isRtlScrim) Float.POSITIVE_INFINITY else 0f,
+                        endX = if (isRtlScrim) 0f else Float.POSITIVE_INFINITY
                     )
                 )
         )
@@ -2229,13 +2234,14 @@ private fun DetailsContent(
                     Text(
                         text = displayOverview,
                         style = ArflixTypography.body.copy(
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Normal,
-                            lineHeight = 16.sp,
+                            lineHeight = 19.sp,
                             shadow = textShadow
                         ),
-                        color = Color.White.copy(alpha = 0.9f),
-                        maxLines = 4,
+                        color = Color.White,
+                        // Larger text, one line fewer: still fits overviewMaxHeight.
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
