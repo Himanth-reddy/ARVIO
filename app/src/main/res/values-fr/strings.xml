@@ -546,7 +546,7 @@
     <string name="settings_badge_full_short">Plein</string>
     <string name="settings_search_lists">Rechercher des listes</string>
     <string name="settings_paste_url">Coller une URL</string>
-    <string name="settings_ph_trakt_mdblist">URL Trakt ou MDBList</string>
+    <string name="settings_ph_trakt_mdblist">URL Trakt, MDBList ou TMDB</string>
     <string name="settings_add_url">Ajouter l’URL</string>
     <string name="settings_searching_both_sources">Recherche dans les deux sources</string>
     <string name="settings_lists_found">%1$d listes trouvées</string>
