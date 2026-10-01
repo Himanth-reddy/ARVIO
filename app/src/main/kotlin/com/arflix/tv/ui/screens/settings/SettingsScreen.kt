@@ -2535,7 +2535,7 @@ fun SettingsScreen(
                     )
                 ),
                 onConfirm = {
-                    if (homeServerUrl.isNotBlank() && homeServerPassword.isNotBlank()) {
+                    if (homeServerUrl.isNotBlank()) {
                         viewModel.connectHomeServer(
                             serverUrl = homeServerUrl.trim(),
                             username = homeServerUsername.trim(),

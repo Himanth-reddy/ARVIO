@@ -3913,7 +3913,6 @@ class SettingsViewModel @Inject constructor(
             )
             val result = homeServerRepository.connect(serverUrl, username, password, displayName)
             result.onSuccess { connection ->
-                syncHomeServerCatalogsFromConnections()
                 val connections = homeServerRepository.currentConnections()
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
@@ -3924,6 +3923,13 @@ class SettingsViewModel @Inject constructor(
                     toastType = ToastType.SUCCESS
                 )
                 syncLocalStateToCloud(silent = true)
+                // Catalog enumeration is not part of signing in and can involve other servers.
+                try {
+                    syncHomeServerCatalogsFromConnections()
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    android.util.Log.w("SettingsViewModel", "Home server connected; catalog discovery deferred")
+                }
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
