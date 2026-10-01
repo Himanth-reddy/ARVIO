@@ -14,6 +14,7 @@ import com.arflix.tv.data.model.MediaType
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.spyk
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -89,11 +90,11 @@ class TmdbCatalogLoadingTest {
         id = "tmdb-test", title = "TMDB", sourceType = CatalogSourceType.TMDB, sourceRef = "tmdb:$kind:1:$type"
     )
 
-    private fun repository(api: TmdbApi) = MediaRepository(
+    private fun repository(api: TmdbApi) = spyk(MediaRepository(
         mockk(relaxed = true), api, mockk(relaxed = true), mockk(relaxed = true),
         mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)
-    ).also { repository ->
-        (1..4).forEach { repository.cacheItem(MediaItem(id = it, title = "Movie $it")) }
-        repository.cacheItem(MediaItem(id = 501, title = "Series", mediaType = MediaType.TV))
+    )).also { repository ->
+        coEvery { repository.getMovieDetails(any()) } answers { MediaItem(firstArg(), "Movie ${firstArg<Int>()}") }
+        coEvery { repository.getTvDetails(any()) } answers { MediaItem(firstArg(), "Series ${firstArg<Int>()}", mediaType = MediaType.TV) }
     }
 }
