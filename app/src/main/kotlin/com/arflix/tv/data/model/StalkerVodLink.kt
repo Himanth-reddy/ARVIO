@@ -68,10 +68,18 @@ internal object StalkerVodLink {
         // the single separator between portal id and command.
         val separator = body.indexOf('/')
         if (separator <= 0 || separator == body.length - 1) return null
-        val portalId = runCatching { URLDecoder.decode(body.substring(0, separator), "UTF-8") }
-            .getOrNull()?.trim().orEmpty()
-        val command = runCatching { URLDecoder.decode(body.substring(separator + 1), "UTF-8") }
-            .getOrNull()?.trim().orEmpty()
+        val portalId = try {
+            URLDecoder.decode(body.substring(0, separator), "UTF-8")?.trim().orEmpty()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            ""
+        }
+        val command = try {
+            URLDecoder.decode(body.substring(separator + 1), "UTF-8")?.trim().orEmpty()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            ""
+        }
         if (portalId.isBlank() || command.isBlank()) return null
         return Target(portalId, command, series)
     }
