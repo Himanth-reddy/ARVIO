@@ -7,6 +7,9 @@ enum class CatalogSourceType {
     PREINSTALLED,
     TRAKT,
     MDBLIST,
+    // A TMDB page added by its URL: list, collection, company, network,
+    // person, keyword or genre.
+    TMDB,
     ADDON,
     HOME_SERVER
 }
@@ -134,6 +137,7 @@ val CatalogConfig.effectivePackId: String
         CatalogSourceType.ADDON -> "addon"
         CatalogSourceType.TRAKT -> "trakt"
         CatalogSourceType.MDBLIST -> "mdblist"
+        CatalogSourceType.TMDB -> "tmdb"
         CatalogSourceType.HOME_SERVER -> "home_server"
     }
 
@@ -143,6 +147,7 @@ val CatalogConfig.effectivePackName: String
         CatalogSourceType.ADDON -> "Addon Catalogs"
         CatalogSourceType.TRAKT -> "Trakt Catalogs"
         CatalogSourceType.MDBLIST -> "MDBlist Catalogs"
+        CatalogSourceType.TMDB -> "TMDB Catalogs"
         CatalogSourceType.HOME_SERVER -> "Home Server Catalogs"
     }
 
@@ -152,6 +157,7 @@ val CatalogConfig.isBulkDeletablePack: Boolean
             packId != "addon" &&
             packId != "trakt" &&
             packId != "mdblist" &&
+            packId != "tmdb" &&
             packId != "home_server" &&
             packId != "individual"
 
