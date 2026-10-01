@@ -75,6 +75,23 @@ data object CatalogUrlParser {
     /** Page kinds we can turn into a catalog row. */
     val TMDB_KINDS = setOf("list", "collection", "company", "network", "person", "keyword", "genre")
 
+    /**
+     * True for a Stremio addon manifest link. Those carry catalogs too, so users
+     * reasonably paste them into "Add catalog"; the caller routes them to the
+     * addon installer instead of rejecting them.
+     */
+    fun isStremioManifestUrl(raw: String): Boolean {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("stremio://", ignoreCase = true)) return true
+        val path = try {
+            URI(normalize(trimmed)).path.orEmpty()
+        } catch (_: Exception) {
+            return false
+        }
+        return path.endsWith("/manifest.json", ignoreCase = true) ||
+            path.equals("/manifest.json", ignoreCase = true)
+    }
+
     fun parseTmdb(url: String): ParsedCatalogUrl.Tmdb? {
         val uri = try { URI(normalize(url)) } catch (_: Exception) { null } ?: return null
         if (!isTmdbHost(uri.host ?: return null)) return null
