@@ -72,13 +72,23 @@ fun parseMdbListDeviceError(throwable: Throwable): MdbListDeviceError {
     val code = httpError?.code() ?: -1
 
     // Single-read the response body string once to prevent stream consumption / closed errors
-    val errorBodyString = runCatching { httpError?.response()?.errorBody()?.string() }.getOrNull()
+    val errorBodyString = try {
+        httpError?.response()?.errorBody()?.string()
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        null
+    }
     val errorCode = if (!errorBodyString.isNullOrBlank()) {
-        runCatching {
-            JsonParser.parseString(errorBodyString).asJsonObject.get("error")?.asString
-        }.getOrNull() ?: runCatching {
-            org.json.JSONObject(errorBodyString).optString("error").takeIf { it.isNotBlank() }
-        }.getOrNull()
+        try {
+            com.google.gson.JsonParser.parseString(errorBodyString).asJsonObject.get("error")?.asString
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            try {
+                org.json.JSONObject(errorBodyString).optString("error").takeIf { it.isNotBlank() }
+            } catch (je: org.json.JSONException) {
+                null
+            }
+        }
     } else null
 
     return when {

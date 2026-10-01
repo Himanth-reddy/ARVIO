@@ -935,7 +935,9 @@ open class StalkerApi(
             val numbers = LinkedHashSet<Int>()
             for (element in array) {
                 val primitive = element as? JsonPrimitive ?: continue
-                val value = runCatching { primitive.asString }.getOrNull()?.trim()
+                val value = if (primitive.isString) primitive.asString.trim()
+                else if (primitive.isNumber) primitive.asNumber.toString()
+                else null
                 val number = value?.toIntOrNull() ?: continue
                 if (number > 0) numbers += number
             }

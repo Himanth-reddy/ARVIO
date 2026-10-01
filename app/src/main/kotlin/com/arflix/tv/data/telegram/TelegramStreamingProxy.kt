@@ -250,7 +250,12 @@ class TelegramStreamingProxy @Inject constructor(
         limit: Int,
         totalSize: Long
     ): ByteArray? {
-        val freeSpace = runCatching { context.filesDir.usableSpace }.getOrDefault(Long.MAX_VALUE)
+        val freeSpace = try {
+            context.filesDir.usableSpace
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Long.MAX_VALUE
+        }
         val prefetchSize = TelegramBufferPolicy.prefetchBytes(totalSize, freeSpace)
 
         // Ask TDLib to prefetch a bounded window, but only wait for the current chunk.
