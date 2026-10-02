@@ -27,7 +27,7 @@ const settings: AppSettings = {
   aiAutoSelect: false, aiApiKey: "", defaultPlayer: "browser", cardLayoutMode: "landscape", deviceModeOverride: "auto",
   oledBlack: true, clockFormat: "24h", showBudget: false, smoothScrolling: false, spoilerBlur: false, accentColor: "arctic",
   dnsProvider: "system", showLoadingStats: false, customUserAgent: "", torrServerBaseUrl: "", skipProfileSelection: false,
-  cardDensity: "comfortable", catalogs: [], hiddenCatalogIds: [], hiddenHomeServerCatalogIds: [], disabledAddonIds: [],
+  cardDensity: "comfortable", catalogs: [], hiddenCatalogIds: [], hiddenAddonCatalogIds: [], hiddenHomeServerCatalogIds: [], disabledAddonIds: [],
   homeServers: [], iptvPlaylists: [], iptvStalkerUrl: "", iptvStalkerMac: "", favoriteChannelIds: [], favoriteGroupIds: [],
   hiddenGroupIds: [], groupOrder: [], customTmdbApiKey: "", customTvdbApiKey: "", customTvdbUserPin: "",
   metadataMovieProviders: ["tmdb"], metadataTvProviders: ["tmdb"], metadataAnimeProviders: ["tmdb"], iptvSortOrder: "provider"
