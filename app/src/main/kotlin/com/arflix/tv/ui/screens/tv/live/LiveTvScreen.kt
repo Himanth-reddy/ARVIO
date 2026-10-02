@@ -117,6 +117,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.arflix.tv.R
 import com.arflix.tv.ui.theme.Pink
@@ -3039,7 +3040,7 @@ fun LiveTvScreen(
             .setDefaultRequestProperties(baseRequestHeaders)
     }
     val mediaSourceFactory = remember(iptvDataSourceFactory) {
-        DefaultMediaSourceFactory(context)
+        DefaultMediaSourceFactory(context, iptvExtractorsFactory())
             .setDataSourceFactory(iptvDataSourceFactory)
             .setLoadErrorHandlingPolicy(IptvLoadErrorHandlingPolicy())
     }
@@ -3266,8 +3267,17 @@ fun LiveTvScreen(
             val upstream = sourceHttpFactory.createDataSource()
             if (isHls) upstream else IptvHlsDetectingDataSource(upstream, stream)
         }
-        val source = DefaultMediaSourceFactory(context).setDataSourceFactory(sourceDataFactory)
-            .setLoadErrorHandlingPolicy(IptvLoadErrorHandlingPolicy()).createMediaSource(mediaItem)
+        // HLS gets its own factory: DefaultMediaSourceFactory cannot set the HLS extractors,
+        // and channels without IDR frames need iptvHlsExtractorFactory() to show video.
+        val source = if (isHls) {
+            HlsMediaSource.Factory(sourceDataFactory)
+                .setExtractorFactory(iptvHlsExtractorFactory())
+                .setLoadErrorHandlingPolicy(IptvLoadErrorHandlingPolicy())
+                .createMediaSource(mediaItem)
+        } else {
+            DefaultMediaSourceFactory(context, iptvExtractorsFactory()).setDataSourceFactory(sourceDataFactory)
+                .setLoadErrorHandlingPolicy(IptvLoadErrorHandlingPolicy()).createMediaSource(mediaItem)
+        }
         if (initialPositionMs > 0L) exoPlayer.setMediaSource(source, initialPositionMs)
         else exoPlayer.setMediaSource(source)
         exoPlayer.prepare()
