@@ -30,6 +30,7 @@ import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./stor
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
 import { verifyProfilePin } from "./profilePin";
 import { hydratedProfileId } from "./profiles";
+import { partnerLoginRedirect } from "./partnerLinks";
 import { flushSettingsOutbox, hasPendingSettings, queueSettings, settingsWithPendingEdits } from "./settingsOutbox";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
@@ -469,8 +470,8 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
 // tracker progress (which may use a different episode ordering).
 function nextLocalEpisode(item: MediaItem): MediaItem | null {
   const { seasonNumber, episodeNumber } = item;
-  if (!seasonNumber || !episodeNumber) return item;
-  const seasons = (item.seasons ?? []).filter((season) => season.seasonNumber > 0);
+  if (seasonNumber == null || episodeNumber == null) return item;
+  const seasons = (item.seasons ?? []).filter((season) => season.seasonNumber >= 0);
   const current = seasons.find((season) => season.seasonNumber === seasonNumber);
   if (!current?.episodeCount || episodeNumber <= current.episodeCount) return item;
   const next = seasons.filter((season) => season.seasonNumber > seasonNumber && (season.episodeCount ?? 0) > 0)
@@ -484,6 +485,7 @@ function sameSettings(a: AppSettings, b: AppSettings) {
 
 export interface AppStore {
   view: AppView;
+  partnerLinkReady: boolean;
   cloudLoginRequired: boolean;
   profiles: Profile[];
   activeProfile: Profile | null;
@@ -1580,7 +1582,7 @@ export function AppProvider({
       try {
         const { findMovieVodSources, findEpisodeVodSource } = await import("./xtreamVod");
         const ua = settingsRef.current.customUserAgent;
-        const sources = season && episode
+        const sources = season != null && episode != null
           ? await findEpisodeVodSource(playlists, item, season, episode, ua)
           : await findMovieVodSources(playlists, item, ua);
         if (!sources.length || sourceGeneration.current !== generation) return [];
@@ -1613,7 +1615,7 @@ export function AppProvider({
           imdbId: item.imdbId ?? undefined,
           tmdbId: item.tmdbId ?? (item.id > 0 && !item.isHomeServer ? item.id : undefined)
         };
-        const sources = season && episode
+        const sources = season != null && episode != null
           ? await resolveHomeServerEpisodeSources(servers, target, season, episode)
           : await resolveHomeServerMovieSources(servers, target);
         if (!sources.length || sourceGeneration.current !== generation) return [];
@@ -1705,7 +1707,7 @@ export function AppProvider({
       const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, publish).catch(() => []);
       publish(found);
       await supplemental;
-    } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
+    } else if (withResumeEpisode.seasonNumber != null && withResumeEpisode.episodeNumber != null) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
       const supplemental = Promise.allSettled([appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber), appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber), appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber)]);
@@ -1874,7 +1876,7 @@ export function AppProvider({
     const isCurrent = () => sourceGeneration.current === generation && playbackGeneration.current === playback;
     try {
       const next = nextLocalEpisode({ ...selected, timeRemainingLabel: "Up next", seasonNumber: selectedEpisode.season, episodeNumber: selectedEpisode.episode + 1 });
-      if (!next?.seasonNumber || !next.episodeNumber) { setToast("You have reached the last available episode."); return false; }
+      if (next?.seasonNumber == null || next.episodeNumber == null) { setToast("You have reached the last available episode."); return false; }
       const episodes = await getSeasonEpisodes(selected.tmdbId ?? selected.id, next.seasonNumber);
       if (!isCurrent()) return false;
       const episode = episodes.find((item) => item.episodeNumber === next.episodeNumber);
@@ -2482,7 +2484,7 @@ export function AppProvider({
   const goToLogin = useCallback(() => {
     if (config.selfHosted) { setView("profiles"); return; }
     if (typeof window !== "undefined") {
-      const redirectUri = window.location.origin + "/";
+      const redirectUri = partnerLoginRedirect(window.location.origin, window.location.search);
       const portalUrl = getAuthPortalUrl();
       window.location.href = `${portalUrl}?redirect_uri=${encodeURIComponent(redirectUri)}`;
     }
@@ -2612,6 +2614,7 @@ export function AppProvider({
 
   const value = useMemo<AppStore>(() => ({
     view,
+    partnerLinkReady: view === "app" && Boolean(activeProfile) && (!auth || cloudProfilesHydrated),
     cloudLoginRequired,
     profiles,
     activeProfile,
@@ -2701,7 +2704,7 @@ export function AppProvider({
     openContextMenu,
     closeContextMenu
   }), [
-    view, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
+    view, cloudProfilesHydrated, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, addonsReady, iptvSnapshot, query, results, searchState, settingsSyncState, settings, auth, traktConnected, mdblistConnected, simklConnected, trackingPreferences, deviceCode, simklDeviceCode, busy, toast,
