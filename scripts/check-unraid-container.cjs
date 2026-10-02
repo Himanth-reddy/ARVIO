@@ -56,7 +56,20 @@ async function configuration(url) {
 
 (async () => {
   try {
-    const baked = JSON.parse(docker(['image', 'inspect', '--format', '{{json .Config.Env}}', image]));
+    // Some containerd-backed engines return an empty image-inspect Config for
+    // a pulled single-platform Docker manifest, even though container creation
+    // resolves its full configuration. Inspect an unstarted, network-isolated
+    // probe instead; no environment or command overrides can mask image defaults.
+    const probeName = `${prefix}-metadata`;
+    docker(['create', '--name', probeName, '--network', 'none', '--cap-drop=ALL',
+      '--security-opt=no-new-privileges', image]);
+    created.add(probeName);
+    const bakedConfig = JSON.parse(docker(['container', 'inspect', '--format', '{{json .Config}}', probeName]));
+    const baked = bakedConfig.Env;
+    assert.ok(Array.isArray(baked), 'The image must supply runtime environment defaults.');
+    assert.deepEqual(bakedConfig.Cmd, ['node', 'server.js'], 'The image must supply its startup command.');
+    assert.equal(bakedConfig.WorkingDir, '/app');
+    assert.equal(bakedConfig.User, 'node', 'The image must declare its non-root user.');
     assert.ok(baked.includes('NEXT_PUBLIC_SELF_HOSTED=true'));
     assert.ok(baked.includes('NEXT_PUBLIC_TELEGRAM_ENABLED=false'));
     assert.ok(!baked.some(entry => /^(TMDB_API_KEY|TRAKT_CLIENT_SECRET|SIMKL_CLIENT_SECRET|APP_ANON_KEY|SUPABASE_ANON_KEY)=.+/.test(entry)), 'Image must not bake account keys or OAuth secrets.');
@@ -88,6 +101,10 @@ async function configuration(url) {
     assert.match(await sourceIndex.text(), /Telegram is not included in this Unraid preview/);
     const sourceManifest = await fetch(`${configured.url}/distribution-sources/arvio-source.json`).then(response => response.json());
     assert.match(sourceManifest.sourceCommit, /^[a-f0-9]{40}$/);
+    const declaredRevision = bakedConfig.Labels?.['org.opencontainers.image.revision'];
+    if (declaredRevision) {
+      assert.equal(sourceManifest.sourceCommit, declaredRevision, 'Served source must match the image revision.');
+    }
     const archive = Buffer.from(await fetch(`${configured.url}/distribution-sources/arvio-source.tar.gz`).then(response => response.arrayBuffer()));
     assert.equal(require('node:crypto').createHash('sha256').update(archive).digest('hex'), sourceManifest.archiveSha256, 'Served exact-source archive hash');
     const runtimeSources = await fetch(`${configured.url}/distribution-sources/runtime/runtime-downloads.json`).then(response => response.json());

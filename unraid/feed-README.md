@@ -5,9 +5,21 @@ Submit **https://github.com/ProdigyV21/ARVIO-Unraid** to Community Applications,
 not the Android application source repository. Keeping this feed template-only
 prevents Android resources and manifests from being mistaken for app templates.
 
-**Current status: the container image is not published yet. Do not install or
-submit this feed until the release gates below pass.** This repository prepares
-the metadata; it is not an install-ready listing or Community Applications approval.
+**Current status: a Telegram-free, Docker-tested preview is published and was
+successfully pulled without a GitHub login on 2 October 2026.** Real Unraid
+installation testing is still pending. This is not yet an approved Community
+Applications listing.
+
+- Release source: [`fc839f7511a1cf009fc06c05198816ee8e421649`](https://github.com/ProdigyV21/ARVIO/tree/fc839f7511a1cf009fc06c05198816ee8e421649).
+- Immutable image tag: `ghcr.io/prodigyv21/arvio-web:sha-fc839f7511a1`.
+- Verified image digest: `sha256:16deae9da977f07102fab864cf218d8eac286d0467d7f38e70e79c6d4702e3e1`.
+- [Successful release checks](https://github.com/ProdigyV21/ARVIO/actions/runs/37051815727):
+  803 web regressions, type checking, source/notice audits, actual browser
+  AC-3/E-AC-3/DTS/AAC round trips, and container/UI/restart checks. Provider
+  account flows used dummy credentials/offline fixtures, not live user accounts.
+
+The `unraid-preview` tag can move to a future tested preview. Use the immutable
+tag or digest when you need this exact release.
 
 | Application | Image | Template |
 | --- | --- | --- |
@@ -21,9 +33,10 @@ by Community Applications.
 
 ## Before installation or submission
 
-The preview must pass its source/redistribution review and be public and
-anonymously pullable before it can be submitted as installable. Confirm the
-current status in the [application's Unraid preview guide](https://github.com/ProdigyV21/ARVIO/blob/codex/unraid-distribution/unraid/README.md).
+The release above passed its automated source/notice closure checks and is
+publicly pullable. These checks are not proof of real Unraid compatibility or
+a blanket legal/patent clearance. Review the limitations in the
+[application's Unraid preview guide](https://github.com/ProdigyV21/ARVIO/blob/fc839f7511a1cf009fc06c05198816ee8e421649/unraid/README.md).
 Do not substitute another publisher's image or treat a passing metadata scan
 as Community Applications approval.
 
