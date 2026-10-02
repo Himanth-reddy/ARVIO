@@ -23,7 +23,7 @@ by Community Applications.
 
 The preview must pass its source/redistribution review and be public and
 anonymously pullable before it can be submitted as installable. Confirm the
-current status in the [application's Unraid guide](https://github.com/ProdigyV21/ARVIO/blob/main/unraid/README.md).
+current status in the [application's Unraid preview guide](https://github.com/ProdigyV21/ARVIO/blob/codex/unraid-distribution/unraid/README.md).
 Do not substitute another publisher's image or treat a passing metadata scan
 as Community Applications approval.
 
@@ -43,7 +43,7 @@ in Unraid's Docker template editor.
    needed: profiles/settings/history stay in each browser's site data.
 2. Supply your own 32-character **TMDB API v3 key**, not a read-access bearer token.
 3. Leave **Allow private home-server proxy** false unless the installation is
-   private and protected. Read the full [security/setup guide](https://github.com/ProdigyV21/ARVIO/blob/main/unraid/README.md)
+   private and protected. Read the full [security/setup preview guide](https://github.com/ProdigyV21/ARVIO/blob/codex/unraid-distribution/unraid/README.md)
    before enabling access to LAN Plex, Jellyfin or Emby addresses.
 4. Open WebUI, create/select a local profile and configure sources in Settings.
    A trusted HTTPS origin is needed for full browser capabilities.
