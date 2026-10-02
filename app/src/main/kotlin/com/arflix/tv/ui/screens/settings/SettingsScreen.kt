@@ -2546,7 +2546,7 @@ fun SettingsScreen(
                     )
                 ),
                 onConfirm = {
-                    if (homeServerUrl.isNotBlank() && homeServerPassword.isNotBlank()) {
+                    if (homeServerUrl.isNotBlank()) {
                         viewModel.connectHomeServer(
                             serverUrl = homeServerUrl.trim(),
                             username = homeServerUsername.trim(),
@@ -9689,6 +9689,7 @@ private fun sourceLabel(sourceType: CatalogSourceType): String {
     return when (sourceType) {
         CatalogSourceType.TRAKT -> "Trakt"
         CatalogSourceType.MDBLIST -> "MDBList"
+        CatalogSourceType.TMDB -> "TMDB"
         CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_source_builtin)
         CatalogSourceType.ADDON -> stringResource(R.string.settings_source_addon)
         CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_home_server)

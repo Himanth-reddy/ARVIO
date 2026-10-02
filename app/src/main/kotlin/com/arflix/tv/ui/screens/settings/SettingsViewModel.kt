@@ -30,6 +30,7 @@ import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
 import com.arflix.tv.data.model.CatalogPackManifest
+import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.QualityFilterConfig
 import com.arflix.tv.data.model.StalkerCatalogKind
@@ -2929,6 +2930,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun addCatalog(url: String) {
+        // An addon manifest also brings catalogs, so it is a natural thing to paste
+        // here. Install it as an addon rather than rejecting it as a bad catalog URL.
+        if (CatalogUrlParser.isStremioManifestUrl(url)) {
+            requestAddonInstall(url, fromLink = false)
+            return
+        }
         viewModelScope.launch {
             val result = catalogRepository.addCustomCatalog(url)
             result.onSuccess { catalog ->
@@ -4000,7 +4007,6 @@ class SettingsViewModel @Inject constructor(
             )
             val result = homeServerRepository.connect(serverUrl, username, password, displayName)
             result.onSuccess { connection ->
-                syncHomeServerCatalogsFromConnections()
                 val connections = homeServerRepository.currentConnections()
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
@@ -4011,6 +4017,13 @@ class SettingsViewModel @Inject constructor(
                     toastType = ToastType.SUCCESS
                 )
                 syncLocalStateToCloud(silent = true)
+                // Catalog enumeration is not part of signing in and can involve other servers.
+                try {
+                    syncHomeServerCatalogsFromConnections()
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    android.util.Log.w("SettingsViewModel", "Home server connected; catalog discovery deferred")
+                }
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,

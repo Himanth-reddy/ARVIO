@@ -226,6 +226,15 @@ export async function loadCatalog(
     };
   }
 
+  if (catalog.sourceType === "tmdb" && !catalog.endpoint) {
+    return {
+      id: catalog.id, title: catalog.name,
+      items: await loadTmdbPageCatalog(catalog, language),
+      sourceLabel: "TMDB", sourceUrl: catalog.sourceUrl,
+      layout: catalog.layout ?? "landscape"
+    };
+  }
+
   if (catalog.sourceType === "tmdb" && catalog.endpoint) {
     const results = await loadTmdbCatalogPages(catalog, language);
     return {
@@ -321,6 +330,61 @@ export async function loadCatalog(
 function isCollectionCatalog(catalog: CatalogConfig) {
   const kind = String(catalog.kind ?? "").toUpperCase();
   return kind === "COLLECTION" || kind === "COLLECTION_RAIL" || Boolean(catalog.collectionSources?.length);
+}
+
+// Android stores TMDB page catalogs as a source reference, without a web endpoint.
+async function loadTmdbPageCatalog(catalog: CatalogConfig, language: string): Promise<MediaItem[]> {
+  const kinds = new Set(["list", "collection", "company", "network", "person", "keyword", "genre"]);
+  let parts = /^tmdb:([a-z]+):(\d+):(movie|tv)?$/i.exec(catalog.sourceRef ?? "");
+  if (!parts && catalog.sourceUrl) {
+    try {
+      const url = new URL(/^https?:\/\//i.test(catalog.sourceUrl) ? catalog.sourceUrl : `https://${catalog.sourceUrl}`);
+      if (url.hostname === "themoviedb.org" || url.hostname.endsWith(".themoviedb.org")) {
+        parts = /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?([a-z]+)\/(\d+)(?:-[^/]+)?(?:\/(movie|tv))?\/?$/i.exec(url.pathname);
+      }
+    } catch { /* Invalid restored URLs have no items. */ }
+  }
+  if (!parts || !kinds.has(parts[1].toLowerCase()) || Number(parts[2]) <= 0) return [];
+  const kind = parts[1].toLowerCase(), id = Number(parts[2]);
+  const scope = parts[3]?.toLowerCase();
+  const cap = 200;
+  const filterScope = (items: MediaItem[]) => dedupeItems(items).filter(item => !scope || item.mediaType === scope).slice(0, cap);
+  if (kind === "list") {
+    const items: MediaItem[] = [];
+    let page = 1, totalPages = 1;
+    while (items.length < cap && page <= totalPages) {
+      const response = await tmdb<{ items?: TmdbItem[]; total_pages?: number }>(`list/${id}`, { language, page });
+      const batch = (response.items ?? []).map(item => mapTmdbItem(item, item.media_type === "tv" ? "tv" : "movie"));
+      items.push(...batch.filter(item => !scope || item.mediaType === scope));
+      totalPages = response.total_pages ?? 1;
+      if (!batch.length) break;
+      page++;
+    }
+    return filterScope(items);
+  }
+  if (kind === "collection") {
+    const response = await tmdb<{ parts?: TmdbItem[] }>(`collection/${id}`, { language });
+    return filterScope((response.parts ?? []).sort((a, b) => (a.release_date ?? "").localeCompare(b.release_date ?? ""))
+      .map(item => mapTmdbItem(item, "movie")));
+  }
+  if (kind === "person") {
+    const response = await tmdb<TmdbCombinedCredits>(`person/${id}/combined_credits`, { language });
+    return filterScope([...(response.cast ?? []), ...(response.crew ?? [])]
+      .filter(item => !item.adult && (item.media_type === "movie" || item.media_type === "tv"))
+      .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
+      .map(item => mapTmdbItem(item, item.media_type === "tv" ? "tv" : "movie")));
+  }
+  const param = ({ company: "with_companies", network: "with_networks", keyword: "with_keywords", genre: "with_genres" } as Record<string, string>)[kind];
+  if (!param) return [];
+  const scopes: MediaType[] = kind === "network" ? ["tv"] : scope ? [scope as MediaType] : ["movie", "tv"];
+  const batches = await Promise.all(scopes.map(mediaType => loadCollectionSource({
+    kind: "TMDB_DISCOVER", mediaType, sortBy: "popularity.desc", discoverParams: { [param]: String(id) }
+  }, language, [], [], { page: 1, pageLimit: 10 })));
+  const items: MediaItem[] = [];
+  for (let i = 0; i < Math.max(...batches.map(batch => batch.length)) && items.length < cap; i++) {
+    for (const batch of batches) if (batch[i] && items.length < cap) items.push(batch[i]);
+  }
+  return filterScope(items);
 }
 
 async function loadCollectionCatalog(

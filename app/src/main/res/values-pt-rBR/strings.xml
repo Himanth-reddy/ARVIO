@@ -615,7 +615,7 @@
     <string name="settings_badge_full_short">Cheio</string>
     <string name="settings_search_lists">Buscar listas</string>
     <string name="settings_paste_url">Colar URL</string>
-    <string name="settings_ph_trakt_mdblist">URL do Trakt ou MDBList</string>
+    <string name="settings_ph_trakt_mdblist">URL do Trakt, MDBList ou TMDB</string>
     <string name="settings_add_url">Adicionar URL</string>
     <string name="settings_searching_both_sources">Buscando em ambas as fontes</string>
     <string name="settings_lists_found">%1$d listas encontradas</string>

@@ -128,7 +128,7 @@
     <string name="show_loading_stats_desc">הצג התקדמות רזולוציית הסטרים</string>
     <string name="volume_boost_desc">הגבר מקורות שקטים</string>
     <string name="dns_desc">פנה בקשות API ו-stream</string>
-    <string name="add_catalog_desc">ייבא כתובת URL של Trakt או MDBList</string>
+    <string name="add_catalog_desc">ייבא כתובת URL של Trakt, MDBList או TMDB</string>
 
     <!-- Missing translations -->
     <string name="default_subtitle">כתוביות ברירת מחדל</string>
@@ -293,4 +293,6 @@
     <string name="settings_addon_added_with_catalogs">%1$s נוסף (יובאו %2$d קטלוגים)</string>
     <string name="settings_addon_added_no_catalogs">%1$s נוסף (ללא קטלוגים)</string>
     <string name="addon_failed_add">הוספת התוסף נכשלה</string>
+    <string name="catalog_tmdb_title">קטלוג TMDB</string>
+    <string name="catalog_url_tmdb_hint">השתמש בכתובת של דף TMDB מסוג list, collection, company, network, person, keyword או genre</string>
 </resources>
