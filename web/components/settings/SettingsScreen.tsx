@@ -1866,7 +1866,7 @@ function TelegramSection() {
     );
   }
 
-  if (!mod.isTelegramConfigured) {
+  if (!mod.isTelegramConfigured()) {
     return (
       <Panel title={translateUi("Telegram")}>
         <p className="empty">

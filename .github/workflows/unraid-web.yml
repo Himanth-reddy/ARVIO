@@ -1,0 +1,108 @@
+name: ARVIO Web container preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', '.github/workflows/unraid-web.yml']
+  push:
+    branches: [main, codex/unraid-distribution]
+    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', '.github/workflows/unraid-web.yml']
+  workflow_dispatch:
+    inputs:
+      publish_preview:
+        description: Publish the tested preview image to GHCR (never latest)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unraid-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Validate Unraid metadata
+        shell: pwsh
+        run: |
+          ./scripts/check-unraid.ps1
+          ./scripts/test-unraid-contract.ps1
+      - name: Install test dependencies
+        working-directory: web
+        run: npm ci --ignore-scripts
+      - name: Run web regressions and type checking
+        working-directory: web
+        run: |
+          npm test
+          npx tsc --noEmit
+      - uses: docker/setup-buildx-action@v3
+      - name: Build keyless self-hosted image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: web
+          platforms: linux/amd64
+          load: true
+          tags: arvio-web:ci
+          labels: |
+            org.opencontainers.image.source=https://github.com/ProdigyV21/ARVIO
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke-test the exact container
+        run: node scripts/check-unraid-container.cjs arvio-web:ci
+      - name: Save the tested image for the isolated publishing job
+        if: github.repository == 'ProdigyV21/ARVIO' && github.event_name == 'workflow_dispatch' && inputs.publish_preview
+        run: docker save --output arvio-web-tested.tar arvio-web:ci
+      - name: Transfer only the tested image
+        if: github.repository == 'ProdigyV21/ARVIO' && github.event_name == 'workflow_dispatch' && inputs.publish_preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: arvio-web-tested
+          path: arvio-web-tested.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    if: github.repository == 'ProdigyV21/ARVIO' && github.event_name == 'workflow_dispatch' && inputs.publish_preview
+    needs: container
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: arvio-web-tested
+      - name: Load the tested image (do not rebuild)
+        run: docker load --input arvio-web-tested.tar
+      - name: Log in for preview publication
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish only the tested preview and commit tag
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          image=ghcr.io/prodigyv21/arvio-web
+          docker tag arvio-web:ci "$image:unraid-preview"
+          docker tag arvio-web:ci "$image:sha-${SOURCE_SHA:0:12}"
+          docker push "$image:sha-${SOURCE_SHA:0:12}"
+          docker push "$image:unraid-preview"

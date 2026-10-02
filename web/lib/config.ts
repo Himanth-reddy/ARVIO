@@ -1,3 +1,5 @@
+import { browserSelfhostRuntimeConfig } from "./selfhostRuntimeConfig";
+
 function envValue(value: string | undefined, fallback = "") {
   return value && !value.startsWith("$") && !value.includes("****") ? value : fallback;
 }
@@ -11,11 +13,13 @@ export const config = {
   supabaseAnonKey: selfHosted ? "" : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
   appAnonKey: selfHosted ? "" : envValue(process.env.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""),
   netlifyBackendUrl: selfHosted ? "" : process.env.NEXT_PUBLIC_NETLIFY_BACKEND_URL ?? process.env.NETLIFY_BACKEND_URL ?? "https://auth.arvio.tv/.netlify/functions",
-  resolverUrl: envValue(process.env.NEXT_PUBLIC_ARVIO_RESOLVER_URL, ""),
-  traktClientId: process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID ?? "",
+  // Next can evaluate client modules before beforeInteractive scripts execute.
+  // Read bootstrap values when used, never freeze an empty module-load snapshot.
+  get resolverUrl() { return browserSelfhostRuntimeConfig()?.resolverUrl ?? envValue(process.env.NEXT_PUBLIC_ARVIO_RESOLVER_URL, ""); },
+  get traktClientId() { return browserSelfhostRuntimeConfig()?.traktClientId ?? process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID ?? ""; },
   // OAuth secrets belong only on the server, never in the browser bundle.
   traktClientSecret: "",
-  simklClientId: process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID || process.env.SIMKL_CLIENT_ID || "",
+  get simklClientId() { return browserSelfhostRuntimeConfig()?.simklClientId ?? (process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID || process.env.SIMKL_CLIENT_ID || ""); },
   allowNetlifyMediaProxy: envValue(process.env.NEXT_PUBLIC_ALLOW_NETLIFY_MEDIA_PROXY, "false") === "true",
   // Web subscription: the Ko-fi membership page the paywall links to, and a
   // master switch to enable the paywall (off by default so nothing changes for
