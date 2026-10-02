@@ -385,7 +385,7 @@ function VideoPlayer({
   const [remuxAudioIndex, setRemuxAudioIndex] = useState(-1);
   // Desired audio index survives remux restarts (switching audio re-runs the
   // effect); -1 means "use the probe's automatic choice".
-  const remuxAudioIndexRef = useRef(-1);
+  const remuxAudioIndexRef = useRef(stream.remuxAudioIndex ?? -1);
   const [remuxRestartKey, setRemuxRestartKey] = useState(0);
   useEffect(() => {
     if (!stream.playbackSession) return;
@@ -435,17 +435,17 @@ function VideoPlayer({
     const playhead = videoRef.current?.currentTime ?? 0;
     if (playhead > 5) resumeAtRef.current = playhead;
     if (!stream.remux) {
-      onSelectStream(stream, { forceRemux: true });
+      onSelectStream({ ...stream, remuxAudioIndex: index }, { forceRemux: true });
       return;
     }
     setRemuxRestartKey((key) => key + 1);
   }, [stream, onSelectStream]);
 
-  // Direct-played MKVs expose no track APIs. Probing during playback would
+  // Native file playback may expose no track APIs. Probing during playback would
   // open extra range connections to the same CDN link and starve the video
   // (TorBox limits connections per link) — so the container is probed ONLY
   // when the user opens the Audio panel, on demand.
-  const [audioProbeState, setAudioProbeState] = useState<"idle" | "probing" | "done">("idle");
+  const [audioProbeState, setAudioProbeState] = useState<"idle" | "probing" | "done" | "failed">("idle");
   const audioProbeAbort = useRef<AbortController | null>(null);
   useEffect(() => {
     setAudioProbeState("idle");
@@ -459,8 +459,7 @@ function VideoPlayer({
   const probeAudioTracks = useCallback(() => {
     const current = currentStreamRef.current;
     if (liveTv || current.remux || !current.url) return;
-    const text = `${current.url} ${current.originalUrl ?? ""} ${current.source ?? ""} ${current.description ?? ""}`.toLowerCase();
-    if (!/\.mkv|matroska|remux/.test(text)) return;
+    if (!canTryRemux(current)) return;
     setAudioProbeState("probing");
     audioProbeAbort.current?.abort();
     const controller = new AbortController();
@@ -468,16 +467,24 @@ function VideoPlayer({
     void (async () => {
       try {
         const { probeAndPrepareRemux } = await import("@/lib/remux");
-        const probeUrl = cachedDebridDirectUrl(current.url) ?? current.url!;
-        const prepared = await probeAndPrepareRemux(probeUrl, current.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal });
-        if (!controller.signal.aborted && prepared && prepared.probe.audioTracks.length > 1) {
-          setRemuxTracks(prepared.probe.audioTracks);
+        const originalUrl = current.originalUrl ?? current.url!;
+        const debrid = parseDebridStream(originalUrl);
+        let probeUrl = cachedDebridDirectUrl(originalUrl) ?? current.url!;
+        if (debrid && probeUrl === originalUrl) {
+          const resolved = await resolveDebridDirectUrl(debrid);
+          if (!resolved.url) throw new Error("Could not resolve audio source");
+          probeUrl = resolved.url;
         }
-        prepared?.destroy();
+        if (controller.signal.aborted) return;
+        const prepared = await probeAndPrepareRemux(probeUrl, current.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal });
+        if (!prepared) throw new Error("Could not read audio tracks");
+        if (!controller.signal.aborted) {
+          setRemuxTracks(prepared.probe.audioTracks);
+          setAudioProbeState("done");
+        }
+        prepared.destroy();
       } catch {
-        // Probe is best-effort; the source keeps direct-playing either way.
-      } finally {
-        if (!controller.signal.aborted) setAudioProbeState("done");
+        if (!controller.signal.aborted) setAudioProbeState("failed");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -782,7 +789,8 @@ function VideoPlayer({
             return;
           }
           setRemuxTracks(prepared.probe.audioTracks);
-          const startIndex = remuxAudioIndexRef.current >= 0 ? remuxAudioIndexRef.current : prepared.probe.chosenAudioIndex;
+          const requestedTrack = prepared.probe.audioTracks.find((track) => track.index === remuxAudioIndexRef.current && track.browserPlayable);
+          const startIndex = requestedTrack?.index ?? prepared.probe.chosenAudioIndex;
           setRemuxAudioIndex(startIndex);
           try {
             await prepared.start(video, startIndex, resumeAtRef.current);
@@ -1198,8 +1206,8 @@ function VideoPlayer({
   // Reset the manual remux audio override when the source changes so each new
   // source starts from its own automatic best-track choice.
   useEffect(() => {
-    remuxAudioIndexRef.current = -1;
-  }, [stream.url]);
+    remuxAudioIndexRef.current = stream.remuxAudioIndex ?? -1;
+  }, [stream.url, stream.remuxAudioIndex]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1363,28 +1371,26 @@ function VideoPlayer({
     if (video.paused) {
       setError(false);
       setBuffering(true);
+      const source = video.currentSrc;
       const attempt = video.play();
-      void attempt?.catch(() => {
+      void attempt?.catch((reason: unknown) => {
+        // A source switch/close can reject the old play promise. It must not
+        // change the next source's volume or playback state.
+        if (videoRef.current !== video || video.currentSrc !== source
+          || (reason instanceof DOMException && reason.name === "AbortError")) return;
+        setBuffering(false);
+        setShowControls(true);
         if (video.error) {
-          setBuffering(false);
           setError(true);
-          setShowControls(true);
           return;
         }
-        // No media error means autoplay policy: the page has no user
-        // activation yet (controller-only session). Muted playback is exempt.
-        video.muted = true;
-        void video.play().then(() => {
-          onToast("Started muted — press M or the speaker button to unmute.");
-        }).catch(() => {
-          setBuffering(false);
-          setShowControls(true);
-        });
+        if (reason instanceof DOMException && reason.name === "NotAllowedError") setPlayBlocked(true);
+        else setError(true);
       });
     }
     else video.pause();
     flashControls();
-  }, [flashControls, onToast]);
+  }, [flashControls]);
 
   const seekBy = useCallback((delta: number) => {
     const video = videoRef.current;
@@ -1410,15 +1416,13 @@ function VideoPlayer({
   }, [onToast]);
 
   const openPanel = useCallback((panel: Exclude<PlayerPanel, null>) => {
-    setActivePanel((currentPanel) => {
-      const next = currentPanel === panel ? null : panel;
-      // Opening the Audio panel on a direct-played source triggers the
-      // on-demand track probe (never during unattended playback).
-      if (next === "audio" && audioProbeState === "idle" && remuxTracks.length === 0) probeAudioTracks();
-      return next;
-    });
+    const next = activePanel === panel ? null : panel;
+    setActivePanel(next);
+    // Keep network work outside state updaters (React can replay them).
+    if (next === "audio" && audioProbeState === "idle"
+      && remuxTracks.length === 0 && transportTracks.audioTracks.length === 0) probeAudioTracks();
     setShowControls(true);
-  }, [audioProbeState, remuxTracks.length, probeAudioTracks]);
+  }, [activePanel, audioProbeState, remuxTracks.length, transportTracks.audioTracks.length, probeAudioTracks]);
 
   const openExternal = useCallback((player: "vlc" | "infuse", selectedStream: StreamSource) => {
     if (!selectedStream.url) {
@@ -1705,7 +1709,7 @@ function VideoPlayer({
         <aside className="player-side-panel">
           <div className="player-panel-head">
             <div>
-              <p className="eyebrow">{translateUi(activePanel)}</p>
+              {activePanel !== "sources" && activePanel !== "audio" && <p className="eyebrow">{translateUi(activePanel)}</p>}
               <h3>{activePanel === "sources" ? translateUi("Choose Source") : activePanel === "subtitles" ? translateUi("Subtitles") : activePanel === "audio" ? translateUi("Audio") : translateUi("Playback Settings")}</h3>
             </div>
             <button type="button" className="player-icon-btn" onClick={() => setActivePanel(null)} aria-label={translateUi("Close panel")}><X size={18} /></button>
@@ -1718,30 +1722,32 @@ function VideoPlayer({
                 return (
                   <article
                     key={`${candidate.addonId ?? candidate.addonName}-${candidate.source}-${index}`}
-                    className={`player-panel-row ${active ? "is-active" : ""}`}
+                    className={`player-panel-row player-source-row ${active ? "is-active" : ""}`}
+                    aria-current={active ? "true" : undefined}
                   >
-                    <span className="player-row-icon">{active ? <Check size={17} /> : index + 1}</span>
-                    <span>
-                      <strong>{candidate.source || candidate.addonName}</strong>
-                      <em>{streamMeta(candidate) || translateUi("Direct stream")}</em>
-                      <span className="player-row-actions">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onSelectStream(candidate, { forceBrowser: true });
-                            setActivePanel(null);
-                          }}
-                        >
-                          <Play size={13} fill="currentColor" /> {translateUi(" Play")}</button>
-                        <button type="button" onClick={() => openExternal("vlc", candidate)}>
-                          <ExternalLink size={13} /> {translateUi(" VLC")}</button>
-                        <button type="button" onClick={() => openAnyPlayer(candidate)}>
-                          <ExternalLink size={13} /> {translateUi(" Player")}</button>
-                        <button type="button" onClick={() => void copyUrl(candidate)} aria-label={translateUi("Copy stream URL")}>
-                          <Copy size={13} />
-                        </button>
-                      </span>
-                    </span>
+                    <span className="player-row-icon" aria-hidden="true">{active ? <Check size={17} /> : index + 1}</span>
+                    <div className="player-source-content">
+                      <strong title={candidate.source || candidate.addonName}>{candidate.source || candidate.addonName}</strong>
+                      <em title={streamMeta(candidate)}>{streamMeta(candidate) || translateUi("Direct stream")}</em>
+                    </div>
+                    <div className="player-row-actions">
+                      <button
+                        type="button"
+                        className="player-source-play"
+                        onClick={() => {
+                          onSelectStream(candidate, { forceBrowser: true });
+                          setActivePanel(null);
+                        }}
+                      >
+                        <Play size={13} fill="currentColor" /> {translateUi(" Play")}</button>
+                      <button type="button" onClick={() => openExternal("vlc", candidate)} title={translateUi("Open in VLC")}>
+                        <ExternalLink size={13} /> {translateUi(" VLC")}</button>
+                      <button type="button" onClick={() => openAnyPlayer(candidate)} title={translateUi("Open in player")}>
+                        <ExternalLink size={13} /> {translateUi(" Player")}</button>
+                      <button type="button" className="player-source-copy" onClick={() => void copyUrl(candidate)} aria-label={translateUi("Copy stream URL")} title={translateUi("Copy stream URL")}>
+                        <Copy size={13} />
+                      </button>
+                    </div>
                   </article>
                 );
               })}
@@ -1749,7 +1755,7 @@ function VideoPlayer({
           )}
 
           {activePanel === "audio" && (
-            <div className="player-panel-list">
+            <div className="player-panel-list player-audio-list">
               {transportTracks.audioTracks.length > 0 ? transportTracks.audioTracks.map((track) => (
                 <button type="button" key={track.id} className={`player-panel-row ${transportTracks.selectedAudioTrackId === track.id ? "is-active" : ""}`} onClick={() => transportRef.current?.selectAudioTrack(track.id)}>
                   <span className="player-row-icon">{transportTracks.selectedAudioTrackId === track.id ? <Check size={17} /> : ""}</span>
@@ -1768,8 +1774,13 @@ function VideoPlayer({
                     <span><strong>{translateUi(track.label)}</strong><em>{track.browserPlayable ? track.codec : translateUi("Lossless — external player only")}</em></span>
                   </button>
                 ))
-              ) : audioProbeState === "probing" ? (
+              ) : audioProbeState === "probing" || (stream.remux && buffering && !error) ? (
                 <p className="player-panel-empty">{translateUi("Reading audio tracks from this source…")}</p>
+              ) : audioProbeState === "failed" ? (
+                <div className="player-panel-empty">
+                  <p>{translateUi("Audio")} · {translateUi("Unavailable")}</p>
+                  <button type="button" className="secondary" onClick={probeAudioTracks}>{translateUi("Retry")}</button>
+                </div>
               ) : (
                 <p className="player-panel-empty">{translateUi("This source plays its default audio track — no other selectable tracks were found.")}</p>
               )}
@@ -1987,7 +1998,7 @@ function VideoPlayer({
               </>
             )}
             <div className="player-volume">
-              <button type="button" className="player-icon-btn" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label={translateUi("Mute")}>
+              <button type="button" className="player-icon-btn" onClick={() => { const v = videoRef.current; if (v) { if (v.volume === 0) v.volume = 1; v.muted = !(v.muted || volume === 0); } }} aria-label={translateUi(muted || volume === 0 ? "Unmute" : "Mute")}>
                 {muted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
               </button>
               <input

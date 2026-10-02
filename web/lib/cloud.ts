@@ -744,14 +744,26 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   const iptvSettings = iptvFromAndroid(scopedValue(root, "iptvByProfile", profileId), root);
   const profileCatalogs = scopedValue<AppSettings["catalogs"]>(root, "catalogsByProfile", profileId);
   const hiddenCatalogIds = scopedValue<string[]>(root, "hiddenPreinstalledByProfile", profileId);
+  const hiddenAddonCatalogIds = scopedValue<string[]>(root, "hiddenAddonByProfile", profileId);
   const hiddenHomeServerCatalogIds = scopedValue<string[]>(root, "hiddenHomeServerByProfile", profileId);
   const profileAddons = scopedValue<InstalledAddon[]>(root, "addonsByProfile", profileId);
   const legacySettings = objectRecord<unknown>(root.settings) as Partial<AppSettings>;
   delete legacySettings.customTmdbApiKey;
   delete legacySettings.customTvdbApiKey;
   delete legacySettings.customTvdbUserPin;
-  const legacyCatalogs = arrayValue(root.catalogs) as AppSettings["catalogs"];
-  const legacyHiddenCatalogIds = arrayValue<string>(root.hiddenPreinstalledCatalogs);
+  const legacyCatalogs = parseNestedJson(root.catalogs);
+  const hasProfileCatalogs = Array.isArray(profileCatalogs);
+  const effectiveHiddenCatalogs = hiddenCatalogIds ?? (hasProfileCatalogs ? [] : root.hiddenPreinstalledCatalogs ?? legacySettings.hiddenCatalogIds);
+  const effectiveHiddenAddons = hiddenAddonCatalogIds ?? (hasProfileCatalogs ? [] : legacySettings.hiddenAddonCatalogIds);
+  const effectiveHiddenHomeServers = hiddenHomeServerCatalogIds ?? (hasProfileCatalogs ? [] : legacySettings.hiddenHomeServerCatalogIds);
+  // Profile-scoped lists are authoritative, including []. Do not inherit stale
+  // visibility flags from the last profile that wrote the legacy settings blob.
+  const catalogSettings: Partial<AppSettings> = {
+    ...(hasProfileCatalogs ? { catalogs: profileCatalogs } : Array.isArray(legacyCatalogs) ? { catalogs: legacyCatalogs } : {}),
+    ...(effectiveHiddenCatalogs !== undefined ? { hiddenCatalogIds: arrayValue<string>(effectiveHiddenCatalogs) } : {}),
+    ...(effectiveHiddenAddons !== undefined ? { hiddenAddonCatalogIds: arrayValue<string>(effectiveHiddenAddons) } : {}),
+    ...(effectiveHiddenHomeServers !== undefined ? { hiddenHomeServerCatalogIds: arrayValue<string>(effectiveHiddenHomeServers) } : {})
+  };
   // Canonical, timestamp-managed GLOBAL settings live at the top level of the payload (written by
   // Android with per-field timestamps), NOT in the legacy `root.settings` blob. Map them so an
   // Android change (accent color, AI subtitles, etc.) is actually visible on web.
@@ -780,9 +792,7 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
       ...profileSettings,
       ...globalSettings,
       ...iptvSettings,
-      ...(Array.isArray(profileCatalogs) ? { catalogs: profileCatalogs } : legacyCatalogs.length ? { catalogs: legacyCatalogs } : {}),
-      ...(hiddenCatalogIds !== undefined ? { hiddenCatalogIds: arrayValue<string>(hiddenCatalogIds) } : legacyHiddenCatalogIds.length ? { hiddenCatalogIds: legacyHiddenCatalogIds } : {}),
-      ...(hiddenHomeServerCatalogIds !== undefined ? { hiddenHomeServerCatalogIds: arrayValue<string>(hiddenHomeServerCatalogIds) } : {})
+      ...catalogSettings
     },
     updatedAt: typeof root.updatedAt === "number" ? root.updatedAt : 0
   };
@@ -962,13 +972,14 @@ export async function saveCloudSettings(
     const catalogFields = [
       ["catalogs", "catalogsByProfile"],
       ["hiddenCatalogIds", "hiddenPreinstalledByProfile"],
+      ["hiddenAddonCatalogIds", "hiddenAddonByProfile"],
       ["hiddenHomeServerCatalogIds", "hiddenHomeServerByProfile"]
     ] as const;
-    const catalogValues = {} as Pick<AppSettings, "catalogs" | "hiddenCatalogIds" | "hiddenHomeServerCatalogIds">;
+    const catalogValues = {} as Pick<AppSettings, "catalogs" | "hiddenCatalogIds" | "hiddenAddonCatalogIds" | "hiddenHomeServerCatalogIds">;
     for (const [setting, field] of catalogFields) {
       const changed = !baseline || !sameFieldValue(settings[setting], baseline[setting]);
       const existing = scopedValue<unknown[]>(root, field, profileId);
-      let value = changed ? settings[setting] : (existing ?? settings[setting]);
+      let value = (changed ? settings[setting] : (existing ?? settings[setting])) ?? [];
       if (changed && baseline && existing) {
         value = setting === "catalogs"
           ? mergeCatalogEdits(existing as AppSettings["catalogs"], settings.catalogs, baseline.catalogs)

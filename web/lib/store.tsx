@@ -230,6 +230,7 @@ export const defaultSettings: AppSettings = {
   cardDensity: "comfortable",
   catalogs: defaultCatalogs,
   hiddenCatalogIds: [],
+  hiddenAddonCatalogIds: [],
   hiddenHomeServerCatalogIds: [],
   disabledAddonIds: [],
   homeServers: [],
@@ -656,7 +657,7 @@ export function AppProvider({
       ...defaultSettings,
       ...stored,
       iptvPlaylists: loadPlaylists(),
-      catalogs: mergeCatalogs(stored.catalogs, stored.hiddenCatalogIds)
+      catalogs: mergeCatalogs(stored.catalogs, stored.hiddenCatalogIds, stored.hiddenAddonCatalogIds)
     };
   });
   const [auth, setAuth] = useState(() => authClient.session);
@@ -739,13 +740,13 @@ export function AppProvider({
   }, [settings]);
 
   useEffect(() => {
-    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds);
+    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds);
     setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled && catalog.sourceType !== "home-server"));
-  }, [settings.catalogs, settings.hiddenCatalogIds]);
+  }, [settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds]);
 
   useEffect(() => {
     let cancelled = false;
-    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds);
+    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds);
     void loadHomeServerRows(
       settings.homeServers,
       settings.hiddenHomeServerCatalogIds,
@@ -758,7 +759,7 @@ export function AppProvider({
     return () => {
       cancelled = true;
     };
-  }, [settings.catalogs, settings.hiddenCatalogIds, settings.hiddenHomeServerCatalogIds, settings.homeServers]);
+  }, [settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds, settings.hiddenHomeServerCatalogIds, settings.homeServers]);
 
   const deviceCodeRef = useRef(deviceCode);
   useEffect(() => {
@@ -930,7 +931,8 @@ export function AppProvider({
           ...defaultSettings,
           ...currentSettings,
           ...cloud.settings,
-          catalogs: mergeCatalogs(cloud.settings?.catalogs ?? currentSettings.catalogs, cloud.settings?.hiddenCatalogIds ?? currentSettings.hiddenCatalogIds),
+          catalogs: mergeCatalogs(cloud.settings?.catalogs ?? currentSettings.catalogs, cloud.settings?.hiddenCatalogIds ?? currentSettings.hiddenCatalogIds,
+            cloud.settings?.hiddenAddonCatalogIds ?? currentSettings.hiddenAddonCatalogIds),
           iptvPlaylists: cloud.settings?.iptvPlaylists ?? currentSettings.iptvPlaylists,
           favoriteChannelIds: cloud.settings?.favoriteChannelIds ?? currentSettings.favoriteChannelIds,
           iptvTvSession: cloud.settings?.iptvTvSession ?? currentSettings.iptvTvSession,
@@ -979,7 +981,7 @@ export function AppProvider({
         void saveCloudAddons(authClient, source, profileId).catch(() => undefined);
       }
 
-      const effectiveCatalogs = mergeCatalogs(effectiveSettings.catalogs, effectiveSettings.hiddenCatalogIds);
+      const effectiveCatalogs = mergeCatalogs(effectiveSettings.catalogs, effectiveSettings.hiddenCatalogIds, effectiveSettings.hiddenAddonCatalogIds);
       setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled && catalog.sourceType !== "home-server"));
 
       const client = syncClient();

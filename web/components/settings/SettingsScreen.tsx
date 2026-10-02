@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { Component, CSSProperties, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { defaultCatalogs, mergeCatalogs } from "@/lib/catalogs";
+import { defaultCatalogs, mergeCatalogs, updateHiddenCatalogIds } from "@/lib/catalogs";
 import { parseCustomCollections, mergeImportedCollections } from "@/lib/customCollections";
 import { textRequest, proxiedUrl } from "@/lib/http";
 import {
@@ -2233,6 +2233,7 @@ function CatalogsSection() {
   const standardCatalogs = mergeCatalogs(
     safeArray(settings.catalogs),
     safeArray(settings.hiddenCatalogIds),
+    safeArray(settings.hiddenAddonCatalogIds),
   ).filter((catalog) => catalog.sourceType !== "home-server");
   const [homeServerCatalogs, setHomeServerCatalogs] = useState<CatalogConfig[]>([]);
   const [customCatalogUrl, setCustomCatalogUrl] = useState("");
@@ -2265,8 +2266,9 @@ function CatalogsSection() {
     const standard = next.filter((catalog) => catalog.sourceType !== "home-server");
     updateSettings({
       catalogs: next,
-      hiddenCatalogIds: standard.filter((catalog) => !catalog.enabled).map((catalog) => catalog.id),
-      hiddenHomeServerCatalogIds: homeServer.filter((catalog) => !catalog.enabled).map((catalog) => catalog.id),
+      hiddenCatalogIds: updateHiddenCatalogIds(standard, settings.hiddenCatalogIds),
+      hiddenAddonCatalogIds: updateHiddenCatalogIds(standard.filter(catalog => catalog.sourceType === "addon"), settings.hiddenAddonCatalogIds),
+      hiddenHomeServerCatalogIds: updateHiddenCatalogIds(homeServer, settings.hiddenHomeServerCatalogIds),
     });
   };
   const moveCatalog = (id: string, offset: number) => {

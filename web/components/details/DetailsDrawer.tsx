@@ -2,7 +2,7 @@
 import { useTranslation } from "@/lib/i18n";
 
 
-import { BadgeCheck, Bookmark, CalendarDays, Check, Clapperboard, Copy, Download, ExternalLink, EyeOff, Filter, Info, MapPin, Play, Search, Star, Trash2, TriangleAlert, UserCircle, X } from "lucide-react";
+import { BadgeCheck, Bookmark, CalendarDays, Check, Clapperboard, Copy, Download, ExternalLink, EyeOff, Filter, Folder, Info, MapPin, Play, Search, Star, Trash2, TriangleAlert, UserCircle, X } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
@@ -308,7 +308,7 @@ function DetailsView({ item }: { item: MediaItem }) {
             <button type="button" className="primary" onClick={playBest}>
               <Play size={18} fill="currentColor" /> {translateUi(continueLabel)}
             </button>
-            <button type="button" className="secondary" onClick={() => setSourcePickerVisible(true)}>{translateUi("Sources")}</button>
+            <button type="button" className="secondary text-button" onClick={() => setSourcePickerVisible(true)}><Folder size={18} /> {translateUi("Sources")}</button>
             {inWatchlist ? (
               <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Trash2 size={18} /> {translateUi(" Remove")}</button>
             ) : (
