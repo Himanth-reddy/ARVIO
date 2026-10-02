@@ -71,7 +71,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/ProdigyV21/ARVIO
             org.opencontainers.image.licenses=NOASSERTION
-            org.opencontainers.image.documentation=https://github.com/ProdigyV21/ARVIO/blob/main/unraid/README.md
+            org.opencontainers.image.documentation=https://github.com/ProdigyV21/ARVIO/blob/${{ github.sha }}/unraid/README.md
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
