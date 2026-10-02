@@ -13,8 +13,8 @@
   <Overview>Preview of the independent ARVIO browser media hub. Connect your own supported media services and sources; no ARVIO subscription is required. Built-in movie and TV metadata requires your own TMDB API v3 key. Profiles, settings and history live in each browser, not in the container. This is a browser client, not a media server, transcoder or ARVIO Cloud sync service. No media or third-party subscriptions are included. Keep this installation private; internet access requires HTTPS and authentication protecting every route.</Overview>
   <Project>https://github.com/ProdigyV21/ARVIO</Project>
   <Support>https://github.com/ProdigyV21/ARVIO/issues</Support>
-  <ReadMe>https://github.com/ProdigyV21/ARVIO/blob/main/unraid/README.md</ReadMe>
-  <TemplateURL>https://raw.githubusercontent.com/ProdigyV21/ARVIO/main/templates/arvio-web.xml</TemplateURL>
+  <ReadMe>https://github.com/ProdigyV21/ARVIO-Unraid/blob/main/README.md</ReadMe>
+  <TemplateURL>https://raw.githubusercontent.com/ProdigyV21/ARVIO-Unraid/main/templates/arvio-web.xml</TemplateURL>
   <Category>MediaApp:Video</Category>
   <License>Apache-2.0</License>
   <ExtraSearchTerms>arvio jellyfin plex emby media browser selfhosted</ExtraSearchTerms>

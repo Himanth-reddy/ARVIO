@@ -10,8 +10,8 @@ service at web.arvio.tv is separate.
 The template targets `ghcr.io/prodigyv21/arvio-web:unraid-preview` for
 Linux x86-64 (`linux/amd64`). This is a preview, not a claim of Community Apps
 acceptance. Before submitting, verify that the image is public and anonymously
-pullable and that the template and this guide exist on the repository's default
-branch. A draft PR or a Dockerfile alone does not meet those gates.
+pullable and that the template feed exists on its repository's default branch.
+A draft PR or a Dockerfile alone does not meet those gates.
 
 **Public image publication is currently gated by an unresolved third-party
 source/redistribution-license review.** The source project uses Apache-2.0, but
@@ -107,9 +107,19 @@ redacted error. Do not upload credentials or private server addresses.
 5. Confirm the registry package is public and an unauthenticated pull succeeds.
 6. Test a clean install, WebUI port mapping, restart/update and private home-server
    access on a real Unraid host. Docker Desktop/CI smoke tests are not Unraid tests.
-7. Publish the metadata on the default branch. In the
+7. Export a **dedicated template-only feed** into a new empty directory:
+   `pwsh -File scripts/export-unraid-feed.ps1 -OutputDirectory /path/to/new-empty-feed`.
+   Review and publish only the exported root `LICENSE`, `README.md`,
+   `ca_profile.xml` and `templates/arvio-web.xml` to
+   [ProdigyV21/ARVIO-Unraid](https://github.com/ProdigyV21/ARVIO-Unraid)'s default
+   branch. Do not submit the ARVIO Android/source repository: its ordinary
+   resource XML is not an Unraid template and causes unrelated scan warnings.
+   In the
    [Unraid submission workspace](https://ca.unraid.net/submit/new), sign in, add
-   the repository, run **Validate**, then **Scan**, and review the preview.
+   **https://github.com/ProdigyV21/ARVIO-Unraid**, run **Validate**, then **Scan**,
+   and review the preview. The export validator checks for exactly one app XML,
+   one non-empty repository profile and no unrelated XML. It is not Unraid's
+   scanner and does not prove public image availability.
 8. The owner must approve the final submission and associated terms. Record the
    actual submission result; do not label an unsubmitted package as listed.
 

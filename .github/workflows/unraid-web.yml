@@ -3,10 +3,10 @@ name: ARVIO Web container preview
 on:
   pull_request:
     branches: [main]
-    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', '.github/workflows/unraid-web.yml']
+    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', 'scripts/test-unraid-contract.ps1', 'scripts/export-unraid-feed.ps1', '.github/workflows/unraid-web.yml']
   push:
     branches: [main, codex/unraid-distribution]
-    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', '.github/workflows/unraid-web.yml']
+    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', 'scripts/test-unraid-contract.ps1', 'scripts/export-unraid-feed.ps1', '.github/workflows/unraid-web.yml']
   workflow_dispatch:
     inputs:
       publish_preview:
@@ -41,6 +41,7 @@ jobs:
         run: |
           ./scripts/check-unraid.ps1
           ./scripts/test-unraid-contract.ps1
+          ./scripts/export-unraid-feed.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'arvio-unraid-feed')
       - name: Install test dependencies
         working-directory: web
         run: npm ci --ignore-scripts

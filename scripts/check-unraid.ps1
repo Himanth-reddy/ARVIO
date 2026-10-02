@@ -1,4 +1,7 @@
-param([string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot))
+param(
+    [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
+    [switch]$RequireTemplateFeed
+)
 $ErrorActionPreference = 'Stop'
 
 function Assert-Contract([bool]$Condition, [string]$Message) {
@@ -28,7 +31,7 @@ $root = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $profile = Read-SafeXml (Join-Path $root 'ca_profile.xml')
 $template = Read-SafeXml (Join-Path $root 'templates/arvio-web.xml')
 Assert-Contract ($profile.DocumentElement.Name -eq 'CommunityApplications' -and $profile.DocumentElement.NamespaceURI -eq '' -and $profile.DocumentElement.Attributes.Count -eq 0) 'Invalid profile root.'
-$profileFields = @('Profile','Icon','WebPage')
+$profileFields = @('Profile','Icon','WebPage','Forum')
 foreach ($element in @($profile.DocumentElement.ChildNodes | Where-Object { $_.NodeType -eq [System.Xml.XmlNodeType]::Element })) {
     Assert-Contract ($element.Name -in $profileFields) 'Unexpected repository profile field.'
     Assert-FlatField $element "profile $($element.Name)"
@@ -67,9 +70,22 @@ foreach ($field in @('Project','Support','Icon','ReadMe','TemplateURL','Registry
     $uri = [uri]$container.SelectSingleNode($field).InnerText
     Assert-Contract ($uri.IsAbsoluteUri -and $uri.Scheme -eq 'https' -and -not $uri.UserInfo -and -not $uri.Query -and -not $uri.Fragment) "Unsafe $field URL."
 }
-foreach ($field in @('Icon','WebPage')) {
+foreach ($field in @('Icon','WebPage','Forum')) {
     $uri = [uri]$profile.DocumentElement.SelectSingleNode($field).InnerText
     Assert-Contract ($uri.IsAbsoluteUri -and $uri.Scheme -eq 'https' -and -not $uri.UserInfo -and -not $uri.Query -and -not $uri.Fragment) "Unsafe profile $field URL."
+}
+Assert-Contract ($profile.DocumentElement.SelectSingleNode('WebPage').InnerText -eq 'https://github.com/ProdigyV21/ARVIO-Unraid') 'Profile must identify the dedicated template feed, not the Android source repository.'
+Assert-Contract ($container.SelectSingleNode('TemplateURL').InnerText -eq 'https://raw.githubusercontent.com/ProdigyV21/ARVIO-Unraid/main/templates/arvio-web.xml') 'TemplateURL must identify the canonical raw XML in the dedicated feed.'
+Assert-Contract ($container.SelectSingleNode('ReadMe').InnerText -eq 'https://github.com/ProdigyV21/ARVIO-Unraid/blob/main/README.md') 'ReadMe must identify the dedicated feed installation guide.'
+if ($RequireTemplateFeed) {
+    $allowedXml = @('ca_profile.xml', 'templates/arvio-web.xml')
+    $xmlFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.xml' |
+        Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } |
+        ForEach-Object { [System.IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/') })
+    Assert-Contract ($xmlFiles.Count -eq $allowedXml.Count) 'Template feed must contain exactly one repository profile and one Docker application XML; do not submit Android resource XML.'
+    foreach ($path in $xmlFiles) {
+        Assert-Contract ($path -cin $allowedXml) "Unexpected XML in the template feed: $path"
+    }
 }
 $allowed = @('3000','TMDB_API_KEY','ALLOW_PRIVATE_PROXY','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET','SIMKL_CLIENT_ID','SIMKL_CLIENT_SECRET','TELEGRAM_API_ID','TELEGRAM_API_HASH','ARVIO_RESOLVER_URL')
 $configs = @($container.SelectNodes('Config'))
@@ -104,3 +120,4 @@ foreach ($entry in $configs) {
 }
 Assert-Contract ($configs.Where({ $_.GetAttribute('Target') -eq 'TMDB_API_KEY' })[0].GetAttribute('Required') -eq 'true') 'TMDB setup requirement must be explicit.'
 Write-Output 'Unraid XML/profile contract passed. This does not confirm image publication, Unraid installation or catalog acceptance.'
+if ($RequireTemplateFeed) { Write-Output 'Dedicated feed contains 1 Docker application template and 0 unrelated XML files.' }

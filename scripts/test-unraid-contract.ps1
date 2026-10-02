@@ -69,6 +69,21 @@ $cases = @(
         param($template, $profile)
         $template.DocumentElement.SelectSingleNode('Support').InnerText = 'https://fixture-user:fixture-password@example.invalid/support'
     } },
+    @{ Name = 'source-repository-template-url'; Mutate = {
+        param($template, $profile)
+        $template.DocumentElement.SelectSingleNode('TemplateURL').InnerText = 'https://raw.githubusercontent.com/ProdigyV21/ARVIO/main/templates/arvio-web.xml'
+    } },
+    @{ Name = 'wrong-template-readme'; Mutate = {
+        param($template, $profile)
+        $template.DocumentElement.SelectSingleNode('ReadMe').InnerText = 'https://github.com/ProdigyV21/ARVIO/blob/main/README.md'
+    } },
+    @{ Name = 'source-repository-profile'; Mutate = {
+        param($template, $profile)
+        $profile.DocumentElement.SelectSingleNode('WebPage').InnerText = 'https://github.com/ProdigyV21/ARVIO'
+    } },
+    @{ Name = 'unrelated-android-xml'; Mutate = {}; ExtraXml = '<resources><string name="example">Android resource, not an Unraid app</string></resources>' },
+    @{ Name = 'broken-extra-xml'; Mutate = {}; ExtraXml = '<Container>' },
+    @{ Name = 'duplicate-app-template'; Mutate = {}; DuplicateTemplate = $true },
     @{ Name = 'saved-key-default'; Mutate = {
         param($template, $profile)
         $template.DocumentElement.SelectSingleNode('Config[@Target="TMDB_API_KEY"]').SetAttribute('Default', 'synthetic-key-never-a-real-secret')
@@ -139,6 +154,8 @@ try {
         $template.Save($templatePath)
         $profile.Save((Join-Path $caseRoot 'ca_profile.xml'))
         if ($case.EmptyLicense) { [System.IO.File]::WriteAllText((Join-Path $caseRoot 'LICENSE'), '') }
+        if ($case.ExtraXml) { [System.IO.File]::WriteAllText((Join-Path $caseRoot 'unrelated.xml'), $case.ExtraXml) }
+        if ($case.DuplicateTemplate) { Copy-Item -LiteralPath $templatePath -Destination (Join-Path $caseRoot 'templates/duplicate.xml') }
         if ($case.Dtd) {
             # The parser must reject DTDs before resolving this nonexistent file.
             $payload = '<!DOCTYPE Container [<!ENTITY xxe SYSTEM "file:///arvio-unraid-synthetic-nonexistent.txt">]><Container version="2"><Name>&xxe;</Name></Container>'
@@ -146,7 +163,7 @@ try {
         }
         $accepted = $false
         try {
-            $null = & $validator -RepositoryRoot $caseRoot
+            $null = & $validator -RepositoryRoot $caseRoot -RequireTemplateFeed
             $accepted = $true
         } catch {
             if ($case.Accept) { throw }
