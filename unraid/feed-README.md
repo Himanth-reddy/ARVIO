@@ -30,7 +30,8 @@ as Community Applications approval.
 ## Installation
 
 ARVIO-Web is a browser media hub, **not** a media server, transcoder or Android
-APK. No media, subscriptions or ARVIO Cloud sync are included. You supply your
+APK. Plex, Jellyfin and Emby remain supported; **Telegram is not available in
+this preview**. No media, subscriptions or ARVIO Cloud sync are included. You supply your
 own authorized sources and a TMDB API v3 key. Optional provider application
 credentials belong to you; the image contains no ARVIO owner's integration keys.
 

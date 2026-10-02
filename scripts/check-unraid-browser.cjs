@@ -95,6 +95,7 @@ async function exerciseContext(browser, baseUrl, scenario, evidenceDir) {
     const response = await page.goto(`${baseUrl}/?lang=en`, { waitUntil: 'domcontentloaded', timeout: 45000 });
     assert.equal(response?.status(), 200, `${scenario}: production page responds`);
     await expect(page.getByRole('heading', { name: "Who's watching?", exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Source code & licences', exact: true })).toBeVisible();
     await assertIndependentUi(page, scenario);
     assert.ok(stats.bootstrapRequests > 0, `${scenario}: page requested runtime bootstrap`);
 
@@ -116,6 +117,8 @@ async function exerciseContext(browser, baseUrl, scenario, evidenceDir) {
       .toBeVisible();
     await assertIndependentUi(page, scenario);
 
+    assert.equal(await page.getByRole('button', { name: 'Telegram', exact: true }).count(), 0,
+      'Disabled integration must not offer a Telegram account action.');
     for (const provider of ['Trakt', 'Simkl']) {
       const panel = page.locator('.settings-panel-card').filter({
         has: page.getByRole('heading', { name: provider, exact: true })

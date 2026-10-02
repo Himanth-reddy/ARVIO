@@ -54,6 +54,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
+        {process.env.NEXT_PUBLIC_UNRAID_DISTRIBUTION === "true" && (
+          <link rel="license" href="/distribution-sources/index.html" />
+        )}
         {process.env.NEXT_PUBLIC_SELF_HOSTED === "true" && (
           <Script id="arvio-selfhost-config" src="/api/selfhost-config" strategy="beforeInteractive" />
         )}

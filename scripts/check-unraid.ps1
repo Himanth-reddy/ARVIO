@@ -65,7 +65,8 @@ Assert-Contract ($container.SelectSingleNode('Beta').InnerText -eq 'true') 'Prev
 Assert-Contract ($container.SelectSingleNode('ExtraParams').InnerText -eq '--init --cap-drop=ALL --security-opt=no-new-privileges') 'Unexpected extra Docker privileges.'
 Assert-Contract ($container.SelectSingleNode('WebUI').InnerText -eq 'http://[IP]:[PORT:3000]/') 'WebUI must match container port.'
 Assert-Contract ($container.SelectSingleNode('Category').InnerText -eq 'MediaApp:Video') 'Unexpected category.'
-Assert-Contract ($container.SelectSingleNode('License').InnerText -eq 'Apache-2.0') 'Unexpected license.'
+Assert-Contract ($container.SelectSingleNode('License').InnerText -eq 'Apache-2.0 (ARVIO source); third-party components retain their own licences') 'Unexpected distribution license.'
+Assert-Contract ($null -eq $container.SelectSingleNode('Config[@Target="TELEGRAM_API_ID"]')) 'Telegram is not available in this preview.'
 foreach ($field in @('Project','Support','Icon','ReadMe','TemplateURL','Registry')) {
     $uri = [uri]$container.SelectSingleNode($field).InnerText
     Assert-Contract ($uri.IsAbsoluteUri -and $uri.Scheme -eq 'https' -and -not $uri.UserInfo -and -not $uri.Query -and -not $uri.Fragment) "Unsafe $field URL."
@@ -87,7 +88,7 @@ if ($RequireTemplateFeed) {
         Assert-Contract ($path -cin $allowedXml) "Unexpected XML in the template feed: $path"
     }
 }
-$allowed = @('3000','TMDB_API_KEY','ALLOW_PRIVATE_PROXY','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET','SIMKL_CLIENT_ID','SIMKL_CLIENT_SECRET','TELEGRAM_API_ID','TELEGRAM_API_HASH','ARVIO_RESOLVER_URL')
+$allowed = @('3000','TMDB_API_KEY','ALLOW_PRIVATE_PROXY','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET','SIMKL_CLIENT_ID','SIMKL_CLIENT_SECRET','ARVIO_RESOLVER_URL')
 $configs = @($container.SelectNodes('Config'))
 $targets = @($configs | ForEach-Object { $_.GetAttribute('Target') })
 Assert-Contract ($targets.Count -eq $allowed.Count -and @($targets | Select-Object -Unique).Count -eq $targets.Count) 'Missing or duplicated configuration targets.'

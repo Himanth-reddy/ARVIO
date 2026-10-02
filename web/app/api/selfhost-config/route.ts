@@ -5,8 +5,15 @@ export const dynamic = "force-dynamic";
 
 export function GET() {
   const selfHosted = process.env.NEXT_PUBLIC_SELF_HOSTED === "true";
+  const configuration = serverSelfhostRuntimeConfig(process.env);
+  // Keep the bootstrap shape compatible, but never advertise credentials for
+  // an integration absent from this particular compiled image.
+  if (process.env.NEXT_PUBLIC_TELEGRAM_ENABLED === "false") {
+    configuration.telegramApiId = "";
+    configuration.telegramApiHash = "";
+  }
   const body = selfHosted
-    ? `window.__ARVIO_SELFHOST_CONFIG__ = ${JSON.stringify(serverSelfhostRuntimeConfig(process.env)).replace(/</g, "\\u003c")};\n`
+    ? `window.__ARVIO_SELFHOST_CONFIG__ = ${JSON.stringify(configuration).replace(/</g, "\\u003c")};\n`
     : "/* Runtime self-host configuration is unavailable on the hosted service. */\n";
   return new Response(body, {
     status: selfHosted ? 200 : 404,

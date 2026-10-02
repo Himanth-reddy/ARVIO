@@ -9,7 +9,7 @@ import { LanguageProvider } from "./i18n";
 import { shouldRefreshAutomatically } from "./automaticRefresh";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
-import { config, getAuthPortalUrl } from "./config";
+import { config, getAuthPortalUrl, isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
 import { completionTimes, includeIptvContinueWatching, isUnwatchedContinueWatching, mergePartialContinueWatching, mergeTrackerContinueWatching, pruneCompletedResume, traktProgressActivityKey } from "./continueWatching";
@@ -774,9 +774,10 @@ export function AppProvider({
   // service worker so a connected user's sources resolve and play after a
   // reload — the browser equivalent of Android re-opening its TDLib database.
   useEffect(() => {
+    if (!config.telegramEnabled) return;
     void (async () => {
       try {
-        const tg = await import("./telegram");
+        const tg = await import("@/lib/telegram");
         await tg.restoreSession();
         // Only pre-warm the streaming service worker for users who are actually
         // connected — no need to register a worker for accounts that never link
@@ -1634,11 +1635,12 @@ export function AppProvider({
   // any matching video files as sources — parity with the Android app, which
   // surfaces Telegram media in the same source list as addons.
   const appendTelegramSources = useCallback((item: MediaItem, season?: number, episode?: number) => {
+    if (!config.telegramEnabled) return Promise.resolve([] as StreamSource[]);
     const generation = sourceGeneration.current;
     if (item.isHomeServer) return Promise.resolve([] as StreamSource[]);
     return (async () => {
       try {
-        const { resolveTelegramSources, isConnected } = await import("./telegram");
+        const { resolveTelegramSources, isConnected } = await import("@/lib/telegram");
         if (!isConnected()) return [];
         const sources = await resolveTelegramSources(item, season, episode, {
           language: settingsRef.current.language
@@ -1749,6 +1751,10 @@ export function AppProvider({
   }, []);
 
   const playStream = useCallback((stream: StreamSource, options: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean } = {}) => {
+    if (isDisabledTelegramSource(stream)) {
+      setToast(TELEGRAM_DISABLED_MESSAGE);
+      return;
+    }
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     if (!stream.autoSelect) setActiveStream(null);
@@ -1936,6 +1942,10 @@ export function AppProvider({
   // user's own connection with no browser restrictions, at zero server cost.
   // Returns true when the handoff fired (so the caller skips the browser player).
   const openLiveExternally = useCallback((stream: StreamSource, title: string): boolean => {
+    if (isDisabledTelegramSource(stream)) {
+      setToast(TELEGRAM_DISABLED_MESSAGE);
+      return false;
+    }
     const player = settingsRef.current.defaultPlayer;
     if (player !== "vlc" && player !== "infuse") return false;
     setToast(

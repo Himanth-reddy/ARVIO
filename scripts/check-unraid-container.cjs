@@ -58,10 +58,12 @@ async function configuration(url) {
   try {
     const baked = JSON.parse(docker(['image', 'inspect', '--format', '{{json .Config.Env}}', image]));
     assert.ok(baked.includes('NEXT_PUBLIC_SELF_HOSTED=true'));
+    assert.ok(baked.includes('NEXT_PUBLIC_TELEGRAM_ENABLED=false'));
     assert.ok(!baked.some(entry => /^(TMDB_API_KEY|TRAKT_CLIENT_SECRET|SIMKL_CLIENT_SECRET|APP_ANON_KEY|SUPABASE_ANON_KEY)=.+/.test(entry)), 'Image must not bake account keys or OAuth secrets.');
     const secretMarker = 'unraid-smoke-server-only-never-public';
     const configured = await start('configured', {
       NEXT_PUBLIC_SELF_HOSTED: 'false', // A runtime env cannot change baked deployment mode.
+      NEXT_PUBLIC_TELEGRAM_ENABLED: 'true', // Nor enable an omitted compiled integration.
       TRAKT_CLIENT_ID: 'unraid-trakt-public-id',
       TRAKT_CLIENT_SECRET: secretMarker,
       SIMKL_CLIENT_ID: 'unraid-simkl-public-id',
@@ -73,13 +75,35 @@ async function configuration(url) {
     const { values, script } = await configuration(configured.url);
     assert.equal(values.traktClientId, 'unraid-trakt-public-id');
     assert.equal(values.simklClientId, 'unraid-simkl-public-id');
-    assert.equal(values.telegramApiId, '123456');
-    assert.equal(values.telegramApiHash, 'c'.repeat(32));
+    assert.equal(values.telegramApiId, '');
+    assert.equal(values.telegramApiHash, '');
     assert.equal(values.resolverUrl, 'https://resolver.example.invalid');
     assert.ok(!script.includes(secretMarker), 'Bootstrap must never expose OAuth secrets.');
     const page = await fetch(configured.url).then(response => response.text());
     assert.ok(page.includes('/api/selfhost-config'), 'Independent HTML must bootstrap public runtime settings.');
     assert.ok(!page.includes(secretMarker), 'Server-rendered page must not expose OAuth secrets.');
+    assert.ok(page.includes('rel="license"') && page.includes('/distribution-sources/index.html'), 'Unraid HTML must identify its licence/source materials.');
+    const sourceIndex = await fetch(`${configured.url}/distribution-sources/index.html`);
+    assert.equal(sourceIndex.status, 200);
+    assert.match(await sourceIndex.text(), /Telegram is not included in this Unraid preview/);
+    const sourceManifest = await fetch(`${configured.url}/distribution-sources/arvio-source.json`).then(response => response.json());
+    assert.match(sourceManifest.sourceCommit, /^[a-f0-9]{40}$/);
+    const archive = Buffer.from(await fetch(`${configured.url}/distribution-sources/arvio-source.tar.gz`).then(response => response.arrayBuffer()));
+    assert.equal(require('node:crypto').createHash('sha256').update(archive).digest('hex'), sourceManifest.archiveSha256, 'Served exact-source archive hash');
+    const runtimeSources = await fetch(`${configured.url}/distribution-sources/runtime/runtime-downloads.json`).then(response => response.json());
+    assert.equal(runtimeSources.complete, true);
+    assert.equal(runtimeSources.scope, 'actual Linux runtime/native sources');
+    const codecSources = await fetch(`${configured.url}/distribution-sources/codecs/manifest.json`).then(response => response.json());
+    assert.equal(codecSources.rebuilt, true);
+    assert.equal(codecSources.featuresRemoved, false);
+    assert.equal((await fetch(`${configured.url}/distribution-sources/aes/verified-comparison.json`)).status, 404,
+      'Unused Telegram/AES distribution outputs must not be shipped.');
+    assert.equal((await fetch(`${configured.url}/tg-stream-sw.js`)).status, 404, 'Telegram service worker is omitted.');
+    const dependencyAudit = await fetch(`${configured.url}/distribution-sources/notices/unraid-audit.json`).then(response => response.json());
+    assert.equal(dependencyAudit.passed, true);
+    assert.deepEqual(dependencyAudit.excludedProductionPackages, []);
+    assert.deepEqual(dependencyAudit.issues, []);
+    assert.ok(dependencyAudit.findings.some(item => item.kind === 'webpack-module-stats'));
     const cloud = await fetch(`${configured.url}/api/cloud-auth/auth-login`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
     });

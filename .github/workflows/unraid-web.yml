@@ -3,10 +3,10 @@ name: ARVIO Web container preview
 on:
   pull_request:
     branches: [main]
-    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', 'scripts/test-unraid-contract.ps1', 'scripts/export-unraid-feed.ps1', '.github/workflows/unraid-web.yml']
+    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/*unraid*', '.github/workflows/unraid-web.yml']
   push:
     branches: [main, codex/unraid-distribution]
-    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/check-unraid*', 'scripts/test-unraid-contract.ps1', 'scripts/export-unraid-feed.ps1', '.github/workflows/unraid-web.yml']
+    paths: ['web/**', 'templates/**', 'ca_profile.xml', 'unraid/**', 'scripts/*unraid*', '.github/workflows/unraid-web.yml']
   workflow_dispatch:
     inputs:
       publish_preview:
@@ -24,7 +24,7 @@ concurrency:
 jobs:
   container:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.20.0'
+          node-version: '22.23.3'
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Validate Unraid metadata
@@ -49,8 +49,18 @@ jobs:
         working-directory: web
         run: |
           npm test
+          node scripts/unraid-package.mjs
+          node --test scripts/unraid-dependency-audit.test.mjs
+          node scripts/runtime-test.mjs
+          node scripts/aes-verify-source.mjs
+          node --test distribution-sources/aes/aes-source.test.mjs
           npx tsc --noEmit
       - uses: docker/setup-buildx-action@v3
+      - name: Package exact committed public source
+        run: |
+          node scripts/test-unraid-source.cjs
+          node scripts/test-unraid-distribution.cjs
+          node scripts/prepare-unraid-source.cjs "${{ github.sha }}"
       - name: Build keyless self-hosted image
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:
@@ -60,10 +70,23 @@ jobs:
           tags: arvio-web:ci
           labels: |
             org.opencontainers.image.source=https://github.com/ProdigyV21/ARVIO
-            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.licenses=NOASSERTION
+            org.opencontainers.image.documentation=https://github.com/ProdigyV21/ARVIO/blob/main/unraid/README.md
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Export the same compiler-stage codec packages
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: web
+          target: codecs-export
+          platforms: linux/amd64
+          outputs: type=local,dest=artifacts/unraid/codecs
+          cache-from: type=gha
+      - name: Verify rebuilt codec source closure and actual browser audio round trips
+        run: |
+          node web/scripts/codecs-check.mjs artifacts/unraid/codecs web
+          node web/scripts/codecs-runtime-test.mjs artifacts/unraid/codecs web
       - name: Smoke-test the exact container
         run: node scripts/check-unraid-container.cjs arvio-web:ci
       - name: Save the tested image for the isolated publishing job

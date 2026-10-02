@@ -79,6 +79,22 @@ test('official builds do not opt into standalone output or independent mode', ()
   }).default;
   assert.equal(m.env.NEXT_PUBLIC_SELF_HOSTED, 'false');
   assert.equal(m.output, undefined);
+  assert.equal(m.env.NEXT_PUBLIC_TELEGRAM_ENABLED, 'true');
+});
+
+test('Unraid Telegram disable is baked in and aliases both app and SDK before bundling', () => {
+  const m = load('next.config.mjs', { 'node:fs': { writeFileSync() {}, mkdirSync() {} } }, {
+    process: { cwd: () => '.', env: { NEXT_PUBLIC_TELEGRAM_ENABLED: 'false' } }
+  }).default;
+  assert.equal(m.env.NEXT_PUBLIC_TELEGRAM_ENABLED, 'false');
+  for (const isServer of [true, false]) {
+    const bundled = m.webpack({ plugins: [], resolve: { alias: { existing: 'kept' } } }, { isServer });
+    assert.equal(bundled.resolve.alias.telegram, false);
+    assert.equal(bundled.resolve.alias['@cryptography/aes'], false);
+    assert.ok(bundled.resolve.alias['@/lib/telegram$'].endsWith('lib' + path.sep + 'telegram-disabled.ts'));
+    assert.equal(bundled.resolve.alias.existing, 'kept');
+    assert.equal(bundled.plugins.length, 1, 'actual webpack module inventory accompanies this build');
+  }
 });
 
 for (const provider of ['tmdb', 'trakt', 'simkl']) {

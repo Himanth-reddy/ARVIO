@@ -522,7 +522,9 @@ test('failed converted HLS never refreshes back to the incompatible original CDN
 
 function storeHarness(prepare, report = async () => {}, overrides = {}) {
   const state = { active: null, accepted: [], toasts: [], timers: new Map() };
+  const { isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE } = load('lib/config.ts');
   const globals = {
+    isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE,
     playbackPreparation: { current: null }, playbackGeneration: { current: 0 }, ownedPlayback: { current: null },
     activeProfileIdRef: { current: 'profile-a' }, settingsRef: { current: settings },
     authClient: { session: { userId: 'account-a' } }, selected: { title: 'Fixture' }, activeProfile: { id: 'profile-a' }, selectedEpisode: null,
@@ -548,6 +550,34 @@ function storeHarness(prepare, report = async () => {}, overrides = {}) {
     profileCleanup: profileEffect()
   };
 }
+
+test('disabled build rejects saved Telegram selections before preparation or external handoff', async () => {
+  const feature = load('lib/config.ts', {}, { process: { env: { NEXT_PUBLIC_TELEGRAM_ENABLED: 'false' } } });
+  const forbidden = () => assert.fail('Disabled Telegram reached a playback path');
+  const h = storeHarness(forbidden, forbidden, {
+    isDisabledTelegramSource: feature.isDisabledTelegramSource,
+    TELEGRAM_DISABLED_MESSAGE: feature.TELEGRAM_DISABLED_MESSAGE,
+    settingsRef: { current: { ...settings, defaultPlayer: 'vlc' } },
+    openExternalPlayer: forbidden
+  });
+  for (const stream of [{ addonId: 'telegram_native', url: 'https://media.example/video.mp4' },
+    { url: '/tg-stream/saved-id' },
+    { url: 'https://new-install.example/prepared.mp4', originalUrl: 'https://old-install.example/tg-stream/id' }]) {
+    h.play(stream);
+    await flush();
+    assert.equal(h.state.active, null);
+    assert.equal(h.state.toasts.at(-1), feature.TELEGRAM_DISABLED_MESSAGE);
+  }
+});
+
+test('default build still prepares an existing Telegram selection', async () => {
+  const inputs = [];
+  const h = storeHarness(async stream => { inputs.push(stream); return stream; });
+  h.play({ addonId: 'telegram_native', url: '/tg-stream/hosted-id' });
+  await flush();
+  assert.equal(inputs.length, 1);
+  assert.equal(h.state.active.url, '/tg-stream/hosted-id');
+});
 
 function sessionEffect(stream, report, update = () => {}) {
   const video = new EventTarget();

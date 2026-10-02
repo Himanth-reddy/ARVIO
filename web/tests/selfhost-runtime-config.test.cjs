@@ -43,6 +43,16 @@ test('runtime bootstrap exposes exactly five allowlisted public fields, never se
   }
 });
 
+test('Telegram-free image withholds even valid runtime Telegram credentials', async () => {
+  const text = await route({ ...env, NEXT_PUBLIC_TELEGRAM_ENABLED: 'false' }).GET().text();
+  const window = {};
+  vm.runInNewContext(text, { window });
+  assert.equal(window.__ARVIO_SELFHOST_CONFIG__.telegramApiId, '');
+  assert.equal(window.__ARVIO_SELFHOST_CONFIG__.telegramApiHash, '');
+  assert.equal(window.__ARVIO_SELFHOST_CONFIG__.traktClientId, env.TRAKT_CLIENT_ID);
+  assert.equal(text.includes(env.TELEGRAM_API_HASH), false);
+});
+
 test('hosted service does not expose a runtime configuration even if personal IDs are set', async () => {
   const response = route({ ...env, NEXT_PUBLIC_SELF_HOSTED: 'false' }).GET();
   assert.equal(response.status, 404);

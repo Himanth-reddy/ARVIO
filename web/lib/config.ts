@@ -8,6 +8,9 @@ const selfHosted = process.env.NEXT_PUBLIC_SELF_HOSTED === "true";
 
 export const config = {
   selfHosted,
+  // Fixed by the browser build. Missing preserves the hosted feature; runtime
+  // credentials cannot re-enable a distribution that intentionally omits it.
+  telegramEnabled: process.env.NEXT_PUBLIC_TELEGRAM_ENABLED !== "false",
   sportsMetadataUrl: process.env.NEXT_PUBLIC_SPORTS_METADATA_URL ?? "",
   supabaseUrl: selfHosted ? "" : process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
   supabaseAnonKey: selfHosted ? "" : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
@@ -30,6 +33,41 @@ export const config = {
   backdropBase: "https://image.tmdb.org/t/p/w1280",
   backdropOriginal: "https://image.tmdb.org/t/p/original"
 };
+
+export const TELEGRAM_DISABLED_MESSAGE = "Telegram is not available in this Unraid preview. Choose another source.";
+
+function containsTelegramStreamUrl(value: unknown): boolean {
+  // Managed download records may contain the resolver's /media?url= wrapper,
+  // rather than the original stream URL. Bound unwrapping to avoid recursion.
+  for (let depth = 0; depth <= 2; depth++) {
+    if (typeof value !== "string" || !value.trim()) return false;
+    try {
+      const url = new URL(value, "https://arvio.invalid");
+      if (url.pathname.startsWith("/tg-stream/")) return true;
+      value = url.searchParams.get("url");
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+// Saved sources can predate this build and may have lost their addon metadata.
+// Check both URL fields, including absolute URLs, without trusting their shape.
+export function isTelegramSource(source: unknown): boolean {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return false;
+  const value = source as { addonId?: unknown; url?: unknown; originalUrl?: unknown };
+  if (value.addonId === "telegram_native") return true;
+  return [value.url, value.originalUrl].some(containsTelegramStreamUrl);
+}
+
+export function isDisabledTelegramSource(source: unknown): boolean {
+  return !config.telegramEnabled && isTelegramSource(source);
+}
+
+export function assertTelegramSourceAvailable(source: unknown): void {
+  if (isDisabledTelegramSource(source)) throw new Error(TELEGRAM_DISABLED_MESSAGE);
+}
 
 export function hasSupabaseConfig() {
   return config.supabaseUrl.startsWith("https://") && config.supabaseAnonKey.length > 40;

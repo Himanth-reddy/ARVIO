@@ -13,12 +13,15 @@ acceptance. Before submitting, verify that the image is public and anonymously
 pullable and that the template feed exists on its repository's default branch.
 A draft PR or a Dockerfile alone does not meet those gates.
 
-**Public image publication is currently gated by an unresolved third-party
-source/redistribution-license review.** The source project uses Apache-2.0, but
-that does not replace the licenses and corresponding-source requirements of
-dependencies bundled in the container. Added license notices alone do not close
-this gate. Do not publish the preview or submit it as installable before the
-maintainer resolves the review described below.
+**The image is not yet published.** The maintainer selected a preview without
+Telegram: its browser SDK and AES dependency are not included in the runtime.
+Plex, Jellyfin, Emby and the rebuilt audio codecs remain available. Original
+ARVIO source remains Apache-2.0; Android and the hosted service are unchanged.
+The container recipe
+packages exact source archives, dependency notices and rebuilt codec relinking
+materials. Publication remains gated on successful source-bundle verification,
+full container QA and the release checks below. Do not mistake this recipe or
+source work for proof of a released image or an approved Community Apps listing.
 
 ## Install
 
@@ -36,7 +39,7 @@ Unraid's Docker template editor. Do not install a template from an unknown sourc
    section below before enabling it.
 4. Apply the template and open WebUI. Create/select a local profile and configure
    your sources in Settings. Use a trusted HTTPS URL for full browser support.
-5. Optional Trakt, Simkl and Telegram application credentials are advanced fields.
+5. Optional Trakt and Simkl application credentials are advanced fields.
    Use applications you own. Restart after changing them; no image rebuild is
    required. A generic image never contains the ARVIO owner's API keys.
 
@@ -71,7 +74,7 @@ your private network. A provider login inside the ARVIO UI does not authenticate
 incoming requests to the web server itself.
 
 The TMDB key and OAuth secrets stay server-side. Optional public application IDs,
-Telegram application credentials and the resolver URL are delivered to your
+and the resolver URL are delivered to your
 browser by a no-store self-host configuration endpoint. Do not put passwords,
 user access tokens, session strings or URL-embedded credentials in those fields.
 Masking a field in Unraid does not encrypt the Docker template or environment.
@@ -100,7 +103,12 @@ redacted error. Do not upload credentials or private server addresses.
 1. Run `pwsh -File scripts/check-unraid.ps1`.
    Run `pwsh -File scripts/test-unraid-contract.ps1` for adversarial metadata
    regressions. These are project-specific checks, not Unraid's own scanner.
-2. Build without credentials: `docker build -t arvio-web:unraid-test web`.
+2. Commit all public build inputs, then run
+   `node scripts/test-unraid-source.cjs` and
+   `node scripts/prepare-unraid-source.cjs <full-checked-out-commit-SHA>`.
+   The bundle uses only committed public inputs; dirty/untracked build inputs
+   are rejected. Runtime credentials are never input to this archive.
+   Build without credentials: `docker build --platform linux/amd64 -t arvio-web:unraid-test web`.
 3. Run `node scripts/check-unraid-container.cjs arvio-web:unraid-test`.
 4. Close the source/redistribution-license review below **before** any public
    image publication. Then explicitly authorize a publishing workflow run.
@@ -123,20 +131,43 @@ redacted error. Do not upload credentials or private server addresses.
 8. The owner must approve the final submission and associated terms. Record the
    actual submission result; do not label an unsubmitted package as listed.
 
-### Outstanding source and redistribution review
+### Distribution source and licences
 
-The full-featured image's closure is not yet verified for Telegram's GPL-licensed
-`@cryptography/aes` dependency, the exact MPL-licensed Mediabunny source, and the
-FFmpeg source/build provenance behind the embedded codec WebAssembly. Packaging
-license texts and a dependency manifest is useful, but is not evidence that all
-required corresponding source and build materials are supplied.
+The maintainer selected a preview **without Telegram**. Its SDK and GPL AES
+runtime dependency are excluded at compile time and checked against the built
+server/client output. Saved Telegram sources cannot play or download in this
+preview and receive a clear unavailable message; existing user data is not
+deleted. Other integrations retain their normal behavior. Original component
+notices and source licences are retained. Settings → About & Credits and the
+profile screen link to `/distribution-sources/index.html`, which contains source,
+licence notices and a SHA-256 inventory. Source archives ship with the image,
+rather than depending solely on mutable URLs or short-lived CI artifacts.
 
-The maintainer must choose and verify either a compliant full-featured source
-distribution, or a narrower preview that excludes the affected Telegram and
-additional software-codec components. No feature-removal choice has been made
-here, and the project/dependency licenses must not be relabelled to bypass the
-review. Until that decision and verification are complete, keep image publication
-and Community Apps submission paused.
+Mediabunny core/wrapper source is pinned; the
+three opaque upstream codec packages are completely replaced with builds from
+FFmpeg 8.1.3 and Emscripten 4.0.23. GPL/nonfree FFmpeg options are disabled.
+FFmpeg configurations, bridge objects, static libraries and relinking scripts
+accompany the binaries. Node, actual Debian package sources, native libvips
+sources/build recipes, installed notices and public-asset hashes are packaged.
+
+Packaging checks must actually run and pass before release. These technical
+records are not a legal opinion, a codec-patent clearance or a guarantee of
+individual third-party artwork/trademark ownership. Original dependency licence
+conditions still apply. The original SDK remains a build-only type dependency,
+so it may appear in the broad build-time notices inventory. Experimental AES
+and npm source-audit helpers in the repository are not active release outputs.
+The narrowed preview does not rely on a browser-incompatible replacement or
+an unverified downgrade.
+
+### Isolated image dependencies
+
+The normal `web/package.json` and lock retain hosted functionality. The scoped
+`web/distribution-sources/unraid` manifest moves Telegram to a builder-only
+development dependency without changing any locked package versions. To
+regenerate it after a dependency update, run `node scripts/unraid-package.mjs
+--prepare` from `web`, then run `npm install --package-lock-only --ignore-scripts`
+from `web/distribution-sources/unraid`, and verify with
+`node scripts/unraid-package.mjs` from `web`.
 
 Official contracts: [submission help](https://ca.unraid.net/submit/help),
 [Docker XML](https://ca.unraid.net/submit/help/repository-xml),

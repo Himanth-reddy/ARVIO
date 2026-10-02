@@ -25,7 +25,7 @@ function walk(directory) {
     }
     if (!entry.isFile()) continue;
     const rel = relative(dependencyRoot, source);
-    if (/^(?:LICEN[CS]E|COPYING|NOTICE|COPYRIGHT)(?:[.-]|$)/i.test(entry.name)) {
+    if (/^(?:(?:THIRD[-_]PARTY[-_])?LICEN[CS]ES?|COPYING|(?:THIRD[-_]PARTY[-_])?NOTICES?|COPYRIGHT)(?:[._-]|$)/i.test(entry.name) || /\.(?:LEGAL|LICEN[CS]ES?|NOTICES?)(?:[._-]|$)/i.test(entry.name)) {
       const destination = join(output, "files", rel);
       mkdirSync(dirname(destination), { recursive: true });
       copyFileSync(source, destination);
