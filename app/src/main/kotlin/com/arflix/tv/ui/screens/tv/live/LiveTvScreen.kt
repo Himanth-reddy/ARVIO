@@ -1642,6 +1642,17 @@ fun LiveTvScreen(
         playingCatchupProgram?.let { IptvNowNext(now = it) }
             ?: effectiveGuideNowNext[playingChannelId]?.atTime(guideClockMillis)
     }
+    fun focusedChannelPreview(): Pair<EnrichedChannel, IptvNowNext?>? {
+        if (focusZone != LiveTvFocusZone.CHANNEL_LIST && focusZone != LiveTvFocusZone.EPG) return null
+        val channelId = focusedChannelId ?: return null
+        val channel = focusedChannelObject[0]?.takeIf { it.id == channelId }
+            ?: visibleEnrichedState.value.index.byId[channelId]
+            ?: filteredChannelIndexById[channelId]?.let(filteredChannels::getOrNull)
+            ?: return null
+        val guide = if (channel.id == playingChannelId) currentNowNext
+            else effectiveGuideNowNext[channel.id]?.atTime(guideClockMillis)
+        return channel to guide
+    }
     val actionGuideNowNext = remember(state.snapshot.nowNext, effectiveGuideNowNext) {
         HashMap(state.snapshot.nowNext).apply { putAll(effectiveGuideNowNext) }
     }
@@ -2601,6 +2612,9 @@ fun LiveTvScreen(
 
     fun focusEpg(channelId: String) {
         noteGuideUserNavigation()
+        // Until a real guide cell reports focus, show this channel's own
+        // current programme/fallback rather than a cell from the previous visit.
+        focusedProgramme = null
         focusedChannelId = channelId
         epgPrefetchAnchorId = channelId
         rememberedChannelByCategory[categoryScope] = channelId
@@ -4075,6 +4089,7 @@ fun LiveTvScreen(
                         ) {
                             MiniPlayerRow(
                                 focusedProgrammeProvider = { focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG } },
+                                focusedChannelProvider = ::focusedChannelPreview,
                                 exoPlayer = exoPlayer,
                                 channel = playingDisplayChannel ?: playingChannel,
                                 clockTickMillis = guideClockMillis,
@@ -4243,6 +4258,7 @@ fun LiveTvScreen(
                 ) {
                     if (!sportsSelected) MiniPlayerRow(
                         focusedProgrammeProvider = { focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG } },
+                        focusedChannelProvider = ::focusedChannelPreview,
                         exoPlayer = exoPlayer,
                         channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
