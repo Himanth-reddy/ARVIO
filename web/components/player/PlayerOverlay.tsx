@@ -34,6 +34,7 @@ import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer 
 import { proxiedUrl } from "@/lib/http";
 import { attachPlayback, type PlaybackHandle, type PlaybackTracks, type PlaybackError } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
+import { attachExternalSubtitle, positionSubtitleCues, type SubtitleLoadState } from "@/lib/playerSubtitles";
 import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
 import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure } from "@/lib/streamCompatibility";
@@ -162,7 +163,7 @@ function defaultSubtitleIndex(stream: StreamSource, language: string) {
 
 // Subtitle list ordered like the app: the user's preferred language first,
 // English next, then everything else alphabetically by language name. Each
-// entry keeps its original index (the <track> elements are index-addressed).
+// entry keeps its original index in the source's subtitle list.
 function orderedSubtitles(stream: StreamSource, preferred: string) {
   const pref = preferred.trim().toLowerCase();
   return (stream.subtitles ?? [])
@@ -380,6 +381,14 @@ function VideoPlayer({
   }, [error, liveTv, stream.remux, stream.transport]);
   const [activePanel, setActivePanel] = useState<PlayerPanel>(null);
   const [activeSubtitle, setActiveSubtitle] = useState(-1);
+  const [subtitleState, setSubtitleState] = useState<SubtitleLoadState>({ status: "off", track: null });
+  const [subtitleRetry, setSubtitleRetry] = useState(0);
+  const manualSubtitle = useRef<{ source: StreamSource["url"]; preference: string; url: string | null } | null>(null);
+  const selectSubtitle = (index: number) => {
+    manualSubtitle.current = { source: stream.url, preference: settings.defaultSubtitle, url: stream.subtitles?.[index]?.url ?? null };
+    setActiveSubtitle(index);
+    setAiSubsActive(false);
+  };
   const [skipOverlay, setSkipOverlay] = useState<number | null>(null);
   const [remuxTracks, setRemuxTracks] = useState<RemuxAudioTrack[]>([]);
   const [remuxAudioIndex, setRemuxAudioIndex] = useState(-1);
@@ -541,7 +550,7 @@ function VideoPlayer({
   useEffect(() => {
     if (!aiSubsActive || !aiAvailable || activeSubtitle < 0) return undefined;
     const video = videoRef.current;
-    const track = video?.textTracks?.[activeSubtitle];
+    const track = subtitleState.track;
     if (!video || !track) return undefined;
     const translator = new SubtitleTranslator(settings.aiApiKey, settings.aiSubtitleModel === "gemini" ? "gemini" : "groq", aiTargetName);
     translator.onTranslatingChanged = setAiTranslating;
@@ -573,24 +582,7 @@ function VideoPlayer({
       setAiTranslating(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aiSubsActive, aiAvailable, activeSubtitle, stream.url, settings.aiApiKey, settings.aiSubtitleModel, aiTargetName]);
-
-  // Auto-activate AI (app parity): preferred-language subtitle missing but an
-  // English source exists → translate it automatically.
-  useEffect(() => {
-    if (!aiAvailable || !settings.aiAutoSelect || liveTv) return;
-    const subtitles = stream.subtitles ?? [];
-    if (!subtitles.length) return;
-    const pref = settings.defaultSubtitle.trim().toLowerCase();
-    if (!pref || pref === "off") return;
-    const hasPreferred = subtitles.some((subtitle) => (subtitle.lang ?? "").toLowerCase().startsWith(pref));
-    const englishIndex = subtitles.findIndex((subtitle) => (subtitle.lang ?? "").toLowerCase().startsWith("en"));
-    if (!hasPreferred && englishIndex >= 0) {
-      setActiveSubtitle(englishIndex);
-      setAiSubsActive(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream.url, stream.subtitles?.length, aiAvailable, settings.aiAutoSelect, liveTv]);
+  }, [aiSubsActive, aiAvailable, activeSubtitle, subtitleState.track, stream.url, settings.aiApiKey, settings.aiSubtitleModel, aiTargetName]);
 
   // Adaptive downswitch: repeated mid-play buffering means the connection
   // can't sustain this file's bitrate (common with huge remuxes over VPN) —
@@ -725,7 +717,20 @@ function VideoPlayer({
   }, [stream, liveTv]);
   const mediaMeta = [subtitleLabel, stream.quality, stream.size, stream.addonName].filter(Boolean).join(" - ");
   const playbackIdentity = JSON.stringify([stream.url, stream.remux, stream.transcoded, stream.transport, stream.behaviorHints?.proxyHeaders?.request]);
-  useEffect(() => { setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle)); }, [stream.subtitles, stream.url, settings.defaultSubtitle]);
+  useEffect(() => {
+    const manual = manualSubtitle.current;
+    if (manual && manual.source === stream.url && manual.preference === settings.defaultSubtitle) {
+      setActiveSubtitle(manual.url ? (stream.subtitles ?? []).findIndex(subtitle => subtitle.url === manual.url) : -1);
+    } else {
+      manualSubtitle.current = null;
+      const preferred = defaultSubtitleIndex(stream, settings.defaultSubtitle);
+      const language = settings.defaultSubtitle.trim().toLowerCase();
+      const english = (stream.subtitles ?? []).findIndex(subtitle => (subtitle.lang ?? "").toLowerCase().startsWith("en"));
+      const translate = !!(aiAvailable && settings.aiAutoSelect && !liveTv && language && language !== "off" && preferred < 0 && english >= 0);
+      setActiveSubtitle(translate ? english : preferred);
+      setAiSubsActive(translate);
+    }
+  }, [stream.subtitles, stream.url, settings.defaultSubtitle, aiAvailable, settings.aiAutoSelect, liveTv]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -746,7 +751,6 @@ function VideoPlayer({
       setErrorDetail("");
       failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
       setBuffering(true);
-      setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
       setRemuxTracks([]);
       lastSavedRef.current = 0;
       const remuxFailed = (message: string) => {
@@ -838,7 +842,6 @@ function VideoPlayer({
     setErrorDetail("");
     failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
     setBuffering(true);
-    setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
     lastSavedRef.current = 0;
     const headers = stream.behaviorHints?.proxyHeaders?.request;
     let handlingError = false;
@@ -1194,14 +1197,16 @@ function VideoPlayer({
     };
   }, [stream]);
 
+  const selectedSubtitle = stream.subtitles?.[activeSubtitle];
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const tracks = Array.from(video.textTracks);
-    tracks.forEach((track, index) => {
-      track.mode = activeSubtitle === index ? "showing" : "disabled";
-    });
-  }, [activeSubtitle, stream]);
+    return attachExternalSubtitle(video, selectedSubtitle ? {
+      url: resolverSubtitleUrl(selectedSubtitle.url), lang: selectedSubtitle.lang, label: selectedSubtitle.label
+    } : null, setSubtitleState);
+    // Metadata refreshes must not restart the same subtitle download.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.url, selectedSubtitle?.url, selectedSubtitle?.lang, selectedSubtitle?.label, subtitleRetry]);
 
   // Reset the manual remux audio override when the source changes so each new
   // source starts from its own automatic best-track choice.
@@ -1577,32 +1582,13 @@ function VideoPlayer({
   // — lower number = higher on screen. Applied per cue on the active track.
   const subtitleLinePercent = { bottom: 84, low: 78, medium: 68, high: 56 }[settings.subtitleOffset] ?? 84;
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || activeSubtitle < 0) return undefined;
-    const track = video.textTracks?.[activeSubtitle];
+    const track = subtitleState.track;
     if (!track) return undefined;
-    // Subtitle sync offset. The Settings slider wrote subtitleOffsetMs but
-    // nothing ever read it, so the control did nothing at all. Shift each cue
-    // by the stored delta, remembering the original times so repeated changes
-    // (and switching back to 0) stay accurate instead of compounding.
-    const shiftSec = (settings.subtitleOffsetMs ?? 0) / 1000;
-    const originals = new WeakMap<VTTCue, { start: number; end: number }>();
-    const applyLine = () => {
-      for (const cue of Array.from(track.cues ?? []) as VTTCue[]) {
-        cue.snapToLines = false;
-        cue.line = subtitleLinePercent;
-        if (!originals.has(cue)) originals.set(cue, { start: cue.startTime, end: cue.endTime });
-        const base = originals.get(cue)!;
-        const start = Math.max(0, base.start + shiftSec);
-        const end = Math.max(start + 0.05, base.end + shiftSec);
-        if (cue.startTime !== start) cue.startTime = start;
-        if (cue.endTime !== end) cue.endTime = end;
-      }
-    };
+    const applyLine = () => positionSubtitleCues(track, subtitleLinePercent, settings.subtitleOffsetMs ?? 0);
     applyLine();
     track.addEventListener("cuechange", applyLine);
     return () => track.removeEventListener("cuechange", applyLine);
-  }, [activeSubtitle, subtitleLinePercent, settings.subtitleOffsetMs, stream.url]);
+  }, [subtitleState.track, subtitleLinePercent, settings.subtitleOffsetMs]);
   // While scrubbing the bar follows the drag, not the (not yet moved) playhead.
   const scrubDisplayTime = scrubTo ?? current;
   const pct = duration > 0 ? (scrubDisplayTime / duration) * 100 : 0;
@@ -1616,18 +1602,7 @@ function VideoPlayer({
       onMouseMove={flashControls}
     >
       <style>{cueCss}</style>
-      <video ref={videoRef} autoPlay playsInline preload="auto" onClick={togglePlay} poster={item?.backdrop ?? undefined}>
-        {(stream.subtitles ?? []).map((subtitle, index) => (
-          <track
-            key={subtitle.id || subtitle.url}
-            kind="subtitles"
-            srcLang={subtitle.lang || "en"}
-            label={subtitle.label || subtitle.lang || translateUi("Subtitle")}
-            src={resolverSubtitleUrl(subtitle.url)}
-            default={activeSubtitle === index}
-          />
-        ))}
-      </video>
+      <video ref={videoRef} autoPlay playsInline preload="auto" onClick={togglePlay} poster={item?.backdrop ?? undefined} />
       {dock.docked && <div className="player-dock-controls">
         <span role="status">{error ? translateUi("Unavailable") : buffering ? translateUi("Connecting") : playing ? translateUi("LIVE") : translateUi("Paused")}</span>
         <button type="button" onClick={togglePlay} aria-label={playing ? translateUi("Pause") : translateUi("Play")} title={playing ? translateUi("Pause") : translateUi("Play")}>{playing ? <Pause size={20} /> : <Play size={20} />}</button>
@@ -1789,7 +1764,7 @@ function VideoPlayer({
 
           {activePanel === "subtitles" && (
             <div className="player-panel-list">
-              <button type="button" className={`player-panel-row ${activeSubtitle < 0 ? "is-active" : ""}`} onClick={() => { setActiveSubtitle(-1); setAiSubsActive(false); }}>
+              <button type="button" className={`player-panel-row ${activeSubtitle < 0 ? "is-active" : ""}`} onClick={() => selectSubtitle(-1)}>
                 <span className="player-row-icon">{activeSubtitle < 0 ? <Check size={17} /> : ""}</span>
                 <span><strong>{translateUi("Off")}</strong><em>{translateUi("No subtitle track")}</em></span>
               </button>
@@ -1807,7 +1782,7 @@ function VideoPlayer({
                       onToast("AI subtitles need an English source subtitle for this title.");
                       return;
                     }
-                    setActiveSubtitle(englishIndex);
+                    selectSubtitle(englishIndex);
                     setAiSubsActive(true);
                   }}
                 >
@@ -1823,7 +1798,7 @@ function VideoPlayer({
                   type="button"
                   key={subtitle.id || subtitle.url}
                   className={`player-panel-row ${activeSubtitle === index && !aiSubsActive ? "is-active" : ""}`}
-                  onClick={() => { setActiveSubtitle(index); setAiSubsActive(false); }}
+                  onClick={() => selectSubtitle(index)}
                 >
                   <span className="player-row-icon">{activeSubtitle === index && !aiSubsActive ? <Check size={17} /> : ""}</span>
                   <span>
@@ -1832,6 +1807,11 @@ function VideoPlayer({
                   </span>
                 </button>
               ))}
+              {subtitleState.status === "loading" && <p className="player-panel-empty" role="status">{translateUi("Subtitles")} · {translateUi("Loading")}</p>}
+              {subtitleState.status === "failed" && <div className="player-panel-empty" role="alert">
+                <p>{translateUi("Subtitles")} · {translateUi("Unavailable")}</p>
+                <button type="button" className="secondary" onClick={() => setSubtitleRetry(value => value + 1)}>{translateUi("Retry")}</button>
+              </div>}
               {(stream.subtitles?.length ?? 0) === 0 && <p className="player-panel-empty">{translateUi("No external subtitles were returned for this source.")}</p>}
             </div>
           )}
