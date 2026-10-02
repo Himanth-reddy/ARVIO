@@ -9,6 +9,8 @@ out/
 .env
 .env.local
 .env.*.local
+distribution-artifacts/
+public/distribution-sources/
 
 # The repo-root .gitignore ignores all *.png (screenshots). Re-include the
 # bundled avatar/static image assets the web app needs at runtime.

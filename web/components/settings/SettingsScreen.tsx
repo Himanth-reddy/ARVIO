@@ -127,6 +127,7 @@ const SECTIONS = [
   { id: "credits", label: "About & Credits", icon: Eye },
 ] as const;
 
+const VISIBLE_SECTIONS = SECTIONS.filter(section => config.telegramEnabled || section.id !== "telegram");
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -242,7 +243,7 @@ export function SettingsScreen() {
     return () => window.removeEventListener(SOURCE_SETTINGS_EVENT, navigate);
   }, []);
 
-  const activeSectionObj = SECTIONS.find((s) => s.id === section);
+  const activeSectionObj = VISIBLE_SECTIONS.find((s) => s.id === section);
 
   return (
     <div className={`settings-shell ${collapsed ? "sidebar-collapsed" : "sidebar-expanded"}`}>
@@ -270,7 +271,7 @@ export function SettingsScreen() {
           <h2 className="settings-sidebar-title">{translateUi("Settings")}</h2>
         </div>
         <nav className="settings-nav">
-          {SECTIONS.map((s) => {
+          {VISIBLE_SECTIONS.map((s) => {
             const Icon = s.icon;
             return (
               <button
@@ -312,7 +313,7 @@ export function SettingsScreen() {
             </button>
           </div>
           <nav className="settings-mobile-nav">
-            {SECTIONS.map((s) => {
+            {VISIBLE_SECTIONS.map((s) => {
               const Icon = s.icon;
               const isActive = section === s.id;
               return (
@@ -592,6 +593,10 @@ function SectionBody({ section }: { section: SectionId }) {
     case "credits":
       return (
         <Panel title={translateUi("About ARVIO")}>
+          {process.env.NEXT_PUBLIC_UNRAID_DISTRIBUTION === "true" && (
+            <p><a className="secondary text-button" href="/distribution-sources/index.html" target="_blank" rel="noopener noreferrer">
+              <ExternalLink size={16} /> Source code & licences</a></p>
+          )}
           <h3>{translateUi("Credits")}</h3>
           <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer">
             <img src="/tmdb-logo.svg" alt="TMDB" width={100} height={16} />
@@ -1122,7 +1127,7 @@ function SectionBody({ section }: { section: SectionId }) {
     case "homeserver":
       return <HomeServerSection />;
     case "telegram":
-      return <TelegramSection />;
+      return config.telegramEnabled ? <TelegramSection /> : null;
     case "catalogs":
       return <CatalogsSection />;
     case "addons":
@@ -1818,6 +1823,7 @@ function TelegramSection() {
 
   // Load the Telegram module and subscribe to its auth state.
   useEffect(() => {
+    if (!config.telegramEnabled) return;
     let unsub: (() => void) | undefined;
     let active = true;
     void (async () => {
@@ -1866,7 +1872,7 @@ function TelegramSection() {
     );
   }
 
-  if (!mod.isTelegramConfigured) {
+  if (!mod.isTelegramConfigured()) {
     return (
       <Panel title={translateUi("Telegram")}>
         <p className="empty">
