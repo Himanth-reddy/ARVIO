@@ -13,13 +13,16 @@ acceptance. Before submitting, verify that the image is public and anonymously
 pullable and that the template feed exists on its repository's default branch.
 A draft PR or a Dockerfile alone does not meet those gates.
 
-**The image is not yet published.** The maintainer selected a preview without
+**Publication is a separate release step.** See the
+[template feed's release status](https://github.com/ProdigyV21/ARVIO-Unraid)
+for the currently verified image digest; do not infer availability from this
+recipe or a draft PR. The maintainer selected a preview without
 Telegram: its browser SDK and AES dependency are not included in the runtime.
 Plex, Jellyfin, Emby and the rebuilt audio codecs remain available. Original
 ARVIO source remains Apache-2.0; Android and the hosted service are unchanged.
 The container recipe
 packages exact source archives, dependency notices and rebuilt codec relinking
-materials. Publication remains gated on successful source-bundle verification,
+materials. Publication is gated on successful source-bundle verification,
 full container QA and the release checks below. Do not mistake this recipe or
 source work for proof of a released image or an approved Community Apps listing.
 
@@ -149,6 +152,8 @@ FFmpeg 8.1.3 and Emscripten 4.0.23. GPL/nonfree FFmpeg options are disabled.
 FFmpeg configurations, bridge objects, static libraries and relinking scripts
 accompany the binaries. Node, actual Debian package sources, native libvips
 sources/build recipes, installed notices and public-asset hashes are packaged.
+The Debian runner keeps only glibc Sharp/libvips binaries; unused optional musl
+variants are removed before tracing and rejected by the output audit.
 
 Packaging checks must actually run and pass before release. These technical
 records are not a legal opinion, a codec-patent clearance or a guarantee of

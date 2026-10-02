@@ -22,6 +22,10 @@ COPY distribution-sources/unraid/package.json distribution-sources/unraid/packag
 RUN npm ci
 COPY scripts/runtime-fetch-sources.mjs ./scripts/runtime-fetch-sources.mjs
 RUN node scripts/runtime-fetch-sources.mjs /distribution/runtime
+# This runner is Debian/glibc only. npm also installs optional musl variants;
+# omit those unused binaries before tracing so they cannot silently widen the
+# native distribution/source contract. Keep the active glibc Sharp packages.
+RUN node -e "const fs=require('node:fs');for(const p of ['sharp-linuxmusl-x64','sharp-libvips-linuxmusl-x64'])fs.rmSync('/app/node_modules/@img/'+p,{recursive:true,force:true})"
 # These directories contain old opaque embedded WASM. Remove only these three
 # temporary dependency dirs before replacing them; overlay COPY is insufficient.
 RUN node -e "const fs=require('node:fs');for(const p of ['ac3','dts','aac-encoder'])fs.rmSync('/app/node_modules/@mediabunny/'+p,{recursive:true,force:true})"

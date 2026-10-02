@@ -7,6 +7,9 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const slash = value => value.replaceAll('\\', '/');
 const forbidden = new Set(['telegram', '@cryptography/aes']);
 const packagePath = /(?:^|\/)node_modules\/(?:telegram|@cryptography\/aes)(?:\/|$)/;
+// This image is pinned to Linux amd64 glibc. Its native-source provider covers
+// the active glibc Sharp/libvips packages, not unused musl alternatives.
+const unsupportedNativePath = /(?:^|\/)node_modules\/@img\/(?:sharp|sharp-libvips)-linuxmusl-x64(?:\/|$)/;
 // Known literals observed in the exact excluded SDK/AES artifacts, not generic "Telegram" UI text.
 export const excludedSdkMarkers = [
   'GramJs:apiCache',
@@ -107,6 +110,7 @@ export async function auditUnraidDependencies(options) {
     if (scope === 'client' && !runtimeFiles.some(file => /\.[cm]?js$/.test(file.path))) issues.push({ kind: 'missing-client-chunks' });
     for (const file of runtimeFiles) {
       if (packagePath.test(file.path)) issues.push({ kind: 'excluded-sdk-runtime-path', scope, path: file.path });
+      if (unsupportedNativePath.test(file.path)) issues.push({ kind: 'unsupported-native-runtime-path', scope, path: file.path, reason: 'Unused musl alternative is outside the pinned Linux amd64 glibc runtime/source plan' });
       if (file.path.endsWith('/package.json') || file.path === 'package.json') {
         const metadata = JSON.parse(await readFile(file.absolute, 'utf8'));
         if (manifestForbidden(metadata)) issues.push({ kind: 'excluded-sdk-runtime-declaration', scope, path: file.path, name: metadata.name || null });

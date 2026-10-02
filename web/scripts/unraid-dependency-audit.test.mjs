@@ -93,3 +93,26 @@ test('stats directory requires client/node compiler evidence, with edge compilat
   assert.equal(result.passed, false);
   assert.ok(result.issues.some(issue => issue.kind === 'missing-required-webpack-stats'));
 });
+test('glibc native runtime passes, but either unused musl Sharp alternative fails the source-plan guard', async t => {
+  const options = await fixture(t);
+  const glibcFiles = ['node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64-0.35.4.node', 'node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.6'];
+  for (const relative of glibcFiles) {
+    const filename = path.join(options.standalone, relative);
+    await mkdir(path.dirname(filename), { recursive: true }); await writeFile(filename, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+  }
+  const valid = await auditUnraidDependencies(options);
+  assert.equal(valid.passed, true);
+  assert.equal(valid.redistributedNativeAndFontFiles.length, 2);
+  for (const relative of ['node_modules/@img/sharp-linuxmusl-x64/lib/sharp-linuxmusl-x64-0.35.4.node', 'node_modules/@img/sharp-libvips-linuxmusl-x64/lib/libvips-cpp.so.8.18.6']) {
+    const filename = path.join(options.standalone, relative);
+    await mkdir(path.dirname(filename), { recursive: true }); await writeFile(filename, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+    const result = await auditUnraidDependencies(options);
+    assert.equal(result.passed, false);
+    assert.ok(result.issues.some(issue => issue.kind === 'unsupported-native-runtime-path' && issue.path === relative));
+    await rm(filename);
+  }
+  // Builder-only metadata/notices can retain optional-platform descriptions.
+  await mkdir(path.join(options.input, '@img/sharp-linuxmusl-x64'), { recursive: true });
+  await writeFile(path.join(options.input, '@img/sharp-linuxmusl-x64/package.json'), JSON.stringify({ name: '@img/sharp-linuxmusl-x64', version: '0.35.4' }));
+  assert.equal((await auditUnraidDependencies(options)).passed, true);
+});
