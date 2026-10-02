@@ -907,7 +907,7 @@ function buildContinueLabel(item: MediaItem, selectedEpisode: { season: number; 
   const season = selectedEpisode?.season ?? item.seasonNumber ?? null;
   const episode = selectedEpisode?.episode ?? item.episodeNumber ?? null;
   if (item.mediaType === "tv") {
-    return season && episode ? `Continue S${season} E${episode}` : "Choose episode";
+    return season != null && episode != null ? `Continue S${season} E${episode}` : "Choose episode";
   }
   const progress = item.progress ?? 0;
   return progress >= 1 && progress <= 94 ? `Continue ${Math.round(progress)}%` : "Play";
@@ -933,8 +933,8 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
 }) {
   const translateUi = useTranslation();
   const { openContextMenu, setToast, settings, toggleWatched } = useApp();
-  const seasons = item.seasons ?? [];
-  const [season, setSeason] = useState(seasons[0]?.seasonNumber ?? 1);
+  const seasons = (item.seasons ?? []).filter(entry => entry.seasonNumber > 0 || settings.includeSpecials || item.seasonNumber === 0);
+  const [season, setSeason] = useState(selectedEpisode?.season ?? item.seasonNumber ?? seasons[0]?.seasonNumber ?? 1);
   const [episodes, setEpisodes] = useState<EpisodeInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
@@ -1064,7 +1064,8 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
           </p>
         ) : null}
         {!loading && episodes.map((episode) => {
-          const active = selectedEpisode?.season === season && selectedEpisode?.episode === episode.episodeNumber;
+          const active = (selectedEpisode?.season ?? item.seasonNumber) === season &&
+            (selectedEpisode?.episode ?? item.episodeNumber) === episode.episodeNumber;
           const episodeRating = episode.imdbRating || (episode.voteAverage && episode.voteAverage > 0 ? episode.voteAverage.toFixed(1) : "");
           const watched = isWatched(item, season, episode.episodeNumber);
           return (

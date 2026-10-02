@@ -1499,7 +1499,7 @@ export async function getDetails(item: MediaItem, priorityConfig?: ProviderPrior
         image: person.profile_path ? `${config.imageBase}${person.profile_path}` : ""
       })),
       seasons: item.mediaType === "tv" ? (details.seasons ?? [])
-        .filter((season) => (season.season_number ?? 0) > 0)
+        .filter((season) => season.season_number != null && season.season_number >= 0)
         .map((season) => ({
           id: season.id,
           seasonNumber: season.season_number ?? 0,

@@ -413,7 +413,7 @@ fun DetailsScreen(
         uiState.initialEpisodeIndex
     ) {
         if (uiState.episodes.isEmpty()) return@LaunchedEffect
-        episodeIndex = if (uiState.currentSeason == uiState.initialSeasonIndex + 1) {
+        episodeIndex = if (detailInitialEpisodeSeasonMatches(uiState.currentSeason, uiState.initialSeasonIndex, initialSeason)) {
             uiState.initialEpisodeIndex.coerceIn(0, uiState.episodes.lastIndex)
         } else {
             0
@@ -434,10 +434,11 @@ fun DetailsScreen(
     // and cancels a superseded load, so overlapping requests can't display a stale season. Episode
     // focus is reset by the currentSeason-driven effect above once the new season's episodes arrive.
     LaunchedEffect(seasonIndex) {
-        if (uiState.totalSeasons > 1 && uiState.currentSeason != seasonIndex + 1) {
+        val requestedSeason = detailSeasonForAutomaticSelection(seasonIndex, uiState.currentSeason, initialSeason)
+        if (uiState.totalSeasons > 1 && uiState.currentSeason != requestedSeason) {
             selectedEpisodeIdentity = null
             delay(100)
-            viewModel.loadSeason(seasonIndex + 1)
+            viewModel.loadSeason(requestedSeason)
         }
     }
 
