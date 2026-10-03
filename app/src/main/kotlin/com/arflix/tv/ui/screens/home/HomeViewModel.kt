@@ -560,7 +560,7 @@ class HomeViewModel @Inject constructor(
     private fun isActionableMediaItem(item: MediaItem): Boolean {
         // Non-actionable items are expected during filtering: invalid IDs cannot be opened,
         // placeholders are synthetic UI entries, and collection tiles use their own handling.
-        return item.id > 0 && !item.isPlaceholder && !isCollectionItem(item) && !isSportsHomeItem(item)
+        return item.hasOpenableId && !item.isPlaceholder && !isCollectionItem(item) && !isSportsHomeItem(item)
     }
 
     private fun continueWatchingKey(mediaType: MediaType, id: Int): String {
@@ -896,7 +896,8 @@ class HomeViewModel @Inject constructor(
                 id = item.id,
                 streamAddonId = item.streamAddonId,
                 title = item.title,
-                addons = installedAddons
+                addons = installedAddons,
+                isAddonNative = !item.addonNativeId.isNullOrBlank()
             )
         }
         if (nonLiveItems.isEmpty()) return emptyList()
@@ -904,6 +905,7 @@ class HomeViewModel @Inject constructor(
         val seasonEpisodesCache = HashMap<Pair<Int, Int>, List<com.arflix.tv.data.model.Episode>?>()
 
         return nonLiveItems.mapNotNull { item ->
+            if (!item.addonNativeId.isNullOrBlank()) mediaRepository.cacheItem(item.toMediaItem())
             if (item.mediaType != MediaType.TV) {
 
                 return@mapNotNull item
@@ -926,6 +928,7 @@ class HomeViewModel @Inject constructor(
             }
 
             val cacheKey = item.id to season
+            if (!item.addonNativeId.isNullOrBlank()) return@mapNotNull item
             val seasonEpisodes = if (seasonEpisodesCache.containsKey(cacheKey)) {
                 seasonEpisodesCache[cacheKey]
             } else {

@@ -478,7 +478,8 @@ fun AppNavigation(
         ) { backStackEntry ->
             val mediaTypeStr = backStackEntry.arguments?.getString("mediaType") ?: "movie"
             val mediaId = backStackEntry.arguments?.getInt("mediaId") ?: 0
-            if (mediaId <= 0) {
+            // Negative ids are native addon items (see AddonNativeCatalog).
+            if (mediaId == 0) {
                 navigateHome()
                 return@composable
             }
