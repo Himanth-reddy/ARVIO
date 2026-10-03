@@ -640,7 +640,9 @@ class DetailsViewModel @Inject constructor(
                 } else null
 
                 availableAnimeStructure = structure
-                val activeStructure = if (animeStructuringStyle == AnimeStructuringStyle.BROADCAST) structure else null
+                // Alternate broadcast seasons omit TMDB specials. An explicit season-zero
+                // destination must keep canonical episodes rather than becoming season one.
+                val activeStructure = if (animeStructuringStyle == AnimeStructuringStyle.BROADCAST && seasonToLoad != 0) structure else null
                 animeSeasonStructure = activeStructure
 
                 // Resolve TV show seasonal episodes directly without intermediate layout flash

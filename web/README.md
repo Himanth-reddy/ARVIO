@@ -44,8 +44,10 @@ docker compose --env-file .env.local ps
 
 Open **http://localhost:3000**. This builds the same webapp as the Node setup,
 runs as a non-root user, and binds only to loopback by default. Your TMDB key
-and OAuth secrets are runtime variables, not Docker build arguments.
-There is no prebuilt official Docker image required.
+and OAuth secrets are runtime variables, not Docker build arguments. Optional
+public tracker/Telegram application credentials and your resolver URL are read
+at runtime too: the image does not embed the maintainer's credentials. Source
+builds remain supported; a prebuilt image is not required.
 
 Update from the repository root:
 

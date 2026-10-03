@@ -9,7 +9,7 @@ import { LanguageProvider } from "./i18n";
 import { shouldRefreshAutomatically } from "./automaticRefresh";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
-import { config, getAuthPortalUrl } from "./config";
+import { config, getAuthPortalUrl, isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
 import { completionTimes, includeIptvContinueWatching, isUnwatchedContinueWatching, mergePartialContinueWatching, mergeTrackerContinueWatching, pruneCompletedResume, traktProgressActivityKey } from "./continueWatching";
@@ -30,6 +30,7 @@ import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./stor
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
 import { verifyProfilePin } from "./profilePin";
 import { hydratedProfileId } from "./profiles";
+import { partnerLoginRedirect } from "./partnerLinks";
 import { flushSettingsOutbox, hasPendingSettings, queueSettings, settingsWithPendingEdits } from "./settingsOutbox";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
@@ -230,6 +231,7 @@ export const defaultSettings: AppSettings = {
   cardDensity: "comfortable",
   catalogs: defaultCatalogs,
   hiddenCatalogIds: [],
+  hiddenAddonCatalogIds: [],
   hiddenHomeServerCatalogIds: [],
   disabledAddonIds: [],
   homeServers: [],
@@ -469,8 +471,8 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
 // tracker progress (which may use a different episode ordering).
 function nextLocalEpisode(item: MediaItem): MediaItem | null {
   const { seasonNumber, episodeNumber } = item;
-  if (!seasonNumber || !episodeNumber) return item;
-  const seasons = (item.seasons ?? []).filter((season) => season.seasonNumber > 0);
+  if (seasonNumber == null || episodeNumber == null) return item;
+  const seasons = (item.seasons ?? []).filter((season) => season.seasonNumber >= 0);
   const current = seasons.find((season) => season.seasonNumber === seasonNumber);
   if (!current?.episodeCount || episodeNumber <= current.episodeCount) return item;
   const next = seasons.filter((season) => season.seasonNumber > seasonNumber && (season.episodeCount ?? 0) > 0)
@@ -484,6 +486,7 @@ function sameSettings(a: AppSettings, b: AppSettings) {
 
 export interface AppStore {
   view: AppView;
+  partnerLinkReady: boolean;
   cloudLoginRequired: boolean;
   profiles: Profile[];
   activeProfile: Profile | null;
@@ -656,7 +659,7 @@ export function AppProvider({
       ...defaultSettings,
       ...stored,
       iptvPlaylists: loadPlaylists(),
-      catalogs: mergeCatalogs(stored.catalogs, stored.hiddenCatalogIds)
+      catalogs: mergeCatalogs(stored.catalogs, stored.hiddenCatalogIds, stored.hiddenAddonCatalogIds)
     };
   });
   const [auth, setAuth] = useState(() => authClient.session);
@@ -739,13 +742,13 @@ export function AppProvider({
   }, [settings]);
 
   useEffect(() => {
-    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds);
+    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds);
     setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled && catalog.sourceType !== "home-server"));
-  }, [settings.catalogs, settings.hiddenCatalogIds]);
+  }, [settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds]);
 
   useEffect(() => {
     let cancelled = false;
-    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds);
+    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds);
     void loadHomeServerRows(
       settings.homeServers,
       settings.hiddenHomeServerCatalogIds,
@@ -758,7 +761,7 @@ export function AppProvider({
     return () => {
       cancelled = true;
     };
-  }, [settings.catalogs, settings.hiddenCatalogIds, settings.hiddenHomeServerCatalogIds, settings.homeServers]);
+  }, [settings.catalogs, settings.hiddenCatalogIds, settings.hiddenAddonCatalogIds, settings.hiddenHomeServerCatalogIds, settings.homeServers]);
 
   const deviceCodeRef = useRef(deviceCode);
   useEffect(() => {
@@ -774,9 +777,10 @@ export function AppProvider({
   // service worker so a connected user's sources resolve and play after a
   // reload — the browser equivalent of Android re-opening its TDLib database.
   useEffect(() => {
+    if (!config.telegramEnabled) return;
     void (async () => {
       try {
-        const tg = await import("./telegram");
+        const tg = await import("@/lib/telegram");
         await tg.restoreSession();
         // Only pre-warm the streaming service worker for users who are actually
         // connected — no need to register a worker for accounts that never link
@@ -930,7 +934,8 @@ export function AppProvider({
           ...defaultSettings,
           ...currentSettings,
           ...cloud.settings,
-          catalogs: mergeCatalogs(cloud.settings?.catalogs ?? currentSettings.catalogs, cloud.settings?.hiddenCatalogIds ?? currentSettings.hiddenCatalogIds),
+          catalogs: mergeCatalogs(cloud.settings?.catalogs ?? currentSettings.catalogs, cloud.settings?.hiddenCatalogIds ?? currentSettings.hiddenCatalogIds,
+            cloud.settings?.hiddenAddonCatalogIds ?? currentSettings.hiddenAddonCatalogIds),
           iptvPlaylists: cloud.settings?.iptvPlaylists ?? currentSettings.iptvPlaylists,
           favoriteChannelIds: cloud.settings?.favoriteChannelIds ?? currentSettings.favoriteChannelIds,
           iptvTvSession: cloud.settings?.iptvTvSession ?? currentSettings.iptvTvSession,
@@ -979,7 +984,7 @@ export function AppProvider({
         void saveCloudAddons(authClient, source, profileId).catch(() => undefined);
       }
 
-      const effectiveCatalogs = mergeCatalogs(effectiveSettings.catalogs, effectiveSettings.hiddenCatalogIds);
+      const effectiveCatalogs = mergeCatalogs(effectiveSettings.catalogs, effectiveSettings.hiddenCatalogIds, effectiveSettings.hiddenAddonCatalogIds);
       setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled && catalog.sourceType !== "home-server"));
 
       const client = syncClient();
@@ -1580,7 +1585,7 @@ export function AppProvider({
       try {
         const { findMovieVodSources, findEpisodeVodSource } = await import("./xtreamVod");
         const ua = settingsRef.current.customUserAgent;
-        const sources = season && episode
+        const sources = season != null && episode != null
           ? await findEpisodeVodSource(playlists, item, season, episode, ua)
           : await findMovieVodSources(playlists, item, ua);
         if (!sources.length || sourceGeneration.current !== generation) return [];
@@ -1613,7 +1618,7 @@ export function AppProvider({
           imdbId: item.imdbId ?? undefined,
           tmdbId: item.tmdbId ?? (item.id > 0 && !item.isHomeServer ? item.id : undefined)
         };
-        const sources = season && episode
+        const sources = season != null && episode != null
           ? await resolveHomeServerEpisodeSources(servers, target, season, episode)
           : await resolveHomeServerMovieSources(servers, target);
         if (!sources.length || sourceGeneration.current !== generation) return [];
@@ -1634,11 +1639,12 @@ export function AppProvider({
   // any matching video files as sources — parity with the Android app, which
   // surfaces Telegram media in the same source list as addons.
   const appendTelegramSources = useCallback((item: MediaItem, season?: number, episode?: number) => {
+    if (!config.telegramEnabled) return Promise.resolve([] as StreamSource[]);
     const generation = sourceGeneration.current;
     if (item.isHomeServer) return Promise.resolve([] as StreamSource[]);
     return (async () => {
       try {
-        const { resolveTelegramSources, isConnected } = await import("./telegram");
+        const { resolveTelegramSources, isConnected } = await import("@/lib/telegram");
         if (!isConnected()) return [];
         const sources = await resolveTelegramSources(item, season, episode, {
           language: settingsRef.current.language
@@ -1705,7 +1711,7 @@ export function AppProvider({
       const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, publish).catch(() => []);
       publish(found);
       await supplemental;
-    } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
+    } else if (withResumeEpisode.seasonNumber != null && withResumeEpisode.episodeNumber != null) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
       const supplemental = Promise.allSettled([appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber), appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber), appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber)]);
@@ -1749,6 +1755,10 @@ export function AppProvider({
   }, []);
 
   const playStream = useCallback((stream: StreamSource, options: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean } = {}) => {
+    if (isDisabledTelegramSource(stream)) {
+      setToast(TELEGRAM_DISABLED_MESSAGE);
+      return;
+    }
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     if (!stream.autoSelect) setActiveStream(null);
@@ -1874,7 +1884,7 @@ export function AppProvider({
     const isCurrent = () => sourceGeneration.current === generation && playbackGeneration.current === playback;
     try {
       const next = nextLocalEpisode({ ...selected, timeRemainingLabel: "Up next", seasonNumber: selectedEpisode.season, episodeNumber: selectedEpisode.episode + 1 });
-      if (!next?.seasonNumber || !next.episodeNumber) { setToast("You have reached the last available episode."); return false; }
+      if (next?.seasonNumber == null || next.episodeNumber == null) { setToast("You have reached the last available episode."); return false; }
       const episodes = await getSeasonEpisodes(selected.tmdbId ?? selected.id, next.seasonNumber);
       if (!isCurrent()) return false;
       const episode = episodes.find((item) => item.episodeNumber === next.episodeNumber);
@@ -1936,6 +1946,10 @@ export function AppProvider({
   // user's own connection with no browser restrictions, at zero server cost.
   // Returns true when the handoff fired (so the caller skips the browser player).
   const openLiveExternally = useCallback((stream: StreamSource, title: string): boolean => {
+    if (isDisabledTelegramSource(stream)) {
+      setToast(TELEGRAM_DISABLED_MESSAGE);
+      return false;
+    }
     const player = settingsRef.current.defaultPlayer;
     if (player !== "vlc" && player !== "infuse") return false;
     setToast(
@@ -2482,7 +2496,7 @@ export function AppProvider({
   const goToLogin = useCallback(() => {
     if (config.selfHosted) { setView("profiles"); return; }
     if (typeof window !== "undefined") {
-      const redirectUri = window.location.origin + "/";
+      const redirectUri = partnerLoginRedirect(window.location.origin, window.location.search);
       const portalUrl = getAuthPortalUrl();
       window.location.href = `${portalUrl}?redirect_uri=${encodeURIComponent(redirectUri)}`;
     }
@@ -2612,6 +2626,7 @@ export function AppProvider({
 
   const value = useMemo<AppStore>(() => ({
     view,
+    partnerLinkReady: view === "app" && Boolean(activeProfile) && (!auth || cloudProfilesHydrated),
     cloudLoginRequired,
     profiles,
     activeProfile,
@@ -2701,7 +2716,7 @@ export function AppProvider({
     openContextMenu,
     closeContextMenu
   }), [
-    view, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
+    view, cloudProfilesHydrated, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, addonsReady, iptvSnapshot, query, results, searchState, settingsSyncState, settings, auth, traktConnected, mdblistConnected, simklConnected, trackingPreferences, deviceCode, simklDeviceCode, busy, toast,

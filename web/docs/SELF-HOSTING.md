@@ -52,10 +52,20 @@ without preventing the basic setup.
 
 ### Build-Time Versus Runtime
 
-- `NEXT_PUBLIC_SELF_HOSTED`, public client IDs, Telegram application credentials and resolver URL are **build-time** settings. Rebuild after changing them. A runtime-only environment change cannot rewrite an existing browser bundle.
+- `NEXT_PUBLIC_SELF_HOSTED` is a **build-time** deployment choice. Changing a running container's environment cannot turn the hosted service into an independent installation or vice versa.
+- Independent installations load optional public application configuration from a same-origin `/api/selfhost-config` script before the app starts. **Restart/recreate the server/container** after changing `TRAKT_CLIENT_ID`, `SIMKL_CLIENT_ID`, Telegram application credentials or your resolver URL; no image rebuild is required. The response is marked `private, no-store` and never exports TMDB keys, OAuth secrets, ARVIO Cloud credentials or account sessions. If blocked, optional integrations stay disabled rather than borrowing hosted credentials.
+- Docker/Unraid supports canonical runtime names `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and `ARVIO_RESOLVER_URL`. Existing `NEXT_PUBLIC_TELEGRAM_API_ID`, `NEXT_PUBLIC_TELEGRAM_API_HASH` and `NEXT_PUBLIC_ARVIO_RESOLVER_URL` aliases still work. Canonical runtime names take precedence. Telegram requires the application ID (positive integer) and the 32-character hexadecimal application hash together.
+- A resolver URL is public application configuration: use HTTPS (or HTTP on `localhost`), without embedded credentials, query parameters or a fragment. Only use your own compatible resolver. This setting does not enable unrestricted relay/transcoding.
 - `TMDB_API_KEY`, `TRAKT_CLIENT_SECRET` and `SIMKL_CLIENT_SECRET` stay server-side. Restart/recreate the server after changing them. Never prefix these with `NEXT_PUBLIC_`.
-- In Node builds, either canonical `TRAKT_CLIENT_ID` / `SIMKL_CLIENT_ID` or their public aliases work; prefer the canonical names in the provided template. Compose passes the canonical names to Docker at build time.
+- For tracker IDs, either canonical `TRAKT_CLIENT_ID` / `SIMKL_CLIENT_ID` or their public aliases work; prefer the canonical names in the provided template. Docker does not accept credential build arguments.
 - The self-host Docker image always builds in independent mode. Do not use it for the official paid deployment.
+
+Docker's build context is `web/` only and never requires the Android source tree
+or a private `.env` file. It explicitly validates the checked-in translations
+(`ARVIO_TRANSLATION_MODE=prebuilt`), including hashes, current interface phrases
+and placeholders. Missing or stale translations stop the build. Regular source
+and hosted builds still generate translations from the Android resources by
+default; regenerate and commit those assets before packaging new UI wording.
 
 The mode disables hosted Cloud and legacy Supabase configuration even if stale
 keys remain in your environment. It also disables Premium analytics and the
@@ -126,7 +136,7 @@ docker compose --env-file .env.local logs --tail=100 arvio
 
 - **A subscription/login is required:** check the address is your installation, not `web.arvio.tv`, and rebuild with `NEXT_PUBLIC_SELF_HOSTED=true`. Don't just change a running container's environment.
 - **Empty built-in catalogs:** run the checker and verify your TMDB v3 key. Inspect `/api/tmdb/*` responses for a provider error. Other integrations do not replace the TMDB key.
-- **Tracker not configured:** add your own client credentials and rebuild. Reconnect the tracker if you changed its application/client ID.
+- **Tracker not configured:** add your own client credentials and restart/recreate the server. Check that your reverse proxy permits `/api/selfhost-config` on the same origin and does not cache it. Reconnect the tracker if you changed its application/client ID.
 - **LAN server blocked:** review the trusted-network instructions above. Do not disable safeguards on a public instance.
 - **New browser has no profiles:** expected in local mode; it is not cross-device Cloud sync.
 - **Black picture or unsupported source:** consult the source compatibility warning. Self-hosting does not add missing hardware decoders or universally support Dolby Vision/DRM.
@@ -134,6 +144,11 @@ docker compose --env-file .env.local logs --tail=100 arvio
 Before sharing logs, remove API keys, account tokens, playlist passwords and
 signed media URLs. Keep the original repository license and notices when
 redistributing the software.
+
+The Docker image includes the original ARVIO Apache-2.0 text at
+`/app/licenses/ARVIO-LICENSE`, plus installed dependency license/copyright/notice
+files and a package-version index under `/app/licenses/third-party/`. Dependencies
+retain their own licenses; those notices do not relicense them as Apache-2.0.
 
 Implementation references: [Next.js self-hosting](https://nextjs.org/docs/app/guides/self-hosting),
 [standalone output](https://nextjs.org/docs/app/api-reference/config/next-config-js/output),
