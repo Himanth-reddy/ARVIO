@@ -535,9 +535,12 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
         .build()
     val heroDataSourceFactory =
         OkHttpDataSource.Factory(heroOkHttp).setUserAgent(OkHttpProvider.getAppUserAgent(context))
+    // The hero previews favorite IPTV channels, so it needs the same non-IDR keyframe
+    // extractors as the TV screens or those channels stall on the home screen.
     val heroHlsFactory = HlsMediaSource.Factory(heroDataSourceFactory)
         .setAllowChunklessPreparation(true)
-    val heroDefaultFactory = DefaultMediaSourceFactory(context)
+        .setExtractorFactory(com.arflix.tv.ui.screens.tv.live.iptvHlsExtractorFactory())
+    val heroDefaultFactory = DefaultMediaSourceFactory(context, com.arflix.tv.ui.screens.tv.live.iptvExtractorsFactory())
         .setDataSourceFactory(heroDataSourceFactory)
     val loadControl = DefaultLoadControl.Builder()
         .setBufferDurationsMs(2_000, 8_000, 750, 1_500)
