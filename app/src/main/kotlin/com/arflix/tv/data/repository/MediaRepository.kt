@@ -400,7 +400,7 @@ class MediaRepository @Inject constructor(
     }
 
     fun getCachedItem(mediaType: MediaType, mediaId: Int): MediaItem? {
-        return cachedMediaEntry(mediaType, mediaId)?.item
+        return cachedMediaEntry(mediaType, mediaId)?.item ?: addonNative.card(mediaType, mediaId)
     }
 
     private fun cachedMediaEntry(mediaType: MediaType, mediaId: Int): MediaCacheEntry? =
@@ -722,6 +722,7 @@ class MediaRepository @Inject constructor(
     }
 
     fun cacheItem(item: MediaItem) {
+        if (item.isAddonNative) addonNative.restore(item)
         val cacheKey = detailsCacheKey(item.mediaType, item.id)
         val now = System.currentTimeMillis()
         detailsCache.compute(cacheKey) { _, existing ->
@@ -2798,17 +2799,7 @@ class MediaRepository @Inject constructor(
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return@coroutineScope MediaSearchResults(emptyList(), emptyList())
 
-        // Titles only an addon knows (native addon items) are searched alongside TMDB.
-        val nativeDeferred = async { searchNativeAddonItems(trimmed) }
-        val response = try {
-            tmdbApi.searchMulti(apiKey, trimmed, language = contentLanguage)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            val native = nativeDeferred.await()
-            if (native.isEmpty()) throw e
-            return@coroutineScope MediaSearchResults(native, emptyList())
-        }
+        val response = tmdbApi.searchMulti(apiKey, trimmed, language = contentLanguage)
         val items = response.results
             .filter { it.mediaType == "movie" || it.mediaType == "tv" }
             .map { it.toMediaItem(if (it.mediaType == "tv") MediaType.TV else MediaType.MOVIE) }
@@ -2842,11 +2833,11 @@ class MediaRepository @Inject constructor(
         }
 
         cacheItems(items + rows.flatMap { it.items })
-        MediaSearchResults(items + nativeDeferred.await(), rows)
+        MediaSearchResults(items, rows)
     }
 
     /** Native addon items matching [query] (see [StreamRepository.searchNativeAddonCatalogs]). */
-    private suspend fun searchNativeAddonItems(query: String): List<MediaItem> = try {
+    suspend fun searchNativeAddonItems(query: String): List<MediaItem> = try {
         streamRepository.searchNativeAddonCatalogs(query).flatMap { page ->
             val descriptor = AddonCatalogDescriptor(page.addonId, page.catalogType, page.catalogId)
             parseAddonPageRefs(page.metas, descriptor)

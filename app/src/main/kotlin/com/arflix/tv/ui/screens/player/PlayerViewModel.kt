@@ -7667,6 +7667,8 @@ class PlayerViewModel @Inject constructor(
             isUpNext = true,
             episodeAirDate = next.airDate.orEmpty(),
             emitUpdate = aired,
+            addonNativeId = mediaRepository.getCachedItem(MediaType.TV, currentMediaId)?.addonNativeId,
+            addonNativeAddonId = mediaRepository.getCachedItem(MediaType.TV, currentMediaId)?.addonNativeAddonId,
         )
     }
 
@@ -7836,7 +7838,9 @@ class PlayerViewModel @Inject constructor(
                         durationSeconds = durationSeconds,
                         streamKey = streamKey,
                         streamAddonId = streamAddonId,
-                        streamTitle = streamTitle
+                        streamTitle = streamTitle,
+                        addonNativeId = mediaRepository.getCachedItem(currentMediaType, currentMediaId)?.addonNativeId,
+                        addonNativeAddonId = mediaRepository.getCachedItem(currentMediaType, currentMediaId)?.addonNativeAddonId
                     )
 
                     // Push local CW to cloud so other devices see mid-playback progress.

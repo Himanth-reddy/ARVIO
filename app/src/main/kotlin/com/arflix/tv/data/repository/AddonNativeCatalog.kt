@@ -86,6 +86,17 @@ internal class AddonNativeCatalog(
     /** The addon's own id for this item, used where an IMDb id would go for streams. */
     fun streamId(mediaId: Int): String? = entry(mediaId)?.metaId
 
+    /** Rehydrate a portable watch-history card on devices without this registry yet. */
+    fun restore(item: MediaItem) {
+        val addonId = item.addonNativeAddonId?.takeIf { it.isNotBlank() } ?: return
+        val metaId = item.addonNativeId?.takeIf { it.isNotBlank() } ?: return
+        if (item.id != stableId(addonId, metaId)) return
+        ensureRegistryLoaded()
+        val restored = Entry(addonId, metaId, if (item.mediaType == MediaType.TV) "series" else "movie",
+            item.title, item.image, item.backdrop, item.overview)
+        if (registry.put(item.id, restored) != restored) registryDirty = true
+    }
+
     /** Full details from the addon's /meta; falls back to the catalog card when that fails. */
     suspend fun details(mediaType: MediaType, mediaId: Int): MediaItem? {
         val entry = entry(mediaId) ?: return null

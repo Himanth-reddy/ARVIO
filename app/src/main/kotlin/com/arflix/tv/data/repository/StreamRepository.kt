@@ -56,6 +56,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -371,6 +373,8 @@ class StreamRepository @Inject constructor(
     )
     private val streamResultCache = mutableMapOf<String, CachedStreamResult>()
     private val resolvedStreamCache = ConcurrentHashMap<String, CachedResolvedStream>()
+    private data class CachedAddonMeta(val meta: StremioMetaPreview, val createdAtMs: Long)
+    private val addonMetaCache = ConcurrentHashMap<String, CachedAddonMeta>()
     // Cache getStreamAddons() result per content type, invalidated when addon list changes.
     // Avoids re-iterating all addon manifests on every stream resolution call.
     private val streamAddonsCache = mutableMapOf<String, List<Addon>>()
@@ -1534,27 +1538,30 @@ class StreamRepository @Inject constructor(
                         .map { catalog -> addon to catalog }
                 }
             if (targets.isEmpty()) return@withContext emptyList()
-            withTimeoutOrNull(timeoutMs) {
-                coroutineScope {
-                    targets.map { (addon, catalog) ->
-                        async {
-                            try {
-                                val (baseUrl, queryParams) = getAddonBaseUrl(addon.url.orEmpty())
-                                val query = queryParams?.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
-                                val url = "$baseUrl/catalog/${catalog.type}/${catalog.id}/search=$encoded.json$query"
-                                val response = streamApi.getAddonCatalog(url)
-                                val metas = response.metas ?: response.items ?: emptyList()
-                                if (metas.isEmpty()) null
-                                else AddonSearchPage(addon.id, catalog.type, catalog.id, metas)
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (_: Exception) {
-                                null
+            val slots = Semaphore(4)
+            coroutineScope {
+                targets.map { (addon, catalog) ->
+                    async {
+                        withTimeoutOrNull(timeoutMs) {
+                            slots.withPermit {
+                                try {
+                                    val (baseUrl, queryParams) = getAddonBaseUrl(addon.url.orEmpty())
+                                    val query = queryParams?.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
+                                    val url = "$baseUrl/catalog/${catalog.type}/${catalog.id}/search=$encoded.json$query"
+                                    val response = streamApi.getAddonCatalog(url)
+                                    val metas = response.metas ?: response.items ?: emptyList()
+                                    if (metas.isEmpty()) null
+                                    else AddonSearchPage(addon.id, catalog.type, catalog.id, metas)
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {
+                                    null
+                                }
                             }
                         }
-                    }.awaitAll().filterNotNull()
-                }
-            }.orEmpty()
+                    }
+                }.awaitAll().filterNotNull()
+            }
         }
 
     suspend fun getAddonMeta(
@@ -1565,6 +1572,9 @@ class StreamRepository @Inject constructor(
         val addon = installedAddons.first().firstOrNull { it.id == addonId }
             ?: return@withContext null
         val addonUrl = addon.url ?: return@withContext null
+        val cacheKey = "$addonId|$addonUrl|$mediaType|$mediaId"
+        addonMetaCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.createdAtMs < 30 * 60_000L }
+            ?.let { return@withContext it.meta }
         val (baseUrl, queryParams) = getAddonBaseUrl(addonUrl)
 
         val typeCandidates = catalogTypeAliases(mediaType)
@@ -1579,7 +1589,11 @@ class StreamRepository @Inject constructor(
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 null
             }
-            if (meta != null) return@withContext meta
+            if (meta != null) {
+                if (addonMetaCache.size >= 256) addonMetaCache.clear()
+                addonMetaCache[cacheKey] = CachedAddonMeta(meta, System.currentTimeMillis())
+                return@withContext meta
+            }
         }
         null
     }
@@ -2144,7 +2158,13 @@ class StreamRepository @Inject constructor(
                     animeQueryOverride ?: resolveAnimeQuery(animeLookupTimeoutMs)
                 } else null
 
-                val seriesId = "$imdbId:$season:$episode"
+                val isNative = addonServesOwnMeta(addon.id, "series", imdbId)
+                val seriesId = if (isNative) {
+                    val meta = withTimeoutOrNull(5_000L) { getAddonMeta(addon.id, "series", imdbId) }
+                    nativeEpisodeStreamId(meta, season, episode) ?: return@withTimeout emptyList()
+                } else {
+                    "$imdbId:$season:$episode"
+                }
                 val supportsKitsu = addonSupportsIdFamily(addon, "kitsu") ||
                     addon.url.contains("torrentio") ||
                     addon.url.contains("aiostreams") ||
@@ -2154,10 +2174,11 @@ class StreamRepository @Inject constructor(
                 val useKitsuFallback = resolveAsAnime && supportsKitsu && animeQuery != null && animeQuery != seriesId
                 val preferNativeAnimeIds = useKitsuFallback && nativeAnimeAddon
                 fun streamUrl(type: String, contentId: String): String {
+                    val encodedId = if (isNative) URLEncoder.encode(contentId, "UTF-8") else contentId
                     return if (queryParams != null) {
-                        "$baseUrl/stream/$type/$contentId.json?$queryParams"
+                        "$baseUrl/stream/$type/$encodedId.json?$queryParams"
                     } else {
-                        "$baseUrl/stream/$type/$contentId.json"
+                        "$baseUrl/stream/$type/$encodedId.json"
                     }
                 }
 
