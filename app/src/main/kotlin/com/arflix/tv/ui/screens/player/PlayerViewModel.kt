@@ -7708,7 +7708,8 @@ class PlayerViewModel @Inject constructor(
                 streamAddonId = streamAddonIdForCheck,
                 title = currentTitle,
                 isLiveStream = currentIsLiveStreamPlayback,
-                addons = currentInstalledAddons
+                addons = currentInstalledAddons,
+                isAddonNative = mediaRepository.isAddonNative(currentMediaId)
             )
 
             // Scrobble start/pause/updates with debounce

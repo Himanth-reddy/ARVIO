@@ -63,7 +63,8 @@ internal object ContinueWatchingMerge {
                     (IptvVodSourceIds.isIptvVodAddonId(item.streamAddonId) || !item.addonNativeId.isNullOrBlank()) &&
                     !SportsAddonCapabilities.isLiveStreamOrSportsItem(
                         mediaType = item.mediaType, id = item.id,
-                        streamAddonId = item.streamAddonId, title = item.title
+                        streamAddonId = item.streamAddonId, title = item.title,
+                        isAddonNative = !item.addonNativeId.isNullOrBlank()
                     ) &&
                     item.progress < Constants.WATCHED_THRESHOLD &&
                     (item.durationSeconds <= 0L ||

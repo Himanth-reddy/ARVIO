@@ -2753,7 +2753,8 @@ class TraktRepository @Inject constructor(
                 mediaType = mediaType,
                 id = tmdbId,
                 streamAddonId = streamAddonId,
-                title = title
+                title = title,
+                isAddonNative = !addonNativeId.isNullOrBlank()
             )) {
             return
         }
@@ -2957,7 +2958,8 @@ class TraktRepository @Inject constructor(
                 mediaType = item.mediaType,
                 id = item.id,
                 streamAddonId = item.streamAddonId,
-                title = item.title
+                title = item.title,
+                isAddonNative = !item.addonNativeId.isNullOrBlank()
             )
         }
     }
@@ -3029,7 +3031,8 @@ class TraktRepository @Inject constructor(
                 mediaType = item.mediaType,
                 id = item.id,
                 streamAddonId = item.streamAddonId,
-                title = item.title
+                title = item.title,
+                isAddonNative = !item.addonNativeId.isNullOrBlank()
             )
         }
         if (filtered.isEmpty()) return@coroutineScope emptyList()

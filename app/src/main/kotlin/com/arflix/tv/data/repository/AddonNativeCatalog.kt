@@ -144,6 +144,7 @@ internal class AddonNativeCatalog(
     }
 
     private suspend fun loadMeta(mediaId: Int, entry: Entry): StremioMetaPreview? {
+        flush()
         metas[mediaId]?.takeIf { System.currentTimeMillis() - it.loadedAtMs < META_TTL_MS }?.let { return it.meta }
         val meta = runCatching {
             streamRepository.getAddonMeta(entry.addonId, entry.type, entry.metaId)

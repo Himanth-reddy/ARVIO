@@ -4,8 +4,10 @@ import android.content.Context
 import com.arflix.tv.data.api.StremioMetaPreview
 import com.arflix.tv.data.api.StremioMetaVideo
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.google.gson.Gson
 import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -38,9 +40,11 @@ class AddonNativeCatalogTest {
         val restoredHistory = decodeContinueWatchingCache(Gson().toJson(listOf(saved)), Gson()).single()
         val card = restoredHistory.toMediaItem()
         assertTrue(card.hasOpenableId)
-        val restored = AddonNativeCatalog(context(), mockk(relaxed = true))
+        val streams = mockk<StreamRepository>(relaxed = true)
+        coEvery { streams.getAddonMeta(any(), any(), any()) } returns null
+        val restored = AddonNativeCatalog(context(), streams)
         restored.restore(card)
-        restored.flush()
+        restored.details(MediaType.TV, card.id)
         val restarted = AddonNativeCatalog(context(), mockk(relaxed = true))
         assertEquals("provider:show", restarted.streamId(card.id))
         assertEquals("provider", restarted.card(MediaType.TV, card.id)?.addonNativeAddonId)
@@ -54,5 +58,14 @@ class AddonNativeCatalogTest {
         val next = native.copy(progress = 0, resumePositionSeconds = 0, isUpNext = true)
         assertEquals(listOf(next), ContinueWatchingMerge.merge(emptyList(), listOf(next)))
         assertTrue(ContinueWatchingMerge.merge(emptyList(), listOf(native.copy(progress = 99))).isEmpty())
+    }
+
+    @Test fun nativeVodIsNotLiveButExplicitLiveMarkersStillWin() {
+        assertFalse(SportsAddonCapabilities.isLiveStreamOrSportsItem(id = -123, isAddonNative = true))
+        assertTrue(SportsAddonCapabilities.isLiveStreamOrSportsItem(id = -123))
+        assertTrue(SportsAddonCapabilities.isLiveStreamOrSportsItem(id = -123, isAddonNative = true,
+            isLiveStream = true))
+        assertTrue(SportsAddonCapabilities.isLiveStreamOrSportsItem(id = -123, isAddonNative = true,
+            status = "live:channel"))
     }
 }
