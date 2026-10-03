@@ -560,7 +560,7 @@ class HomeViewModel @Inject constructor(
     private fun isActionableMediaItem(item: MediaItem): Boolean {
         // Non-actionable items are expected during filtering: invalid IDs cannot be opened,
         // placeholders are synthetic UI entries, and collection tiles use their own handling.
-        return item.id > 0 && !item.isPlaceholder && !isCollectionItem(item) && !isSportsHomeItem(item)
+        return item.hasOpenableId && !item.isPlaceholder && !isCollectionItem(item) && !isSportsHomeItem(item)
     }
 
     private fun continueWatchingKey(mediaType: MediaType, id: Int): String {

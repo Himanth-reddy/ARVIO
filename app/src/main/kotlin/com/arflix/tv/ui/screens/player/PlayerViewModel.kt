@@ -1853,6 +1853,8 @@ class PlayerViewModel @Inject constructor(
     private data class ExternalIds(val imdbId: String?, val tvdbId: Int?)
 
     private suspend fun resolveExternalIds(mediaType: MediaType, mediaId: Int): ExternalIds {
+        // A native addon item's own id stands in for the IMDb id: streams are requested by it.
+        if (mediaId < 0) return ExternalIds(mediaRepository.getCachedImdbId(mediaType, mediaId), null)
         return try {
             val ids = when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieExternalIds(mediaId, Constants.TMDB_API_KEY)

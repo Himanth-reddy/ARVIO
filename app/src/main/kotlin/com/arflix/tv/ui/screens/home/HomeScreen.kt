@@ -514,7 +514,7 @@ private fun preferredHomeStartRowIndex(categories: List<Category>): Int {
 }
 
 private fun isActionableHomeItem(item: MediaItem?): Boolean {
-    return item != null && item.id > 0 && !item.isPlaceholder
+    return item != null && item.hasOpenableId && !item.isPlaceholder
 }
 
 @androidx.compose.runtime.Immutable

@@ -44,6 +44,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.callbackFlow
@@ -71,6 +72,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private val Context.streamDataStore: DataStore<Preferences> by preferencesDataStore(name = "stream_prefs")
+
+/**
+ * Addon id families that are never treated as native addon items: TMDB lookups resolve
+ * IMDb/TMDB ids, and ARVIO maps the anime families through its own anime pipeline.
+ */
+internal val NON_NATIVE_META_ID_FAMILIES = listOf("tt", "tmdb:", "imdb:", "kitsu:", "mal:", "anilist:", "anidb:", "tvdb:")
 
 /**
  * Callback for streaming results as they arrive -
@@ -1491,6 +1498,65 @@ class StreamRepository @Inject constructor(
         firstSuccessful ?: throw java.io.IOException("Catalogue request failed")
     }
 
+    /** One page of results from an addon catalog that supports the `search` extra. */
+    data class AddonSearchPage(
+        val addonId: String,
+        val catalogType: String,
+        val catalogId: String,
+        val metas: List<StremioMetaPreview>
+    )
+
+    /**
+     * Searches the catalogs of addons that serve their own metadata (see [addonServesOwnMeta])
+     * and declare a `search` extra. Global search otherwise only asks TMDB, so titles such an
+     * addon carries and TMDB doesn't (a broadcaster's shows) could never be found. Other
+     * addons are left out: their titles are TMDB titles already, and asking every catalog
+     * on each keystroke would slow search down.
+     */
+    suspend fun searchNativeAddonCatalogs(query: String, timeoutMs: Long = 6_000L): List<AddonSearchPage> =
+        withContext(Dispatchers.IO) {
+            val trimmed = query.trim()
+            if (trimmed.isEmpty()) return@withContext emptyList()
+            val encoded = URLEncoder.encode(trimmed, "UTF-8").replace("+", "%20")
+            val targets = installedAddons.first()
+                .filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.STREMIO && !it.url.isNullOrBlank() }
+                .flatMap { addon ->
+                    val manifest = addon.manifest ?: return@flatMap emptyList()
+                    val ownsMeta = manifest.resources.any { resource ->
+                        resource.name.equals("meta", ignoreCase = true) &&
+                            (resource.idPrefixes ?: manifest.idPrefixes).orEmpty().any { prefix ->
+                                prefix.isNotBlank() && NON_NATIVE_META_ID_FAMILIES.none { prefix.startsWith(it, ignoreCase = true) }
+                            }
+                    }
+                    if (!ownsMeta) return@flatMap emptyList()
+                    manifest.catalogs
+                        .filter { catalog -> catalog.extra.orEmpty().any { it.name.equals("search", ignoreCase = true) } }
+                        .map { catalog -> addon to catalog }
+                }
+            if (targets.isEmpty()) return@withContext emptyList()
+            withTimeoutOrNull(timeoutMs) {
+                coroutineScope {
+                    targets.map { (addon, catalog) ->
+                        async {
+                            try {
+                                val (baseUrl, queryParams) = getAddonBaseUrl(addon.url.orEmpty())
+                                val query = queryParams?.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
+                                val url = "$baseUrl/catalog/${catalog.type}/${catalog.id}/search=$encoded.json$query"
+                                val response = streamApi.getAddonCatalog(url)
+                                val metas = response.metas ?: response.items ?: emptyList()
+                                if (metas.isEmpty()) null
+                                else AddonSearchPage(addon.id, catalog.type, catalog.id, metas)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+            }.orEmpty()
+        }
+
     suspend fun getAddonMeta(
         addonId: String,
         mediaType: String,
@@ -1516,6 +1582,29 @@ class StreamRepository @Inject constructor(
             if (meta != null) return@withContext meta
         }
         null
+    }
+
+    /**
+     * True when [addonId] serves its own metadata for [contentId]: its manifest offers a
+     * `meta` resource whose id prefixes cover that id (a broadcaster VOD addon, say). Such
+     * items can be shown natively instead of being matched to TMDB, which would hide every
+     * title TMDB doesn't list. Ids TMDB lookups understand and the anime id families ARVIO
+     * maps through its own anime pipeline are left out, so those addons behave as before.
+     */
+    suspend fun addonServesOwnMeta(addonId: String, type: String, contentId: String): Boolean {
+        val id = contentId.trim()
+        if (id.isBlank() || NON_NATIVE_META_ID_FAMILIES.any { id.startsWith(it, ignoreCase = true) }) return false
+        val manifest = installedAddons.first().firstOrNull { it.id == addonId && it.isEnabled }?.manifest ?: return false
+        val normalizedType = type.trim().lowercase(Locale.US)
+        return manifest.resources.any { resource ->
+            if (!resource.name.equals("meta", ignoreCase = true)) return@any false
+            if (!supportsResourceType(resource.types, normalizedType)) return@any false
+            // An addon that names no prefix at all can't be said to own any id.
+            val prefixes = resource.idPrefixes ?: manifest.idPrefixes
+            prefixes.orEmpty().any { prefix ->
+                prefix.isNotBlank() && id.startsWith(prefix.trim(), ignoreCase = true)
+            }
+        }
     }
 
     private fun catalogTypeAliases(rawType: String): List<String> {
@@ -3021,6 +3110,8 @@ class StreamRepository @Inject constructor(
         animeQueryOverride: String? = null,
         airDate: String? = null
     ): StreamResult = withContext(Dispatchers.IO) {
+        // Native addon items carry a negative stand-in id, which no addon knows as TMDB.
+        val tmdbId = tmdbId?.takeIf { it > 0 }
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
@@ -3098,6 +3189,8 @@ class StreamRepository @Inject constructor(
         airDate: String? = null,
         sequential: Boolean = false
     ): Flow<ProgressiveStreamResult> = callbackFlow {
+        // Native addon items carry a negative stand-in id, which no addon knows as TMDB.
+        val tmdbId = tmdbId?.takeIf { it > 0 }
         // Retained so cancelling the collector (back-nav, superseded prefetch)
         // also stops the scrape instead of leaking it in repositoryScope.
         val workerJob = repositoryScope.launch {
