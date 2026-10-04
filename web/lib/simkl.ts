@@ -429,17 +429,18 @@ export class SimklClient implements SyncClient {
     return null;
   }
 
-  async watchlist(): Promise<unknown[]> {
+  async watchlist(statuses: Array<"plantowatch" | "watching"> = ["plantowatch"], options: { throwOnError?: boolean } = {}): Promise<unknown[]> {
     const snapshot = await this.loadSnapshot();
+    if (options.throwOnError && !snapshot.complete) throw new Error("SIMKL watchlist is unavailable");
     const movies = (await Promise.all(snapshot.movies
-      .filter((item) => item.status === "plantowatch")
+      .filter((item) => statuses.includes(item.status as "plantowatch" | "watching"))
       .map(async (item) => ({
         type: "movie",
         movie: await this.resolveMedia(item.movie, "movie"),
         listed_at: item.last_watched_at
       })))).filter((item) => item.movie?.ids?.tmdb != null);
     const shows = (await Promise.all([...snapshot.shows, ...snapshot.anime]
-      .filter((item) => item.status === "plantowatch")
+      .filter((item) => statuses.includes(item.status as "plantowatch" | "watching"))
       .map(async (item) => ({
         type: "show",
         show: await this.resolveMedia(item.show, "tv"),

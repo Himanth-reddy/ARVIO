@@ -371,7 +371,9 @@ data class TmdbTvDetails(
     val seasons: List<TmdbTvSeason> = emptyList(),
     // Appended via append_to_response. Nullable so the response stays valid
     // when TMDB omits the block.
-    @SerializedName("content_ratings") val contentRatings: TmdbContentRatingsResponse? = null
+    @SerializedName("content_ratings") val contentRatings: TmdbContentRatingsResponse? = null,
+    @SerializedName("last_episode_to_air") val lastEpisodeToAir: TmdbEpisode? = null,
+    @SerializedName("next_episode_to_air") val nextEpisodeToAir: TmdbEpisode? = null
 )
 
 data class TmdbSeasonDetails(
@@ -408,7 +410,9 @@ data class TmdbReleaseDatesResult(
 /** `type` 3 is the theatrical release. Unknown types sort last, see ContentRating. */
 data class TmdbReleaseDate(
     val certification: String? = null,
-    val type: Int = Int.MAX_VALUE
+    val type: Int = Int.MAX_VALUE,
+    // TMDB encodes a calendar date as a timestamp. It is not a confirmed release time.
+    @SerializedName("release_date") val releaseDate: String? = null
 )
 
 /**
