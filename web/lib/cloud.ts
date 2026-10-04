@@ -1,5 +1,7 @@
 import type { AuthClient } from "./auth";
 import { mergeAddonChanges, recordAddonChanges, type AddonChanges } from "./addonChanges";
+import { mergeWatchlistChanges, mergeWatchlistItems, watchlistChangesStorageKey, watchlistKey, type CloudWatchlistItem as AndroidWatchlistItem, type WatchlistChanges } from "./watchlistChanges";
+import { loadStored, saveStored } from "./storage";
 import { config, hasNetlifyBackendUrl } from "./config";
 import { parseHomeServerConnectionJson, serializeHomeServerConnectionJson } from "./homeserver";
 import { jsonRequest } from "./http";
@@ -43,16 +45,6 @@ interface AndroidContinueWatchingItem {
   streamAddonId?: string | null;
   streamTitle?: string | null;
   updatedAtMs?: number;
-}
-
-interface AndroidWatchlistItem {
-  addedAt?: number;
-  backdropPath?: string | null;
-  mediaType?: string;
-  posterPath?: string | null;
-  sourceOrder?: number;
-  title?: string | null;
-  tmdbId?: number | null;
 }
 
 interface AndroidIptvProfileState {
@@ -1349,11 +1341,16 @@ export async function saveCloudTrackingSelection(
 }
 
 export async function pullCloudWatchlist(auth: AuthClient, profileId?: string | null): Promise<MediaItem[]> {
+  const userId = auth.session?.userId;
   const root = await pullRawPayload(auth);
+  if (auth.session?.userId !== userId) return [];
   const byProfile = objectRecord<unknown>(root.watchlistByProfile);
-  const items = profileId
-    ? arrayValue<AndroidWatchlistItem>(byProfile[profileId])
-    : Object.values(byProfile).flatMap((value) => arrayValue<AndroidWatchlistItem>(value));
+  const changesByProfile = objectRecord<unknown>(root.watchlistChangesByProfile);
+  const profiles = profileId ? [profileId] : [...new Set([...Object.keys(byProfile), ...Object.keys(changesByProfile)])];
+  const items = profiles.flatMap((id) => {
+    const changes = rememberWatchlistChanges(auth, id, changesByProfile[id]);
+    return mergeWatchlistItems(changes, byProfile[id]);
+  });
   return items
     .map((item): MediaItem | null => {
       const id = Number(item.tmdbId ?? 0);
@@ -1363,6 +1360,7 @@ export async function pullCloudWatchlist(auth: AuthClient, profileId?: string | 
         id,
         title: item.title ?? "Untitled",
         mediaType,
+        activityAt: item.addedAt,
         subtitle: mediaType === "tv" ? "TV Series" : "Movie",
         image: tmdbImageUrl(config.imageBase, item.posterPath),
         backdrop: tmdbImageUrl(config.backdropBase, item.backdropPath) || null
@@ -1371,24 +1369,41 @@ export async function pullCloudWatchlist(auth: AuthClient, profileId?: string | 
     .filter((item): item is MediaItem => Boolean(item));
 }
 
+function rememberWatchlistChanges(auth: AuthClient, profileId: string, incoming: unknown): WatchlistChanges {
+  if (!auth.session) return mergeWatchlistChanges(incoming);
+  const key = watchlistChangesStorageKey(auth.session.userId, profileId);
+  const changes = mergeWatchlistChanges(loadStored<WatchlistChanges>(key, {}), incoming);
+  saveStored(key, changes);
+  return changes;
+}
+
 export async function saveCloudWatchlist(
   auth: AuthClient,
   items: MediaItem[],
-  profileId?: string | null
+  profileId?: string | null,
+  options: { changes?: WatchlistChanges } = {}
 ) {
   if (!profileId) return;
   await mutateCloudPayload(auth, (root) => {
     const byProfile = objectRecord<unknown>(root.watchlistByProfile);
-    byProfile[profileId] = items.map((item, index): AndroidWatchlistItem => ({
+    const changesByProfile = objectRecord<unknown>(root.watchlistChangesByProfile);
+    // Membership changes come only from explicit actions. An incomplete local
+    // list cannot delete remote additions or revive a retained removal record.
+    const changes = rememberWatchlistChanges(auth, profileId,
+      mergeWatchlistChanges(changesByProfile[profileId], options.changes));
+    const incoming = items.map((item, index): AndroidWatchlistItem => ({
       tmdbId: item.id,
       mediaType: item.mediaType,
       title: item.title,
       posterPath: item.image || null,
       backdropPath: item.backdrop || null,
-      addedAt: item.activityAt ?? Date.now(),
+      addedAt: item.activityAt ?? changes[watchlistKey(item.mediaType, item.id) ?? '']?.updatedAt ?? 0,
       sourceOrder: index
     }));
+    byProfile[profileId] = mergeWatchlistItems(changes, incoming, byProfile[profileId]);
+    changesByProfile[profileId] = changes;
     root.watchlistByProfile = byProfile;
+    root.watchlistChangesByProfile = changesByProfile;
   });
 }
 
