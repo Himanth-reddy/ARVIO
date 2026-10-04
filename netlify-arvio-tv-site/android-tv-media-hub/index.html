@@ -86,7 +86,7 @@
             "name": "Why is an addon installed but not working?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Check whether the addon still needs configuration, whether the manifest URL is complete and whether its provider is available. For TV configuration completed on a phone, return to the TV and use Refresh Addons. Not every compatible catalog offers streams."
+          "text": "Check whether the addon needs configuration, whether its manifest URL is complete and whether its provider is available. After configuring on a phone, install the updated manifest into ARVIO there, then use Refresh Addons on the TV with the same Cloud account and intended profile. Without cloud sync, paste the configured manifest directly on the TV. Not every catalog offers streams."
             }
           },
           {
@@ -148,7 +148,7 @@
 <ol class="setup-list">
 <li><h3>Get the configured manifest URL</h3><p>Use a Stremio-compatible addon from a provider you trust and are authorized to use. Finish any provider configuration first, then copy its manifest URL, often ending in <code>/manifest.json</code>. Treat a URL containing your credentials as private.</p></li>
 <li><h3>Open Settings → Addons → Add Addon</h3><p>Paste the URL and install it. If ARVIO asks for confirmation, check the addon name and requested configuration before continuing. For an existing addon with a different configuration, choose <strong>Replace installed</strong> or <strong>Keep both</strong> intentionally.</p></li>
-<li><h3>Check configuration and playback</h3><p>If an addon says <strong>Setup required</strong>, complete its configuration. On TV, the configuration flow can show a QR code for your phone; return to the TV and choose <strong>Refresh Addons</strong> afterwards. Test a title your provider makes available.</p></li>
+<li><h3>Check configuration and playback</h3><p>If an addon says <strong>Setup required</strong>, complete its configuration. On TV, the configuration flow can show a QR code for your phone. Change the settings there and tap <strong>Install in ARVIO</strong> on the phone, then choose <strong>Refresh Addons</strong> on the TV. Cross-device restoration needs a valid ARVIO Cloud session; use the same account and intended profile. Without cloud sync, paste the configured manifest URL directly into <strong>Add Addon</strong> on the TV instead. Test a title your provider makes available.</p></li>
 </ol><p>Installing a manifest is not the same as importing an entire Stremio account. Catalogs exposed by a successfully installed addon are imported by ARVIO. For custom Home rows and collections, use the <a href="/collections-catalogs/">collections and catalogs guide</a>.</p>
 </div></section>
 <section class="section compact" id="devices"><div class="shell guide-reading">
@@ -162,7 +162,7 @@
 <section class="section" id="help"><div class="shell guide-reading"><p class="eyebrow">Common questions</p><h2>Setup and troubleshooting</h2><div class="faq-list">
 <details><summary>Do I need Premium for the Android APK?</summary><p>No. The Android and TV app is free and open source. Premium is the optional hosted browser service. You still need your own media sources and any subscriptions those providers require.</p></details>
 <details><summary>Why can I see a poster but no playable source?</summary><p>A catalog supplies titles and artwork, not necessarily video. Connect a home server or compatible stream source, check its configuration and confirm your account can access the title. Trakt and Simkl watchlists alone do not supply videos.</p></details>
-<details><summary>Why is an addon installed but not working?</summary><p>Check whether the addon still needs configuration, whether the manifest URL is complete and whether its provider is available. For TV configuration completed on a phone, return to the TV and use Refresh Addons. Not every compatible catalog offers streams.</p></details>
+<details><summary>Why is an addon installed but not working?</summary><p>Check whether the addon needs configuration, whether its manifest URL is complete and whether its provider is available. After configuring on a phone, install the updated manifest into ARVIO there, then use Refresh Addons on the TV with the same Cloud account and intended profile. Without cloud sync, paste the configured manifest directly on the TV. Not every catalog offers streams.</p></details>
 <details><summary>What if the APK will not install?</summary><p>Confirm that the device runs a compatible Android-based operating system and that you downloaded an APK from the official release. Check free storage and the installer permission. A different signing certificate or an attempted downgrade can block an update; do not uninstall your working app without considering its local data.</p></details>
 <details><summary>Can I use the same APK on Windows, iPhone or iPad?</summary><p>No. The APK is for Android-based devices. Use ARVIO Web in a supported browser on Windows, Mac, iPhone or iPad, with optional managed hosting or your own self-hosted installation.</p></details>
 </div><p>Still stuck? <a href="https://discord.gg/UavuEYMfQ4">Ask in the ARVIO Discord</a> with your device, app or browser version and the error message. Do not share passwords, access tokens or private provider URLs.</p></div></section>
