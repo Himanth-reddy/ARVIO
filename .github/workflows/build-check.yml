@@ -37,6 +37,11 @@ jobs:
       - name: Check partner landing links
         if: matrix.directory == 'web'
         run: node --test ../netlify-arvio-tv-site/scripts/open-links.test.cjs
+      - name: Check website SEO guides
+        if: matrix.directory == 'web'
+        run: |
+          node ../netlify-arvio-tv-site/scripts/validate-localized-guides.mjs
+          node --test ../netlify-arvio-tv-site/scripts/seo-guides.test.cjs
       - name: Check web types
         if: matrix.directory == 'web'
         run: npx tsc --noEmit

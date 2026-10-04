@@ -32,6 +32,7 @@
     } catch {}
   }
   function classify(link) {
+    if (link.hasAttribute('download')) return null;
     let url;
     try { url = new URL(link.href, here); } catch { return null; }
     if (!['https:', 'http:'].includes(url.protocol)) return null;
@@ -42,21 +43,30 @@
     if (url.hostname === 'ko-fi.com' && /^\/arvio\/tiers\/?$/.test(url.pathname)) return { url, kind: 'membership_clicked' };
     return null;
   }
-  for (const link of document.querySelectorAll('a[href]')) {
-    const target = classify(link);
-    if (!target || target.kind === 'membership_clicked') continue;
+  function attribute(link, target) {
+    const originalHref = link.getAttribute('href');
     target.url.searchParams.set('arvio_journey', journey);
     for (const [name, value] of Object.entries(campaign)) {
       if (value) target.url.searchParams.set('utm_' + name, value);
     }
     link.href = target.url.href;
+    // Native navigation reads the href during activation, including new-tab clicks.
+    // Restore it afterward for canceled navigation, modifier clicks and back/forward.
+    window.setTimeout(() => {
+      if (link.getAttribute('href') === target.url.href) link.setAttribute('href', originalHref);
+    }, 0);
   }
   function clicked(event) {
-    if (event.type === 'auxclick' && event.button !== 1) return;
-    const link = event.target.closest?.('a[href]');
+    if (!event.isTrusted || event.defaultPrevented) return;
+    if (event.type === 'auxclick' ? event.button !== 1 : event.button !== 0) return;
+    const link = event.target?.closest?.('a[href]');
     if (!link) return;
     const target = classify(link);
-    if (!target || target.kind === 'internal') return;
+    if (!target) return;
+    // Keep crawlable links clean until a person activates them. Do not intercept
+    // the browser's default action: targets, keyboard and modifiers remain native.
+    if (target.kind !== 'membership_clicked') attribute(link, target);
+    if (target.kind === 'internal') return;
     const placement = clean(link.dataset.premiumPlacement) || (link.closest('footer') ? 'footer' : link.closest('header') ? 'nav' : page);
     record(target.kind, placement);
   }
