@@ -9,8 +9,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import coil.imageLoader
@@ -52,6 +54,7 @@ class LibraryCalendarDeviceTest {
     private val fixtureLogos = mutableMapOf<Int, String>()
     private var calendar by mutableStateOf(ReleaseCalendarUiState())
     private var opened: Pair<MediaType, Int>? = null
+    private var refreshRequests = 0
 
     @Test fun referenceMonthShowsCompleteLibraryShellAndReleaseRail() {
         show()
@@ -94,6 +97,7 @@ class LibraryCalendarDeviceTest {
         assertDate(referenceDate)
         key(Key.DirectionCenter)
         compose.onNodeWithTag("calendar-release-selected-episode").assertIsFocused()
+        compose.runOnIdle { assertEquals("Opening a day must focus its release without activating it", null, opened) }
         key(Key.DirectionCenter)
         compose.runOnIdle { assertEquals(MediaType.TV to 100088, opened) }
         listOf("selected-cinema", "selected-digital", "selected-physical", "selected-movie").forEach { id ->
@@ -143,15 +147,145 @@ class LibraryCalendarDeviceTest {
         compose.onNodeWithTag("calendar-day-$referenceDate").assertIsDisplayed().performClick()
         capture("calendar-phone-month")
         compose.onNodeWithTag("calendar-release-selected-episode").performScrollTo().assertIsDisplayed()
+        scrollCalendarToBottom()
         compose.onNodeWithText("Trakt + SIMKL", useUnmergedTree = true).assertIsDisplayed()
         capture("calendar-phone-releases")
         compose.onNodeWithTag("calendar-release-selected-episode").performClick()
         compose.runOnIdle { assertEquals(MediaType.TV to 100088, opened) }
     }
 
-    private fun show(selectedDate: LocalDate = referenceDate, device: DeviceType = DeviceType.TV) {
+    @Test fun sixWeekMonthKeepsReleaseCountsVisibleAndFocusCrossesMonthEdges() {
+        val selected = referenceDate.plusMonths(1)
+        show(selectedDate = selected, configure = ::novemberFixture)
+        compose.onAllNodes(hasAnyAncestor(hasTestTag("calendar-month-grid")) and hasClickAction()).assertCountEquals(42)
+        compose.onNodeWithTag("calendar-day-2026-10-26").assertIsDisplayed()
+        compose.onNodeWithTag("calendar-day-2026-12-06").assertIsDisplayed()
+        val count = compose.onNodeWithTag("calendar-more-$selected", useUnmergedTree = true)
+            .assertIsDisplayed().assertTextEquals("+4").getUnclippedBoundsInRoot()
+        val cell = compose.onNodeWithTag("calendar-day-$selected").getUnclippedBoundsInRoot()
+        assertTrue("Dense months must show the additional release count within the selected day", count.bottom <= cell.bottom)
+        compose.onNodeWithTag("calendar-release-selected-episode").assertIsDisplayed()
+        capture("calendar-six-week-month")
+
+        val first = LocalDate.of(2026, 11, 1)
+        focusDay(first)
+        key(Key.DirectionLeft)
+        assertDate(first.minusDays(1))
+        compose.onNodeWithTag("calendar-day-2026-10-31").assertIsFocused()
+        key(Key.DirectionRight)
+        assertDate(first)
+        compose.onNodeWithTag("calendar-day-$first").assertIsFocused()
+    }
+
+    @Test fun emptyDayRemoteShortcutUsesTheSelectedSourceAndReturnsToItsDay() {
+        val emptyDate = LocalDate.of(2026, 10, 3)
+        show(selectedDate = emptyDate)
+        compose.onNodeWithTag("calendar-source-filter").performClick()
+        compose.onNodeWithTag("calendar-source-${ReleaseCalendarSource.TRAKT.id}").performClick()
+        focusDay(emptyDate)
+        key(Key.DirectionCenter)
+        compose.onNodeWithTag("calendar-next-release").assertIsFocused()
+        assertDate(emptyDate)
+        capture("calendar-empty-day")
+        key(Key.DirectionUp)
+        compose.onNodeWithTag("calendar-day-$emptyDate").assertIsFocused()
+        key(Key.DirectionCenter)
+        key(Key.DirectionCenter)
+        // SIMKL has a release on the 4th, but the active Trakt filter's next date is the 6th.
+        assertDate(LocalDate.of(2026, 10, 6))
+        compose.onNodeWithTag("calendar-day-2026-10-06").assertIsFocused()
+        compose.onNodeWithTag("calendar-release-severance-6").assertIsDisplayed()
+
+        focusDay(LocalDate.of(2026, 10, 29))
+        key(Key.DirectionDown)
+        compose.onNodeWithTag("calendar-next-release").assertIsFocused()
+        key(Key.DirectionCenter)
+        assertDate(LocalDate.of(2026, 10, 30))
+        compose.onNodeWithTag("calendar-day-2026-10-30").assertIsFocused()
+    }
+
+    @Test fun loadingAndRetryPreserveDayFocusWithoutFalseEmptyWatchlistAdvice() {
+        var loadedEntries = emptyList<CalendarRelease>()
+        show(configure = { state ->
+            loadedEntries = state.entries
+            state.copy(entries = emptyList(), isLoading = true, watchlistCount = 0)
+        })
+        focusDay(referenceDate)
+        compose.onNodeWithTag("calendar-loading").assertIsDisplayed()
+        compose.onNodeWithTag("calendar-refresh").assertIsNotEnabled()
+        compose.onAllNodes(hasText("Add movies and shows", substring = true)).assertCountEquals(0)
+        compose.onNodeWithText("0 releases").assertDoesNotExist()
+        capture("calendar-loading")
+
+        compose.runOnIdle { calendar = calendar.copy(entries = loadedEntries, watchlistCount = 8) }
+        compose.onNodeWithTag("calendar-day-$referenceDate").assertIsFocused()
+        compose.onNodeWithTag("calendar-release-selected-episode").assertIsDisplayed()
+        compose.onNodeWithText("5 releases").assertIsDisplayed()
+        compose.onNodeWithTag("calendar-refresh").assertIsNotEnabled()
+        compose.runOnIdle { calendar = calendar.copy(isLoading = false) }
+        compose.onNodeWithTag("calendar-refresh").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, refreshRequests) }
+
+        compose.runOnIdle { calendar = calendar.copy(entries = emptyList(), error = "Fixture source unavailable") }
+        focusDay(referenceDate)
+        key(Key.DirectionCenter)
+        compose.onNodeWithTag("calendar-retry").assertIsFocused()
+        compose.runOnIdle { assertEquals("Opening an empty day must focus Retry without refreshing", 1, refreshRequests) }
+        key(Key.DirectionUp)
+        compose.onNodeWithTag("calendar-day-$referenceDate").assertIsFocused()
+        key(Key.DirectionCenter)
+        key(Key.DirectionCenter)
+        compose.runOnIdle { assertEquals(2, refreshRequests) }
+    }
+
+    @Test fun todayMarkerRemainsVisibleWhenAnotherDayIsSelected() {
+        val today = LocalDate.now(timezone)
+        val otherDay = today.withDayOfMonth(if (today.dayOfMonth == 1) 2 else today.dayOfMonth - 1)
+        show(selectedDate = otherDay)
+        compose.onNodeWithTag("calendar-today-marker-$today", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("calendar-day-$today").assertIsNotSelected()
+        compose.onNodeWithTag("calendar-day-$otherDay").assertIsSelected()
+        compose.onNodeWithTag("calendar-today").performClick()
+        assertDate(today)
+        compose.onNodeWithTag("calendar-day-$today").assertIsSelected()
+        compose.onNodeWithTag("calendar-today-marker-$today", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun phoneSixWeekMonthHasComfortableControlsAndScrollsToReleaseDetails() {
+        assumeTrue("Run this test with a portrait display below 600dp wide",
+            compose.activity.resources.configuration.screenWidthDp < 600)
+        val selected = referenceDate.plusMonths(1)
+        show(selectedDate = selected, device = DeviceType.PHONE, configure = ::novemberFixture)
+        listOf("calendar-previous-month", "calendar-next-month", "calendar-today", "calendar-source-filter", "calendar-refresh")
+            .forEach { tag -> compose.onNodeWithTag(tag).assertHeightIsAtLeast(44.dp).assertWidthIsAtLeast(44.dp) }
+        compose.onNodeWithTag("calendar-source-filter").performClick()
+        ReleaseCalendarSource.entries.forEach { source ->
+            compose.onNodeWithTag("calendar-source-${source.id}").assertHeightIsAtLeast(44.dp)
+        }
+        compose.onNodeWithTag("calendar-source-${ReleaseCalendarSource.ALL.id}").performClick()
+        compose.onNodeWithTag("calendar-day-count-$selected", useUnmergedTree = true).assertTextEquals("5")
+        capture("calendar-phone-six-weeks-top")
+        compose.onNodeWithTag("calendar-day-2026-12-06").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("calendar-release-selected-episode").performScrollTo().assertIsDisplayed()
+        scrollCalendarToBottom()
+        compose.onNodeWithText("Trakt + SIMKL", useUnmergedTree = true).assertIsDisplayed()
+        val provenance = compose.onNodeWithText("Trakt + SIMKL", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val viewport = compose.onNodeWithTag("library-calendar").getUnclippedBoundsInRoot()
+        assertTrue("The full release metadata must have bottom breathing room after scrolling", provenance.bottom <= viewport.bottom - 8.dp)
+        capture("calendar-phone-six-weeks-releases")
+        compose.onNodeWithTag("calendar-release-selected-episode").performClick()
+        compose.runOnIdle { assertEquals(MediaType.TV to 100088, opened) }
+    }
+
+    private fun novemberFixture(state: ReleaseCalendarUiState) = state.copy(entries = state.entries.map { release ->
+        release.copy(date = release.date.plusMonths(1),
+            releaseInstant = release.releaseInstant?.atZone(timezone)?.plusMonths(1)?.toInstant())
+    })
+
+    private fun show(selectedDate: LocalDate = referenceDate, device: DeviceType = DeviceType.TV,
+                     configure: (ReleaseCalendarUiState) -> ReleaseCalendarUiState = { it }) {
         val fixtureItems = fixtureMedia()
-        calendar = ReleaseCalendarUiState(
+        calendar = configure(ReleaseCalendarUiState(
             month = YearMonth.from(selectedDate),
             selectedDate = selectedDate,
             sources = ReleaseCalendarSource.entries.toList(),
@@ -160,7 +294,7 @@ class LibraryCalendarDeviceTest {
             isLoading = false,
             timezone = timezone,
             watchlistCount = fixtureItems.size
-        )
+        ))
         every { viewModel.uiState } returns MutableStateFlow(WatchlistUiState(isLoading = false))
         every { viewModel.libraryState } returns MutableStateFlow(HomeLibraryUiState())
         every { viewModel.logoUrls } returns MutableStateFlow(emptyMap())
@@ -178,7 +312,8 @@ class LibraryCalendarDeviceTest {
                             calendar = calendar.copy(month = nextMonth,
                                 selectedDate = nextMonth.atDay(calendar.selectedDate.dayOfMonth.coerceAtMost(nextMonth.lengthOfMonth())))
                         },
-                        onCalendarSelectSource = { sourceId -> calendar = calendar.copy(selectedSourceId = sourceId) }
+                        onCalendarSelectSource = { sourceId -> calendar = calendar.copy(selectedSourceId = sourceId) },
+                        onCalendarRefresh = { refreshRequests++ }
                     )
                 }
             }
@@ -270,6 +405,13 @@ class LibraryCalendarDeviceTest {
             assertEquals(YearMonth.from(expected), calendar.month)
         }
         compose.onNodeWithTag("calendar-day-$expected").assertIsDisplayed()
+    }
+
+    private fun scrollCalendarToBottom() {
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)
+            and hasAnyAncestor(hasTestTag("library-calendar")))
+            .performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10_000f) }
+        compose.waitForIdle()
     }
 
     private fun capture(name: String) {

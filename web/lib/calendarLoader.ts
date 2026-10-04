@@ -11,20 +11,47 @@ interface Details {
   seasons?: Season[]; last_episode_to_air?: Episode; next_episode_to_air?: Episode;
   release_dates?: { results?: Array<{ iso_3166_1: string; release_dates: ReleaseDate[] }> };
 }
-export interface CalendarResult { releases: CalendarRelease[]; failedSources: CalendarSource[]; failedTitles: number; titleCount: number }
+export interface CalendarResult { releases: CalendarRelease[]; failedSources: CalendarSource[]; pendingSources: CalendarSource[]; failedTitles: number; titleCount: number; sourceTitleCounts: Partial<Record<CalendarSource, number>> }
 export interface CalendarRead { source: CalendarSource; read: () => Promise<MediaItem[]> }
 export interface CalendarLoadOptions {
   sources: CalendarRead[]; start: string; end: string; language: string; region: string; customApiKey?: string; signal?: AbortSignal;
   episodeTime?: (item: MediaItem, season: number, episode: number) => Promise<string | null | undefined>;
   onProgress?: (result: CalendarResult) => void;
+  /** Bound unresponsive providers; tests can use a shorter deadline. */
+  timeoutMs?: number;
+  /** A title's optional air-time budget includes time spent waiting in the queue. */
+  enrichmentTimeoutMs?: number;
 }
 const cache = new Map<string, { at: number; value: unknown }>();
+function bounded<T>(read: () => Promise<T>, options: CalendarLoadOptions): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => finish(new Error("Calendar request cancelled"));
+    const timer = setTimeout(() => finish(new Error("Calendar request timed out")), options.timeoutMs ?? 12_000);
+    function finish(error?: Error, value?: T) {
+      clearTimeout(timer); options.signal?.removeEventListener("abort", abort);
+      if (error) reject(error); else resolve(value as T);
+    }
+    if (options.signal?.aborted) { abort(); return; }
+    options.signal?.addEventListener("abort", abort, { once: true });
+    Promise.resolve().then(() => { if (options.signal?.aborted) throw new Error("Calendar request cancelled"); return read(); }).then(value => finish(undefined, value), error => finish(error));
+  });
+}
+function queue(concurrency: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async <T>(read: () => Promise<T>): Promise<T> => {
+    if (active >= concurrency) await new Promise<void>(resolve => waiting.push(resolve));
+    else active++;
+    try { return await read(); }
+    finally { const next = waiting.shift(); if (next) next(); else active--; }
+  };
+}
 async function metadata<T>(path: string, options: CalendarLoadOptions, extra: Record<string, string> = {}): Promise<T> {
   if (options.signal?.aborted) throw new Error("Calendar request cancelled");
   const key = `${options.language}:${path}:${JSON.stringify(extra)}`;
   const cached = cache.get(key);
   if (cached && Date.now() - cached.at < 10 * 60_000) return cached.value as T;
-  const value = await tmdb<T>(path, { language: options.language, ...extra }, options.customApiKey);
+  const value = await bounded(() => tmdb<T>(path, { language: options.language, ...extra }, options.customApiKey), options);
   cache.set(key, { at: Date.now(), value });
   if (cache.size > 600) cache.delete(cache.keys().next().value!);
   return value;
@@ -57,70 +84,119 @@ export function calendarSeasonCandidates(seasons: Season[], start: string, end: 
   return [...seasons].filter(row => row.season_number >= 0 && (!row.air_date || row.air_date <= end)).sort((a, b) => a.season_number - b.season_number);
 }
 
-async function titleReleases(title: CalendarTitle, options: CalendarLoadOptions): Promise<{ releases: CalendarRelease[]; failed: boolean }> {
+async function titleReleases(title: CalendarTitle, options: CalendarLoadOptions, publish: (release: CalendarRelease) => void): Promise<{ failed: boolean }> {
   const { item } = title;
   const details = await metadata<Details>(`${item.mediaType}/${item.id}`, options, item.mediaType === "movie" ? { append_to_response: "release_dates" } : {});
-  if (details.adult) return { releases: [], failed: false };
+  if (details.adult) return { failed: false };
   const hydrated: CalendarTitle = { ...title, item: { ...item, ...mapTmdbItem(details, item.mediaType), traktId: item.traktId } };
-  if (item.mediaType === "movie") return { releases: movieCalendarReleases(hydrated, details, options.region), failed: false };
-  if (["Ended", "Canceled"].includes(details.status ?? "") && parseCalendarDate(details.last_episode_to_air?.air_date) && details.last_episode_to_air!.air_date! < options.start && !details.next_episode_to_air) return { releases: [], failed: false };
-  const episodes = new Map<string, Episode>();
-  for (const episode of [details.last_episode_to_air, details.next_episode_to_air]) if (episode) episodes.set(`${episode.season_number}:${episode.episode_number}`, episode);
+  if (item.mediaType === "movie") { movieCalendarReleases(hydrated, details, options.region).forEach(publish); return { failed: false }; }
+  if (["Ended", "Canceled"].includes(details.status ?? "") && parseCalendarDate(details.last_episode_to_air?.air_date) && details.last_episode_to_air!.air_date! < options.start && !details.next_episode_to_air) return { failed: false };
+  const publishEpisode = (episode: Episode) => {
+    if (options.signal?.aborted || !parseCalendarDate(episode.air_date) || episode.season_number < 0 || episode.episode_number <= 0) return;
+    const date = episode.air_date!;
+    if (date < options.start || date > options.end) return;
+    publish({ ...hydrated, id: `tv:${item.id}:${episode.season_number}:${episode.episode_number}`, kind: "episode", date, season: episode.season_number, episode: episode.episode_number, episodeTitle: episode.name, artwork: episode.still_path ? `${config.backdropBase}${episode.still_path}` : hydrated.item.backdrop || hydrated.item.image });
+  };
+  // A known next episode is useful even while an old season or exact-time service is slow.
+  for (const episode of [details.last_episode_to_air, details.next_episode_to_air]) if (episode) publishEpisode(episode);
   let failed = false;
   for (const season of calendarSeasonCandidates(details.seasons ?? [], options.start, options.end)) {
     try {
       const data = await metadata<{ episodes?: Episode[] }>(`tv/${item.id}/season/${season.season_number}`, options);
-      for (const episode of data.episodes ?? []) episodes.set(`${episode.season_number}:${episode.episode_number}`, episode);
+      for (const episode of data.episodes ?? []) publishEpisode(episode);
     } catch (error) { if (options.signal?.aborted) throw error; failed = true; }
   }
-  const releases: CalendarRelease[] = [];
-  for (const episode of episodes.values()) {
-    if (options.signal?.aborted) throw new Error("Calendar request cancelled");
-    if (!parseCalendarDate(episode.air_date) || episode.season_number < 0 || episode.episode_number <= 0) continue;
-    // One day of padding lets an authoritative UTC time cross the local month boundary.
-    const date = episode.air_date!;
-    if (date < options.start || date > options.end) continue;
-    let time: ReturnType<typeof authoritativeEpisodeTime> = null;
-    if (options.episodeTime) {
-      time = authoritativeEpisodeTime(await options.episodeTime(item, episode.season_number, episode.episode_number).catch(() => null));
-    }
-    releases.push({ ...hydrated, id: `tv:${item.id}:${episode.season_number}:${episode.episode_number}`, kind: "episode", date: time?.date ?? date, timestamp: time?.timestamp, season: episode.season_number, episode: episode.episode_number, episodeTitle: episode.name, artwork: episode.still_path ? `${config.backdropBase}${episode.still_path}` : hydrated.item.backdrop || hydrated.item.image });
-  }
-  return { releases, failed };
+  return { failed };
 }
 
 export async function loadCalendar(options: CalendarLoadOptions): Promise<CalendarResult> {
-  const settled = await Promise.allSettled(options.sources.map(async source => ({ source: source.source, items: await source.read() })));
-  const failedSources = settled.flatMap((result, index) => result.status === "rejected" ? [options.sources[index].source] : []);
-  const groups = settled.flatMap(result => result.status === "fulfilled" ? [{ ...result.value, items: result.value.items.map(item => ({ ...item })) }] : []);
-  // Resolve tracker-only identities before merging; never mistake a tracker ID for TMDB.
-  const unresolved = groups.flatMap(group => group.items.filter(item => item.id <= 0));
-  let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(4, unresolved.length) }, async () => {
-    while (cursor < unresolved.length && !options.signal?.aborted) {
-      const item = unresolved[cursor++];
-      const id = await resolveTmdbId(item).catch(() => null);
-      if (id) item.id = id;
-    }
+  const titles = new Map<string, CalendarTitle>();
+  const releases = new Map<string, CalendarRelease>();
+  const failedTitles = new Set<string>();
+  const failedSources = new Set<CalendarSource>();
+  const pendingSources = new Set(options.sources.map(row => row.source));
+  const sourceTitleCounts: CalendarResult["sourceTitleCounts"] = {};
+  const titleJobs = new Map<string, Promise<void>>();
+  const timeJobs: Promise<void>[] = [];
+  const requestedTimes = new Set<string>();
+  const unavailableTimeSeasons = new Set<string>();
+  const timeDeadlines = new Map<string, number>();
+  const readTitle = queue(4), readIdentity = queue(4), readTime = queue(4);
+  const snapshot = (): CalendarResult => ({
+    releases: sortCalendarReleases([...releases.values()].filter(row => row.date >= options.start && row.date <= options.end).map(row => ({ ...row, sources: [...(titles.get(`${row.item.mediaType}:${row.item.id}`)?.sources ?? row.sources)] }))),
+    failedSources: [...failedSources], pendingSources: [...pendingSources], failedTitles: failedTitles.size, titleCount: titles.size, sourceTitleCounts: { ...sourceTitleCounts }
+  });
+  let publicationTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastPublished = 0, publishedFirstRelease = false, publishedInitial = false;
+  const cancelPublication = () => { clearTimeout(publicationTimer); publicationTimer = undefined; };
+  options.signal?.addEventListener("abort", cancelPublication, { once: true });
+  const publish = (immediate = false) => {
+    if (options.signal?.aborted) return;
+    const send = () => {
+      cancelPublication();
+      if (options.signal?.aborted) return;
+      publishedInitial = true; publishedFirstRelease ||= releases.size > 0; lastPublished = Date.now();
+      options.onProgress?.(snapshot());
+    };
+    // Paint the first date immediately; coalesce large seasons and exact-time updates.
+    if (immediate || !publishedInitial || (!publishedFirstRelease && releases.size > 0) || Date.now() - lastPublished >= 125) send();
+    else if (!publicationTimer) publicationTimer = setTimeout(send, 125 - (Date.now() - lastPublished));
+  };
+  const publishRelease = (release: CalendarRelease) => {
+    if (options.signal?.aborted) return;
+    const current = releases.get(release.id);
+    releases.set(release.id, current?.timestamp ? { ...release, timestamp: current.timestamp, date: current.date } : release);
+    publish();
+    if (release.kind !== "episode" || !options.episodeTime || requestedTimes.has(release.id)) return;
+    requestedTimes.add(release.id);
+    const titleKey = `${release.item.mediaType}:${release.item.id}`;
+    if (!timeDeadlines.has(titleKey)) timeDeadlines.set(titleKey, Date.now() + (options.enrichmentTimeoutMs ?? 4_000));
+    const deadline = timeDeadlines.get(titleKey)!;
+    timeJobs.push(readTime(async () => {
+      const seasonKey = `${release.item.id}:${release.season}`;
+      const remaining = deadline - Date.now();
+      if (options.signal?.aborted || unavailableTimeSeasons.has(seasonKey) || remaining <= 0) return;
+      try {
+        const time = authoritativeEpisodeTime(await bounded(() => options.episodeTime!(release.item, release.season!, release.episode!), { ...options, timeoutMs: Math.min(options.timeoutMs ?? 12_000, remaining) }));
+        if (time && !options.signal?.aborted) { releases.set(release.id, { ...releases.get(release.id)!, ...time }); publish(); }
+      } catch { unavailableTimeSeasons.add(seasonKey); }
+    }));
+  };
+  publish();
+  // Each provider schedules its titles independently; a stalled tracker cannot hold ARVIO dates back.
+  await Promise.all(options.sources.map(async ({ source, read }) => {
+    try {
+      const items = (await bounded(read, options)).filter(item => !item.isHomeServer).map(item => ({ ...item }));
+      sourceTitleCounts[source] = items.length; publish();
+      await Promise.all(items.map(async (item, index) => {
+        if (item.id <= 0) {
+          const id = await readIdentity(() => bounded(() => resolveTmdbId(item), options)).catch(() => null);
+          if (id) item.id = id;
+        }
+        if (options.signal?.aborted) return;
+        if (item.id <= 0) { failedTitles.add(`${source}:${index}`); return; }
+        const key = `${item.mediaType}:${item.id}`;
+        const previous = titles.get(key);
+        if (previous) {
+          if (!previous.sources.includes(source)) previous.sources.push(source);
+          previous.item = mergeCalendarTitles([{ source: previous.sources[0], items: [previous.item, item] }])[0].item;
+          publish();
+        } else {
+          const title: CalendarTitle = { item, sources: [source] }; titles.set(key, title);
+          titleJobs.set(key, readTitle(async () => {
+            if (options.signal?.aborted) return;
+            try { if ((await titleReleases(title, options, publishRelease)).failed) failedTitles.add(key); }
+            catch { if (!options.signal?.aborted) failedTitles.add(key); }
+            publish();
+          }));
+        }
+        await titleJobs.get(key);
+      }));
+    } catch { if (!options.signal?.aborted) failedSources.add(source); }
+    finally { pendingSources.delete(source); publish(); }
   }));
-  const titles = mergeCalendarTitles(groups);
-  const releases: CalendarRelease[] = [];
-  let failedTitles = unresolved.filter(item => item.id <= 0).length;
-  let completed = 0;
-  let lastPublished = 0;
-  const snapshot = (): CalendarResult => ({ releases: sortCalendarReleases(releases.filter(row => row.date >= options.start && row.date <= options.end)), failedSources, failedTitles, titleCount: titles.length });
-  options.onProgress?.(snapshot());
-  cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(4, titles.length) }, async () => {
-    while (cursor < titles.length && !options.signal?.aborted) {
-      const title = titles[cursor++];
-      try { const result = await titleReleases(title, options); releases.push(...result.releases); if (result.failed) failedTitles++; }
-      catch { if (!options.signal?.aborted) failedTitles++; }
-      completed++;
-      if (!options.signal?.aborted && (completed === 1 || completed === titles.length || Date.now() - lastPublished > 150)) {
-        options.onProgress?.(snapshot()); lastPublished = Date.now();
-      }
-    }
-  }));
+  await Promise.all(timeJobs);
+  publish(true);
+  cancelPublication(); options.signal?.removeEventListener("abort", cancelPublication);
   return snapshot();
 }

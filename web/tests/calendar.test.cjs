@@ -6,6 +6,7 @@ const movie = { id: 1, mediaType: 'movie', title: 'Saved movie' };
 const show = { id: 2, mediaType: 'tv', title: 'Saved series' };
 const options = { start: '2026-10-01', end: '2026-10-31', language: 'en', region: 'NL' };
 const json = value => JSON.parse(JSON.stringify(value));
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 function loader(tmdb = async () => ({}), resolveTmdbId = async () => null) {
   return load('lib/calendarLoader.ts', { './calendar': calendar, './tmdb': { tmdb, resolveTmdbId, mapTmdbItem: (details, mediaType) => ({ id: details.id, title: details.title || details.name, mediaType }) } });
 }
@@ -27,6 +28,25 @@ test('source merge is by media type and TMDB ID, retains memberships and rejects
   assert.deepEqual(json(rows[0].sources), ['arvio', 'trakt']);
   assert.equal(rows[0].item.traktId, 9);
   assert.equal(rows[2].item.mediaType, 'tv');
+});
+
+test('month navigation preserves day number and clamps across short months and year boundaries', () => {
+  for (const [from, step, expected] of [['2026-10-16', 1, '2026-11-16'], ['2026-10-31', 1, '2026-11-30'], ['2026-03-31', -1, '2026-02-28'], ['2024-01-31', 1, '2024-02-29'], ['2026-12-31', 1, '2027-01-31']]) {
+    assert.equal(calendar.calendarDate(calendar.shiftCalendarMonth(calendar.parseCalendarDate(from), step)), expected);
+  }
+});
+
+test('empty-source counts distinguish an empty list from failed or unresolved metadata', async () => {
+  const module = loader(async () => ({ id: 1, title: movie.title, release_date: '2026-10-10' }));
+  const result = await module.loadCalendar({ ...options, sources: [
+    { source: 'arvio', read: async () => [] },
+    { source: 'trakt', read: async () => [movie, { ...show, id: -22 }] },
+    { source: 'simkl', read: async () => { throw Error('offline'); } }
+  ] });
+  assert.deepEqual(json(result.sourceTitleCounts), { arvio: 0, trakt: 2 });
+  assert.deepEqual(json(result.failedSources), ['simkl']);
+  assert.equal(result.failedTitles, 1);
+  assert.equal(result.releases.length, 1);
 });
 
 test('movie release types dedupe theatrical/limited, keep cinema/digital distinct and never invent midnight times', () => {
@@ -116,4 +136,74 @@ test('public Trakt episode timestamps work without a connected account or OAuth 
   assert.equal(client.isConnected, false);
   assert.deepEqual(paths, ['/search/tmdb/2?type=show', '/shows/44/seasons/1?extended=full']);
   assert.equal(episodes[0].first_aired, '2026-10-16T19:00:00Z');
+});
+
+test('ARVIO dates publish before a delayed source, then merge late provenance without duplicate metadata or mutating snapshots', async () => {
+  const tracker = deferred(), painted = deferred();
+  const calls = [];
+  const module = loader(async path => { calls.push(path); return { id: 1, title: movie.title, release_date: '2026-10-16' }; });
+  const request = module.loadCalendar({ ...options, sources: [{ source: 'arvio', read: async () => [movie] }, { source: 'trakt', read: () => tracker.promise }],
+    onProgress: value => { if (value.releases.length && !value.pendingSources.includes('arvio')) painted.resolve(value); } });
+  const initial = await painted.promise;
+  assert.deepEqual(json(initial.pendingSources), ['trakt']);
+  assert.deepEqual(json(initial.failedSources), []);
+  assert.equal(initial.sourceTitleCounts.trakt, undefined, 'Pending is not an empty source');
+  tracker.resolve([{ ...movie, traktId: 123 }]);
+  const final = await request;
+  assert.deepEqual(calls, ['movie/1']);
+  assert.equal(final.releases.length, 1);
+  assert.deepEqual(json(final.releases[0].sources), ['arvio', 'trakt']);
+  assert.deepEqual(json(initial.releases[0].sources), ['arvio'], 'Published snapshots remain immutable');
+  assert.deepEqual(json(final.pendingSources), []);
+});
+
+test('known episode dates publish before a slow historical season and exact times enrich independently', async () => {
+  const season = deferred(), time = deferred(), datePainted = deferred(), schedulesDone = deferred();
+  const module = loader(async path => path === 'tv/2' ? { id: 2, name: show.title, seasons: [{ id: 1, season_number: 1 }], next_episode_to_air: { season_number: 1, episode_number: 8, air_date: '2026-10-16' } } : season.promise);
+  const request = module.loadCalendar({ ...options, sources: [{ source: 'arvio', read: async () => [show] }], episodeTime: () => time.promise,
+    onProgress: value => { if (value.releases.length) { datePainted.resolve(value); if (!value.pendingSources.length) schedulesDone.resolve(value); } } });
+  assert.equal((await datePainted.promise).releases[0].timestamp, undefined);
+  season.resolve({ episodes: [] });
+  assert.equal((await schedulesDone.promise).releases[0].date, '2026-10-16');
+  time.resolve('2026-10-16T19:00:00Z');
+  const result = await request;
+  assert.equal(result.releases.length, 1); assert.equal(result.releases[0].timestamp, '2026-10-16T19:00:00Z');
+  assert.equal(result.failedTitles, 0);
+});
+
+test('timeouts bound stalled providers and optional timestamps while keeping known dates', async () => {
+  const never = new Promise(() => {});
+  const module = loader(async path => path === 'tv/2' ? { id: 2, name: show.title, seasons: [{ id: 1, season_number: 1 }], next_episode_to_air: { season_number: 1, episode_number: 8, air_date: '2026-10-16' } } : never);
+  const result = await module.loadCalendar({ ...options, timeoutMs: 25, sources: [{ source: 'arvio', read: async () => [show] }, { source: 'trakt', read: () => never }], episodeTime: () => never });
+  assert.deepEqual(json(result.failedSources), ['trakt']);
+  assert.deepEqual(json(result.pendingSources), []);
+  assert.equal(result.failedTitles, 1, 'Unresponsive season is a partial metadata failure');
+  assert.equal(result.releases[0].date, '2026-10-16');
+  assert.equal(result.releases[0].timestamp, undefined);
+});
+
+test('cancellation closes pending requests promptly, skips queued work and never publishes stale source results', async () => {
+  const controller = new AbortController(), started = deferred(), metadata = deferred(), tracker = deferred();
+  let calls = 0, paints = 0;
+  const module = loader(async () => { calls++; started.resolve(); return metadata.promise; });
+  const request = module.loadCalendar({ ...options, signal: controller.signal,
+    sources: [{ source: 'arvio', read: async () => Array.from({ length: 8 }, (_, i) => ({ ...movie, id: i + 1 })) }, { source: 'trakt', read: () => tracker.promise }], onProgress: () => { paints++; } });
+  await started.promise; controller.abort(); const atAbort = paints;
+  await request;
+  assert.ok(calls <= 4, 'Metadata concurrency stays bounded');
+  metadata.resolve({ id: 1, title: movie.title, release_date: '2026-10-16' }); tracker.resolve([movie]);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(paints, atAbort);
+});
+
+test('large episode batches coalesce progress and expired enrichment queues skip network calls', async () => {
+  const episodes = Array.from({ length: 80 }, (_, index) => ({ season_number: index + 1, episode_number: 1, air_date: '2026-10-16' }));
+  const module = loader(async path => path === 'tv/2' ? { id: 2, name: show.title, seasons: [{ id: 1, season_number: 1 }] } : { episodes });
+  const snapshots = []; let timeCalls = 0;
+  const result = await module.loadCalendar({ ...options, timeoutMs: 500, enrichmentTimeoutMs: 25,
+    sources: [{ source: 'arvio', read: async () => [show] }], episodeTime: async () => { timeCalls++; return new Promise(() => {}); }, onProgress: value => snapshots.push(value) });
+  assert.equal(result.releases.length, 80, 'All confirmed dates remain available');
+  assert.equal(timeCalls, 4, 'Expired queue entries do not start new network requests');
+  assert.ok(snapshots.length <= 4, 'Progress snapshots are coalesced instead of copied/sorted per episode');
+  assert.equal(snapshots.at(-1).releases.length, 80, 'Final snapshot is immediate and complete');
 });

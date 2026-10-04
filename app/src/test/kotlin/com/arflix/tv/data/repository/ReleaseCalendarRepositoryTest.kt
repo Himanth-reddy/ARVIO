@@ -7,6 +7,7 @@ import com.arflix.tv.data.api.TmdbSeasonDetails
 import com.arflix.tv.data.api.TmdbTvDetails
 import com.arflix.tv.data.api.TmdbTvSeason
 import com.arflix.tv.data.api.TraktApi
+import com.arflix.tv.data.api.TraktCalendarEpisode
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.ReleaseCalendarSource
@@ -19,14 +20,23 @@ import java.io.IOException
 import java.time.YearMonth
 import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ReleaseCalendarRepositoryTest {
     private val tmdb = mockk<TmdbApi>()
     private val traktApi = mockk<TraktApi>()
@@ -145,5 +155,162 @@ class ReleaseCalendarRepositoryTest {
         assertEquals("English title", repository.loadMonth(lists, month, ZoneId.of("UTC"), "US", "en-US").entries.single().media.title)
         assertEquals("Nederlandse titel", repository.loadMonth(lists, month, ZoneId.of("UTC"), "NL", "nl-NL").entries.single().media.title)
         coVerify(exactly = 2) { tmdb.getMovieDetails(any(), any(), any(), any()) }
+    }
+
+    @Test fun `own releases appear before a stalled provider times out`() = runTest {
+        every { trakt.isAuthenticated } returns flowOf(true)
+        coEvery { trakt.getWatchlistSyncResultWithAuthState() } coAnswers {
+            delay(60_000)
+            true to TraktRepository.WatchlistSyncResult(emptyList(), 0)
+        }
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } coAnswers {
+            delay(10)
+            TmdbMovieDetails(1, "Own movie", releaseDate = "2026-10-04")
+        }
+        val progress = mutableListOf<Pair<Long, CalendarLoadProgress>>()
+        val request = async {
+            repository.loadCalendar("fixture-profile", month, ZoneId.of("UTC"), "US") { progress += currentTime to it }
+        }
+        advanceTimeBy(11)
+        runCurrent()
+        assertTrue(progress.any { (time, update) -> time == 10L && update.month.entries.any { it.media.id == 1 } })
+        assertFalse(request.isCompleted)
+        assertFalse(progress.last().second.watchlistsComplete)
+        advanceUntilIdle()
+        assertEquals(1, request.await().entries.size)
+        assertEquals(45_000L, currentTime)
+        assertTrue(progress.last().second.watchlistsComplete)
+        assertTrue(request.await().warnings.any { it.contains("Trakt") })
+    }
+
+    @Test fun `later sources merge membership without repeating title requests`() = runTest {
+        every { trakt.isAuthenticated } returns flowOf(true)
+        coEvery { trakt.getWatchlistSyncResultWithAuthState() } coAnswers {
+            delay(1_000)
+            true to TraktRepository.WatchlistSyncResult(listOf(MediaItem(1, "Shared movie"), MediaItem(2, "Trakt movie")), 2)
+        }
+        coEvery { tmdb.getMovieDetails(any(), any(), any(), any()) } answers {
+            TmdbMovieDetails(firstArg(), "Movie", releaseDate = "2026-10-04")
+        }
+        val progress = mutableListOf<CalendarLoadProgress>()
+        val result = repository.loadCalendar("fixture-profile", month, ZoneId.of("UTC"), "US") { progress += it }
+        assertEquals(2, result.entries.size)
+        assertTrue(progress.any { it.month.entries.singleOrNull()?.sourceIds == setOf("arvio") })
+        assertEquals(setOf("arvio", "trakt"), result.entries.single { it.media.id == 1 }.sourceIds)
+        assertEquals(setOf("trakt"), result.entries.single { it.media.id == 2 }.sourceIds)
+        assertEquals(2, mergeCalendarWatchlists(progress.last().watchlists.items).size)
+        assertTrue(progress.last().watchlistsComplete)
+        coVerify(exactly = 1) { tmdb.getMovieDetails(1, any(), any(), any()) }
+        coVerify(exactly = 1) { tmdb.getMovieDetails(2, any(), any(), any()) }
+    }
+
+    @Test fun `confirmed episode dates render immediately while exact time request is bounded`() = runTest {
+        every { Constants.TRAKT_CLIENT_ID } returns "fixture-client"
+        val show = MediaItem(5, "Show", mediaType = MediaType.TV, traktId = 50)
+        val episode = TmdbEpisode(seasonNumber = 1, episodeNumber = 1, airDate = "2026-10-04")
+        coEvery { tmdb.getTvDetails(5, any(), any(), any()) } returns TmdbTvDetails(5, "Show", seasons = listOf(TmdbTvSeason(seasonNumber = 1)))
+        coEvery { tmdb.getTvSeason(5, 1, any(), any()) } returns TmdbSeasonDetails(episodes = listOf(episode))
+        coEvery { traktApi.getCalendarSeasonEpisodes(any(), 50, 1, any(), any()) } coAnswers {
+            delay(20_000)
+            listOf(TraktCalendarEpisode(1, 1, firstAired = "2026-10-04T18:00:00Z"))
+        }
+        val updates = mutableListOf<Pair<Long, CalendarMonthResult>>()
+        val request = async {
+            repository.loadMonth(CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(show))),
+                month, ZoneId.of("UTC"), "US") { updates += currentTime to it }
+        }
+        runCurrent()
+        assertFalse(request.isCompleted)
+        assertTrue(updates.any { (time, result) -> time == 0L && result.entries.singleOrNull()?.releaseInstant == null && result.entries.size == 1 })
+        advanceUntilIdle()
+        assertEquals(4_000L, currentTime)
+        assertNull(request.await().entries.single().releaseInstant)
+    }
+
+    @Test fun `next episode from detail appears while historical seasons are still loading`() = runTest {
+        val show = MediaItem(5, "Show", mediaType = MediaType.TV)
+        val episode = TmdbEpisode(seasonNumber = 2, episodeNumber = 1, airDate = "2026-10-04")
+        coEvery { tmdb.getTvDetails(5, any(), any(), any()) } returns TmdbTvDetails(5, "Show",
+            seasons = listOf(TmdbTvSeason(seasonNumber = 1)), nextEpisodeToAir = episode)
+        coEvery { tmdb.getTvSeason(5, 1, any(), any()) } coAnswers {
+            delay(10_000)
+            TmdbSeasonDetails(episodes = listOf(TmdbEpisode(airDate = "2025-01-01")))
+        }
+        val updates = mutableListOf<CalendarMonthResult>()
+        val request = async {
+            repository.loadMonth(CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(show))),
+                month, ZoneId.of("UTC"), "US") { updates += it }
+        }
+        runCurrent()
+        assertFalse(request.isCompleted)
+        assertEquals(2, updates.last().entries.single().seasonNumber)
+        advanceUntilIdle()
+        assertEquals(1, request.await().entries.size)
+    }
+
+    @Test fun `stalled time enrichment cannot starve healthy clearlogos`() = runTest {
+        every { Constants.TRAKT_CLIENT_ID } returns "fixture-client"
+        val shows = listOf(MediaItem(5, "Show A", mediaType = MediaType.TV, traktId = 50),
+            MediaItem(6, "Show B", mediaType = MediaType.TV, traktId = 60))
+        coEvery { tmdb.getTvDetails(any(), any(), any(), any()) } answers {
+            TmdbTvDetails(firstArg(), "Show", seasons = listOf(TmdbTvSeason(seasonNumber = 1)))
+        }
+        coEvery { tmdb.getTvSeason(any(), 1, any(), any()) } returns TmdbSeasonDetails(
+            episodes = listOf(TmdbEpisode(airDate = "2026-10-04")))
+        coEvery { traktApi.getCalendarSeasonEpisodes(any(), any(), 1, any(), any()) } coAnswers {
+            delay(20_000)
+            emptyList()
+        }
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } coAnswers {
+            delay(1)
+            TmdbMovieDetails(1, "Movie", releaseDate = "2026-10-04")
+        }
+        coEvery { media.getLogoUrl(any<MediaType>(), any()) } returns "https://images.example/logo.png"
+        val updates = mutableListOf<Pair<Long, CalendarMonthResult>>()
+        repository.loadMonth(CalendarWatchlists("fixture-profile",
+            mapOf(ReleaseCalendarSource.ARVIO to shows + MediaItem(1, "Movie"))),
+            month, ZoneId.of("UTC"), "US") { updates += currentTime to it }
+        assertTrue(updates.any { (time, result) -> time == 1L && result.entries.any { it.media.id == 1 && it.logoUrl != null } })
+        assertEquals(4_000L, currentTime)
+    }
+
+    @Test fun `profile switch prevents later provider or metadata publications`() = runTest {
+        var profile = "fixture-profile"
+        every { profiles.getProfileIdSync() } answers { profile }
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } coAnswers {
+            delay(1_000)
+            TmdbMovieDetails(1, "Own movie", releaseDate = "2026-10-04")
+        }
+        val updates = mutableListOf<CalendarLoadProgress>()
+        val request = async {
+            repository.loadCalendar("fixture-profile", month, ZoneId.of("UTC"), "US") { updates += it }
+        }
+        runCurrent()
+        val beforeSwitch = updates.size
+        profile = "other-profile"
+        advanceUntilIdle()
+        try {
+            request.await()
+            fail("Expected profile cancellation")
+        } catch (_: CancellationException) {
+            assertEquals(beforeSwitch, updates.size)
+        }
+    }
+
+    @Test fun `canceling streamed month stops remaining title publications`() = runTest {
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } coAnswers {
+            delay(10_000)
+            TmdbMovieDetails(1, "Own movie", releaseDate = "2026-10-04")
+        }
+        val updates = mutableListOf<CalendarLoadProgress>()
+        val request = launch {
+            repository.loadCalendar("fixture-profile", month, ZoneId.of("UTC"), "US") { updates += it }
+        }
+        runCurrent()
+        val beforeCancel = updates.size
+        request.cancelAndJoin()
+        advanceUntilIdle()
+        assertEquals(beforeCancel, updates.size)
+        assertTrue(updates.all { it.month.entries.isEmpty() })
     }
 }

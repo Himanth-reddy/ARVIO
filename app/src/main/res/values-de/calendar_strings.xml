@@ -23,4 +23,7 @@
     <string name="calendar_cinema">Kino</string>
     <string name="calendar_digital">Digital</string>
     <string name="calendar_physical">Physisch</string>
+    <string name="calendar_next_release">Nächste Veröffentlichung</string>
+    <string name="calendar_partial_details">Einige Veröffentlichungsdetails nicht verfügbar</string>
+    <string name="calendar_refresh">Kalender aktualisieren</string>
 </resources>

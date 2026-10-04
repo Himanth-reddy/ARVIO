@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -95,14 +96,23 @@ fun LibraryCalendarPane(
     val releaseRail = rememberLazyListState()
     val focusScope = rememberCoroutineScope()
     val monthButton = remember { FocusRequester() }
+    val emptyAction = remember { FocusRequester() }
+    val retryAction = remember { FocusRequester() }
     var pendingFocus by remember { mutableStateOf<LocalDate?>(if (!touch) state.selectedDate else null) }
     var showSources by remember { mutableStateOf(false) }
     val releasesByDate = remember(state.entries, state.selectedSourceId) { state.releasesByDate }
     val selectedReleases = releasesByDate[state.selectedDate].orEmpty()
+    val nextReleaseDate = releasesByDate.keys.filter { it > state.selectedDate && YearMonth.from(it) == state.month }.minOrNull()
+    val today = LocalDate.now(state.timezone)
+    val hasProblem = state.error != null || state.warnings.isNotEmpty()
 
     LaunchedEffect(state.selectedDate, state.selectedSourceId) { releaseRail.scrollToItem(0) }
     fun openDay() {
-        if (selectedReleases.isEmpty()) return
+        if (selectedReleases.isEmpty()) {
+            if (nextReleaseDate != null) emptyAction.requestFocus()
+            else if (hasProblem) retryAction.requestFocus()
+            return
+        }
         focusScope.launch {
             // The first card may have been recycled after scrolling to later releases.
             releaseRail.scrollToItem(0)
@@ -123,6 +133,12 @@ fun LibraryCalendarPane(
         pendingFocus = date
         onSelectDate(date)
     }
+    val retryModifier = Modifier.testTag("calendar-retry").focusRequester(retryAction)
+        .onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                requesters[state.selectedDate]?.requestFocus(); true
+            } else false
+        }
     BoxWithConstraints(modifier.fillMaxSize().testTag("library-calendar")) {
         val compact = maxWidth < 600.dp
         val compactToolbar = maxWidth < 800.dp
@@ -131,10 +147,10 @@ fun LibraryCalendarPane(
         Column(Modifier.fillMaxSize().then(if (scrollable) Modifier.verticalScroll(scroll) else Modifier)) {
             CalendarToolbar(state, locale, compactToolbar, monthButton, onChangeMonth,
                 onToday = { selectAndFocus(LocalDate.now(state.timezone)) },
-                onSources = { showSources = true }, onExitUp = onExitUp)
-            if (compact && (state.error != null || state.warnings.isNotEmpty())) {
-                CalendarButton(tr("Some sources unavailable") + " · " + tr("Retry"),
-                    Modifier.padding(vertical = 5.dp).testTag("calendar-retry"), onClick = onRefresh)
+                onSources = { showSources = true }, onRefresh = onRefresh, onExitUp = onExitUp)
+            if (compact && hasProblem) {
+                CalendarButton(tr("Some release details unavailable") + " · " + tr("Retry"),
+                    retryModifier.padding(vertical = 5.dp), onClick = onRefresh)
             }
             Row(Modifier.fillMaxWidth().height(if (compact) 30.dp else 24.dp), verticalAlignment = Alignment.CenterVertically) {
                 DayOfWeek.entries.forEach { day ->
@@ -149,10 +165,16 @@ fun LibraryCalendarPane(
                     Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp)) {
                         week.forEach { date ->
                             CalendarDay(date, state.month, releasesByDate[date].orEmpty(), date == state.selectedDate,
-                                state.timezone, locale, compact,
+                                state.timezone, locale, compact, date == today,
                                 modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(requesters.getValue(date))
                                     .onPreviewKeyEvent { event ->
-                                        if (event.type != KeyEventType.KeyDown) false else when (event.key.mirrorHorizontalForRtl(isRtl)) {
+                                        val key = event.key.mirrorHorizontalForRtl(isRtl)
+                                        if (key == Key.Enter || key == Key.DirectionCenter || key == Key.NumPadEnter) {
+                                            // Keep both halves of OK on the day. Moving focus on key-down
+                                            // lets the destination's clickable consume key-up as a click.
+                                            if (event.type == KeyEventType.KeyUp) openDay()
+                                            true
+                                        } else if (event.type != KeyEventType.KeyDown) false else when (key) {
                                             Key.DirectionLeft -> { selectAndFocus(date.minusDays(1)); true }
                                             Key.DirectionRight -> { selectAndFocus(date.plusDays(1)); true }
                                             Key.DirectionUp -> {
@@ -163,10 +185,6 @@ fun LibraryCalendarPane(
                                                 if (rowIndex == dates.size / 7 - 1) {
                                                     openDay()
                                                 } else selectAndFocus(date.plusWeeks(1))
-                                                true
-                                            }
-                                            Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
-                                                openDay()
                                                 true
                                             }
                                             else -> false
@@ -183,11 +201,10 @@ fun LibraryCalendarPane(
                 Text(state.selectedDate.format(DateTimeFormatter.ofPattern(if (compact) "EEE d MMMM" else "EEEE d MMMM", locale)),
                     color = Color.White, fontSize = if (compact) 17.sp else 15.sp, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).testTag("calendar-selected-date"))
-                if (state.isLoading) CircularProgressIndicator(Modifier.size(12.dp), color = CalendarSecondary, strokeWidth = 1.5.dp)
-                else Text("${selectedReleases.size} ${tr(if (selectedReleases.size == 1) "release" else "releases")}", color = CalendarSecondary, fontSize = 11.sp)
-                if (!compact && (state.error != null || state.warnings.isNotEmpty())) {
+                if (!state.isLoading || selectedReleases.isNotEmpty()) Text("${selectedReleases.size} ${tr(if (selectedReleases.size == 1) "release" else "releases")}", color = CalendarSecondary, fontSize = 11.sp)
+                if (!compact && hasProblem) {
                     Spacer(Modifier.weight(1f))
-                    CalendarButton(tr("Some sources unavailable") + " · " + tr("Retry"), Modifier.testTag("calendar-retry"), onClick = onRefresh)
+                    CalendarButton(tr("Some release details unavailable") + " · " + tr("Retry"), retryModifier, onClick = onRefresh)
                 }
             }
             if (selectedReleases.isNotEmpty()) {
@@ -206,13 +223,25 @@ fun LibraryCalendarPane(
             } else {
                 Column(Modifier.fillMaxWidth().height(if (compact) 140.dp else 130.dp).testTag("calendar-empty-day"),
                     verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(tr(when { state.isLoading -> "Finding your releases…"; state.error != null -> "Calendar unavailable"
-                        state.watchlistCount == 0 -> "Your watchlist, on the calendar"; else -> "No releases on this day" }), color = Color.White, fontSize = 15.sp)
-                    Spacer(Modifier.height(7.dp))
-                    Text(tr(if (state.watchlistCount == 0) "Add movies and shows to your ARVIO watchlist. No tracking account needed."
-                        else "Choose another day or watchlist to explore upcoming releases."), color = CalendarSecondary,
-                        fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    if (state.error != null || state.warnings.isNotEmpty()) CalendarButton(tr("Retry"), onClick = onRefresh)
+                    Text(tr(when { state.isLoading -> "Finding your releases…"; state.error != null || (hasProblem && state.watchlistCount == 0) -> "Calendar unavailable"
+                        state.watchlistCount == 0 -> "Your watchlist, on the calendar"; else -> "No releases on this day" }), color = Color.White, fontSize = 15.sp,
+                        modifier = if (state.isLoading) Modifier.testTag("calendar-loading") else Modifier)
+                    if (!state.isLoading && !hasProblem && nextReleaseDate == null) {
+                        Spacer(Modifier.height(7.dp))
+                        Text(tr(if (state.watchlistCount == 0) "Add movies and shows to your ARVIO watchlist. No tracking account needed."
+                            else "Choose another day or watchlist to explore upcoming releases."), color = CalendarSecondary,
+                            fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
+                    if (nextReleaseDate != null) {
+                        Spacer(Modifier.height(10.dp))
+                        CalendarButton(tr("Next release") + " · " + nextReleaseDate.format(DateTimeFormatter.ofPattern("d MMM", locale)),
+                            Modifier.testTag("calendar-next-release").focusRequester(emptyAction)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                                        requesters[state.selectedDate]?.requestFocus(); true
+                                    } else false
+                                }, onClick = { selectAndFocus(nextReleaseDate) })
+                    }
                 }
             }
             if (!touch) Row(Modifier.fillMaxWidth().height(22.dp), horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.End),
@@ -246,7 +275,6 @@ fun LibraryCalendarPane(
                     .semantics { selected = source.id == state.selectedSourceId },
                     selected = source.id == state.selectedSourceId, onClick = { onSelectSource(source.id); showSources = false })
             }
-            CalendarButton(tr("Refresh"), Modifier.fillMaxWidth(), onClick = { onRefresh(); showSources = false })
             CalendarButton(tr("Close"), Modifier.fillMaxWidth(), onClick = { showSources = false })
         }
     }
@@ -254,10 +282,11 @@ fun LibraryCalendarPane(
 
 @Composable
 private fun CalendarToolbar(state: ReleaseCalendarUiState, locale: Locale, compact: Boolean, monthButton: FocusRequester,
-    onMonth: (Long) -> Unit, onToday: () -> Unit, onSources: () -> Unit, onExitUp: () -> Unit) {
+    onMonth: (Long) -> Unit, onToday: () -> Unit, onSources: () -> Unit, onRefresh: () -> Unit, onExitUp: () -> Unit) {
     val touch = LocalDeviceType.current.isTouchDevice()
     Column {
-        Row(Modifier.fillMaxWidth().height(if (compact || touch) 44.dp else 24.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.fillMaxWidth().height(if (compact || touch) 44.dp else 24.dp)
+            .onPreviewKeyEvent { if (!touch && it.type == KeyEventType.KeyDown && it.key == Key.DirectionUp) { onExitUp(); true } else false }, verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 10.dp)) {
             CalendarArrow(false, Modifier.focusRequester(monthButton).testTag("calendar-previous-month")
                 .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionUp) { onExitUp(); true } else false }) { onMonth(-1) }
@@ -270,20 +299,37 @@ private fun CalendarToolbar(state: ReleaseCalendarUiState, locale: Locale, compa
                 CalendarButton(tr(state.sources.firstOrNull { it.id == state.selectedSourceId }?.label ?: "All watchlists"),
                     Modifier.widthIn(min = 118.dp).testTag("calendar-source-filter"), dropdown = true, onClick = onSources)
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    state.sources.filter { it != ReleaseCalendarSource.ALL && it != ReleaseCalendarSource.ARVIO }.forEach { source ->
+                    state.sources.filter { state.selectedSourceId == ReleaseCalendarSource.ALL.id && it != ReleaseCalendarSource.ALL && it != ReleaseCalendarSource.ARVIO }.forEach { source ->
                         CalendarSourceBadge(source)
                     }
                 }
                 Text(tr("Local time") + " · " + state.timezone.id.substringAfterLast('/').replace('_', ' '),
                     color = CalendarSecondary, fontSize = 9.sp, maxLines = 1)
+                CalendarRefresh(state.isLoading, onRefresh)
             }
         }
-        if (compact) Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (compact) Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CalendarButton(tr(state.sources.firstOrNull { it.id == state.selectedSourceId }?.label ?: "All watchlists"),
                 Modifier.testTag("calendar-source-filter"), dropdown = true, onClick = onSources)
-            Spacer(Modifier.weight(1f))
-            Text(tr("Local time") + " · " + state.timezone.id.substringAfterLast('/').replace('_', ' '), color = CalendarSecondary, fontSize = 10.sp)
+            Text(tr("Local time") + " · " + state.timezone.id.substringAfterLast('/').replace('_', ' '), color = CalendarSecondary,
+                fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f))
+            CalendarRefresh(state.isLoading, onRefresh)
         }
+    }
+}
+
+@Composable
+private fun CalendarRefresh(loading: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val label = tr("Refresh calendar")
+    val touch = LocalDeviceType.current.isTouchDevice()
+    Box(Modifier.size(if (touch) 44.dp else 24.dp).testTag("calendar-refresh")
+        .semantics { contentDescription = label }.onFocusChanged { focused = it.isFocused }
+        .clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color.Transparent)
+        .clickable(enabled = !loading, onClick = onClick), contentAlignment = Alignment.Center) {
+        if (loading) CircularProgressIndicator(Modifier.size(14.dp), color = CalendarSecondary, strokeWidth = 1.5.dp)
+        else Icon(Icons.Outlined.Refresh, null, tint = if (focused) Color.Black else CalendarSecondary, modifier = Modifier.size(if (touch) 20.dp else 15.dp))
     }
 }
 
@@ -303,7 +349,7 @@ private fun CalendarSourceBadge(source: ReleaseCalendarSource) {
 private fun CalendarArrow(next: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val touch = LocalDeviceType.current.isTouchDevice()
-    Box(modifier.size(if (touch) 40.dp else 24.dp).onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(20.dp))
+    Box(modifier.size(if (touch) 44.dp else 24.dp).onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(24.dp))
         .background(if (focused) Color.White else Color.Transparent).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         Icon(if (next) Icons.AutoMirrored.Outlined.KeyboardArrowRight else Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
             contentDescription = tr(if (next) "Next month" else "Previous month"), tint = if (focused) Color.Black else Color.White,
@@ -316,11 +362,11 @@ private fun CalendarButton(label: String, modifier: Modifier = Modifier, selecte
     var focused by remember { mutableStateOf(false) }
     val touch = LocalDeviceType.current.isTouchDevice()
     val active = selected || focused
-    Row(modifier.heightIn(min = if (touch) 40.dp else 0.dp).onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(30.dp))
+    Row(modifier.heightIn(min = if (touch) 44.dp else 0.dp).onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(30.dp))
         .background(if (active) Color.White else Color.Transparent).border(.6.dp, if (active) Color.White else Color(0xFF53616D), RoundedCornerShape(30.dp))
         .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, color = if (active) Color.Black else Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        Text(label, color = if (active) Color.Black else Color.White, fontSize = if (touch) 12.sp else 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false))
         if (dropdown) Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, tint = if (active) Color.Black else Color.White, modifier = Modifier.size(15.dp))
     }
@@ -328,27 +374,34 @@ private fun CalendarButton(label: String, modifier: Modifier = Modifier, selecte
 
 @Composable
 private fun CalendarDay(date: LocalDate, month: YearMonth, releases: List<CalendarRelease>, selected: Boolean,
-    timezone: ZoneId, locale: Locale, compact: Boolean, modifier: Modifier, onFocused: () -> Unit, onClick: () -> Unit) {
+    timezone: ZoneId, locale: Locale, compact: Boolean, today: Boolean, modifier: Modifier, onFocused: () -> Unit, onClick: () -> Unit) {
     val titleColor = if (selected) Color.Black else Color.White
     val secondary = if (selected) Color(0xFF24313A) else CalendarSecondary
     val background by animateColorAsState(if (selected) Color.White else Color.Transparent, tween(100), label = "calendar-day")
     val first = releases.firstOrNull()
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val accessibility = date.format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", locale)) +
-        if (releases.isEmpty()) "" else ", " + releases.joinToString { it.media.title }
+        (if (today) ", " + tr("Today") else "") +
+        (if (releases.isEmpty()) "" else ", " + releases.joinToString { it.media.title })
     BoxWithConstraints(modifier.testTag("calendar-day-$date").semantics { contentDescription = accessibility; this.selected = selected }
         .onFocusChanged { if (it.isFocused) onFocused() }.clip(RoundedCornerShape(5.dp)).background(background).clickable(onClick = onClick)) {
         if (!selected && first != null) {
             AsyncImage(first.artwork(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color.Black.copy(.9f), Color.Black.copy(.65f), Color.Black.copy(.05f)))))
+            Box(Modifier.fillMaxSize().background(if (compact) Brush.verticalGradient(listOf(Color.Black.copy(.72f), Color.Transparent, Color.Black.copy(.12f)))
+                else Brush.horizontalGradient(listOf(Color.Black.copy(.9f), Color.Black.copy(.65f), Color.Black.copy(.05f)).let { if (rtl) it.reversed() else it })))
         }
-        Text(date.dayOfMonth.toString(), color = if (YearMonth.from(date) == month || selected) titleColor else CalendarSecondary.copy(.62f),
-            fontSize = if (compact) 12.sp else 12.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            modifier = Modifier.padding(start = if (compact) 5.dp else 7.dp, top = 3.dp))
+        Column(Modifier.padding(start = if (compact) 5.dp else 7.dp, top = 3.dp)) {
+            Text(date.dayOfMonth.toString(), color = if (YearMonth.from(date) == month || selected) titleColor else CalendarSecondary.copy(.62f),
+                fontSize = 12.sp, fontWeight = if (selected || today) FontWeight.SemiBold else FontWeight.Normal)
+            if (today) Box(Modifier.width(12.dp).height(1.5.dp).background(titleColor).testTag("calendar-today-marker-$date"))
+        }
         if (first != null) {
             if (compact) {
-                if (selected) AsyncImage(first.artwork(), null, Modifier.fillMaxWidth().height(27.dp).align(Alignment.BottomCenter), contentScale = ContentScale.Crop)
-                else Text(first.media.title, Modifier.align(Alignment.BottomStart).padding(4.dp), color = Color.White, fontSize = 9.sp, maxLines = 1, softWrap = false, lineHeight = 10.sp, overflow = TextOverflow.Ellipsis)
-                if (releases.size > 1) Text("+${releases.size - 1}", Modifier.align(Alignment.TopEnd).padding(4.dp), color = titleColor, fontSize = 8.sp)
+                if (selected) AsyncImage(first.artwork(), null, Modifier.fillMaxWidth().height((maxHeight - 22.dp).coerceAtLeast(22.dp)).align(Alignment.BottomCenter)
+                    .padding(3.dp).clip(RoundedCornerShape(3.dp)), contentScale = ContentScale.Crop)
+                Text(releases.size.toString(), Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(8.dp))
+                    .background(if (selected) Color.White else Color.Black.copy(.7f)).padding(horizontal = 4.dp, vertical = 1.dp)
+                    .testTag("calendar-day-count-$date"), color = titleColor, fontSize = 8.sp)
             } else {
                 val dense = maxHeight < 45.dp
                 val dayTextStyle = LocalTextStyle.current.copy(platformStyle = PlatformTextStyle(includeFontPadding = false))
@@ -367,6 +420,8 @@ private fun CalendarDay(date: LocalDate, month: YearMonth, releases: List<Calend
                         AsyncImage(release.artwork(), null, Modifier.size(width = 39.dp, height = if (dense) 25.dp else 18.dp).clip(RoundedCornerShape(3.dp)), contentScale = ContentScale.Crop)
                     }
                 }
+                if (dense && releases.size > 1) Text("+${releases.size - 1}", color = secondary, fontSize = 8.sp,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 7.dp, bottom = 2.dp).testTag("calendar-more-$date"))
             }
         }
     }

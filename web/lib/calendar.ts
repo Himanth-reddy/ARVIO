@@ -35,6 +35,12 @@ export function calendarMonthDays(month: Date): Date[] {
   return Array.from({ length: count }, (_, index) => new Date(month.getFullYear(), month.getMonth(), 1 - offset + index, 12));
 }
 
+/** Keep the selected day number where possible, clamping at the destination month's end. */
+export function shiftCalendarMonth(date: Date, step: number): Date {
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + step + 1, 0, 12).getDate();
+  return new Date(date.getFullYear(), date.getMonth() + step, Math.min(date.getDate(), lastDay), 12);
+}
+
 export function mergeCalendarTitles(groups: Array<{ source: CalendarSource; items: MediaItem[] }>): CalendarTitle[] {
   const titles = new Map<string, CalendarTitle>();
   for (const { source, items } of groups) for (const item of items) {

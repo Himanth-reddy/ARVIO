@@ -23,7 +23,7 @@ horizontal release strip beneath the month. Existing Library tabs remain availab
 ## Interaction and responsiveness
 
 The month starts on Monday. Previous/next month and Today controls work across year
-boundaries. The source picker also provides refresh on Android. On TV, left/right
+boundaries and keep the selected day where possible. On TV, left/right
 moves one day, up/down moves a week, and OK enters the selected day's release strip.
 OK on a release opens its details. Up returns from that strip to the selected day.
 
@@ -32,10 +32,28 @@ below it. Short landscape windows scroll vertically instead of clipping the mont
 or captions. The web grid supports arrows, Home/End and Page Up/Down, with a single
 tab stop for the selected day.
 
+Today has a marker independent of the selected date. An empty day offers **Next
+release** when a later loaded release exists in the visible month and chosen source;
+the calendar never changes the selected day just because data arrives. On TV, OK on
+an empty day focuses this action (or Retry on a failed load), and Up returns to the
+day. Dense six-week months retain their extra-release counts.
+
+Refresh is available directly in the toolbar. Phone date cells prioritize artwork
+and release counts; complete titles and times remain in the selected-day strip.
+Touch toolbar controls have 44 dp minimum targets. Loading states do not imply an
+empty watchlist while sources are still being read.
+
 ## Loading and isolation
 
 Metadata requests use bounded concurrency and expiring in-memory caches. Completed
 titles appear progressively, before slower sources and optional logos finish.
+Both loaders start titles as each watchlist arrives and publish confirmed episode
+dates before optional air-time enrichment. Separate request limits prevent a
+stalled tracker from hiding available ARVIO dates or blocking healthy artwork.
+Optional time enrichment has a bounded budget including queue time. The web
+coalesces progress updates while publishing the first available release promptly;
+pending, empty and failed sources remain distinct. On Android, a private source
+snapshot becomes reusable only after all source reads finish.
 Changing month, profile or language cancels/replaces the old request. Private
 watchlists are scoped to the current account/profile; public metadata may be cached.
 Android refreshes stale lists on tab entry/resume and reacts to cloud watchlist and
@@ -55,12 +73,15 @@ requests. Emulator screenshots are saved under `artifacts/calendar` during QA.
 
 ### Validation on 4 October 2026
 
-- Android: 16 repository/mapping tests passed; the x86 sideload debug app and
+- Android: 23 repository/mapping tests passed; the x86 sideload debug app and
   instrumentation APK assembled successfully.
-- Emulator: four TV Calendar scenarios and two existing top-bar scenarios passed.
-  A separate Calendar phone-layout scenario passed at 390 × 780 dp on the same
-  emulator; its TV display size was restored afterward. No physical TV was used.
-- Web: strict TypeScript and 48 focused unit tests passed. Calendar, existing
+- Emulator: all eight TV Calendar scenarios and both phone-layout scenarios
+  passed. Phone checks ran at 390 × 780 dp on the same TV-system emulator and
+  verified six-week scrolling and caption clearance; its TV display size was
+  restored afterward. Two existing top-bar scenarios passed in the initial
+  implementation check. No physical TV was used.
+- Web: strict TypeScript and 43 focused unit tests passed on the refined version
+  (18 Calendar and 25 translation/Library/TV regressions). Calendar, existing
   Library and translation browser checks passed at desktop, tablet and phone sizes.
 - Live public TMDB responses parsed with the production models. A public Trakt
   smoke request received an HTML/403 challenge in this environment, so live exact

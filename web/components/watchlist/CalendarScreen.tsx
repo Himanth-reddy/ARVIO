@@ -11,7 +11,7 @@ import { mdblistClient } from "@/lib/mdblist";
 import { traktItemToMedia } from "@/lib/mappers";
 import { getLogoUrl } from "@/lib/tmdb";
 import { loadCalendar, type CalendarRead, type CalendarResult } from "@/lib/calendarLoader";
-import { CALENDAR_KIND_LABELS, CALENDAR_SOURCE_LABELS, calendarDate, calendarEpisodeLabel, calendarMonthDays, calendarTime, parseCalendarDate, type CalendarRelease, type CalendarSource } from "@/lib/calendar";
+import { CALENDAR_KIND_LABELS, CALENDAR_SOURCE_LABELS, calendarDate, calendarEpisodeLabel, calendarMonthDays, calendarTime, parseCalendarDate, shiftCalendarMonth, type CalendarRelease, type CalendarSource } from "@/lib/calendar";
 import type { MediaItem } from "@/lib/types";
 
 type SourceFilter = "all" | CalendarSource;
@@ -46,6 +46,7 @@ export function CalendarScreen() {
   const [retry, setRetry] = useState(0);
   const grid = useRef<HTMLDivElement>(null);
   const cards = useRef<HTMLDivElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
   const focusDate = useRef<string | null>(null);
   const locale = settings.language || "en";
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -81,7 +82,7 @@ export function CalendarScreen() {
     const end = parseCalendarDate(lastDay)!; end.setDate(end.getDate() + 1);
     void loadCalendar({ sources: sourceReads, start: calendarDate(start), end: calendarDate(end), language: locale, region, customApiKey: settings.customTmdbApiKey, signal: controller.signal, episodeTime, onProgress: value => { if (!controller.signal.aborted) setResult(value); } })
       .then(value => { if (!controller.signal.aborted) setResult(value); })
-      .catch(() => { if (!controller.signal.aborted) setResult({ releases: [], failedSources: sources, failedTitles: 0, titleCount: 0 }); })
+      .catch(() => { if (!controller.signal.aborted) setResult({ releases: [], failedSources: sources, pendingSources: [], failedTitles: 0, titleCount: 0, sourceTitleCounts: {} }); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [scope, auth?.userId, activeProfile?.id, firstDay, lastDay, locale, settings.customTmdbApiKey, sources, watchlist, retry, traktConnected, simklConnected, mdblistConnected]);
@@ -90,9 +91,17 @@ export function CalendarScreen() {
   const byDay = useMemo(() => { const grouped = new Map<string, CalendarRelease[]>(); for (const row of releases) grouped.set(row.date, [...(grouped.get(row.date) ?? []), row]); return grouped; }, [releases]);
   const selectedReleases = byDay.get(selected) ?? [];
   const selectedDate = parseCalendarDate(selected)!;
+  const selectedLoading = loading && (!result || (source === "all" ? result.pendingSources.length > 0 : result.pendingSources.includes(source)));
   const today = calendarDate(new Date());
+  const monthPrefix = calendarDate(month).slice(0, 7);
+  const nextRelease = releases.find(release => release.date > selected && release.date.startsWith(monthPrefix));
+  const emptySource = result && (source === "all"
+    ? !result.failedSources.length && Object.values(result.sourceTitleCounts).every(count => count === 0)
+    : result.sourceTitleCounts[source] === 0);
+  const unavailableSource = result && (source === "all" ? result.failedSources.length === sources.length : result.failedSources.includes(source));
   const moveMonth = (step: number) => {
     const next = new Date(month.getFullYear(), month.getMonth() + step, 1, 12);
+    next.setDate(Math.min(selectedDate.getDate(), new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
     setMonth(next); setSelected(calendarDate(next));
   };
   const chooseDay = (date: Date, keyboard = false) => {
@@ -103,25 +112,32 @@ export function CalendarScreen() {
   };
   useEffect(() => { if (focusDate.current) { grid.current?.querySelector<HTMLButtonElement>(`[data-calendar-date="${focusDate.current}"]`)?.focus(); focusDate.current = null; } }, [selected, month]);
   const navigateDay = (event: KeyboardEvent<HTMLButtonElement>, date: Date) => {
-    const offsets: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7, Home: -((date.getDay() + 6) % 7), End: 6 - ((date.getDay() + 6) % 7) };
+    const rtl = getComputedStyle(event.currentTarget).direction === "rtl";
+    const offsets: Record<string, number> = { ArrowLeft: rtl ? 1 : -1, ArrowRight: rtl ? -1 : 1, ArrowUp: -7, ArrowDown: 7, Home: -((date.getDay() + 6) % 7), End: 6 - ((date.getDay() + 6) % 7) };
     if (event.key in offsets) { event.preventDefault(); event.stopPropagation(); const next = new Date(date); next.setDate(date.getDate() + offsets[event.key]); chooseDay(next, true); }
-    else if (event.key === "PageUp" || event.key === "PageDown") { event.preventDefault(); event.stopPropagation(); const next = new Date(date.getFullYear(), date.getMonth() + (event.key === "PageUp" ? -1 : 1), 1, 12); chooseDay(next, true); }
-    else if (event.key === "Enter" && selectedReleases.length) { event.preventDefault(); event.stopPropagation(); cards.current?.querySelector<HTMLButtonElement>("button")?.focus(); }
+    else if (event.key === "PageUp" || event.key === "PageDown") { event.preventDefault(); event.stopPropagation(); chooseDay(shiftCalendarMonth(date, event.key === "PageUp" ? -1 : 1), true); }
+    else if (event.key === "Enter") {
+      const target = cards.current?.querySelector<HTMLButtonElement>("button") ?? (retryButton.current?.disabled ? null : retryButton.current);
+      if (target) { event.preventDefault(); event.stopPropagation(); target.focus(); }
+    }
+  };
+  const returnToDay = (event: KeyboardEvent) => {
+    if (event.key === "Escape" || event.key === "ArrowUp") { event.preventDefault(); event.stopPropagation(); grid.current?.querySelector<HTMLButtonElement>(`[data-calendar-date="${selected}"]`)?.focus(); }
   };
   return <section className="library-calendar" aria-label={translateUi("Release calendar")}>
     <div className="calendar-toolbar">
       <div className="calendar-month-controls"><button aria-label={translateUi("Previous month")} onClick={() => moveMonth(-1)}><ChevronLeft /></button><h1>{month.toLocaleDateString(locale, { month: "long", year: "numeric" })}</h1><button aria-label={translateUi("Next month")} onClick={() => moveMonth(1)}><ChevronRight /></button></div>
       <button className="calendar-today" onClick={() => { setMonth(new Date()); setSelected(calendarDate(new Date())); }}>{translateUi("Today")}</button>
       <select value={source} onChange={event => setSource(event.target.value as SourceFilter)} aria-label={translateUi("Calendar watchlist source")}><option value="all">{translateUi("All watchlists")}</option>{sources.map(id => <option key={id} value={id}>{CALENDAR_SOURCE_LABELS[id]}</option>)}</select>
-      <div className="calendar-source-legend">{sources.filter(id => source === "all" || source === id).map(id => <span key={id}><SourceMark source={id} />{CALENDAR_SOURCE_LABELS[id]}</span>)}</div>
+      {source === "all" && <div className="calendar-source-legend">{sources.map(id => <span key={id}><SourceMark source={id} />{CALENDAR_SOURCE_LABELS[id]}</span>)}</div>}
       <span className="calendar-timezone" title={zone}>{translateUi("Local time")} · {zoneLabel}</span>
       <button className="calendar-refresh" aria-label={translateUi("Refresh calendar")} disabled={loading} onClick={() => setRetry(value => value + 1)}>{loading ? <LoaderCircle className="calendar-spinner" size={18} /> : <RefreshCw size={18} />}</button>
     </div>
     <div className="calendar-weekdays" aria-hidden="true">{days.slice(0, 7).map(day => <span key={day.getDay()}><span className="calendar-weekday-full">{day.toLocaleDateString(locale, { weekday: "long" })}</span><span className="calendar-weekday-short">{day.toLocaleDateString(locale, { weekday: "short" })}</span></span>)}</div>
-    <div className="calendar-month-grid" ref={grid} role="grid" aria-label={month.toLocaleDateString(locale, { month: "long", year: "numeric" })} aria-busy={loading}>
+    <div className="calendar-month-grid" ref={grid} role="grid" aria-label={month.toLocaleDateString(locale, { month: "long", year: "numeric" })} aria-busy={selectedLoading}>
       {Array.from({ length: days.length / 7 }, (_, week) => <div className="calendar-week" role="row" key={week}>{days.slice(week * 7, week * 7 + 7).map(day => {
         const key = calendarDate(day); const entries = byDay.get(key) ?? []; const active = key === selected; const art = entries[0]?.artwork || entries[0]?.item.backdrop || entries[0]?.item.image;
-        return <div role="gridcell" aria-selected={active} key={key}><button data-calendar-date={key} tabIndex={active ? 0 : -1} className={`calendar-day ${active ? "is-selected" : ""} ${entries.length ? "has-releases" : ""} ${day.getMonth() !== month.getMonth() ? "outside-month" : ""} ${key === today ? "is-today" : ""}`} aria-label={`${day.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })}, ${translateUi("{value0} releases", { value0: entries.length })}${entries.length ? `: ${entries.slice(0, 2).map(row => `${row.item.title}, ${calendarEpisodeLabel(row) || translateUi(CALENDAR_KIND_LABELS[row.kind])}, ${(row.timestamp ? calendarTime(row, locale) : translateUi("Time TBA"))}`).join("; ")}` : ""}`} onClick={() => chooseDay(day)} onFocus={() => setSelected(key)} onKeyDown={event => navigateDay(event, day)}>
+        return <div role="gridcell" aria-selected={active} key={key}><button data-calendar-date={key} aria-current={key === today ? "date" : undefined} tabIndex={active ? 0 : -1} className={`calendar-day ${active ? "is-selected" : ""} ${entries.length ? "has-releases" : ""} ${day.getMonth() !== month.getMonth() ? "outside-month" : ""} ${key === today ? "is-today" : ""}`} aria-label={`${day.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })}${entries.length || !selectedLoading ? `, ${translateUi("{value0} releases", { value0: entries.length })}` : ""}${entries.length ? `: ${entries.slice(0, 2).map(row => `${row.item.title}, ${calendarEpisodeLabel(row) || translateUi(CALENDAR_KIND_LABELS[row.kind])}, ${(row.timestamp ? calendarTime(row, locale) : translateUi("Time TBA"))}`).join("; ")}` : ""}`} onClick={() => chooseDay(day)} onFocus={() => setSelected(key)} onKeyDown={event => navigateDay(event, day)}>
           {!active && art && <img className="calendar-day-art" src={art} alt="" loading="lazy" />}
           {active && art && <img className="calendar-day-selected-art" src={art} alt="" loading="lazy" />}
           <span className="calendar-day-number">{day.getDate()}</span>
@@ -130,12 +146,12 @@ export function CalendarScreen() {
         </button></div>;
       })}</div>)}
     </div>
-    {loading && <p className="calendar-loading-announcement" role="status">{translateUi("Loading watchlist releases…")}</p>}
-    {result && (result.failedSources.length > 0 || result.failedTitles > 0) && <div className="calendar-status calendar-partial" role="status"><span>{result.failedSources.length ? `${translateUi("Could not load")}: ${result.failedSources.map(id => CALENDAR_SOURCE_LABELS[id]).join(", ")}. ` : ""}{result.failedTitles > 0 ? translateUi("Release details unavailable for {value0} titles.", { value0: result.failedTitles }) : ""}</span><button onClick={() => setRetry(value => value + 1)}>{translateUi("Retry")}</button></div>}
-    <div className="calendar-selected-heading"><h2>{selectedDate.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })}</h2><span>{translateUi("{value0} releases", { value0: selectedReleases.length })}</span></div>
-    <div className="calendar-release-row" ref={cards} onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); grid.current?.querySelector<HTMLButtonElement>(`[data-calendar-date="${selected}"]`)?.focus(); } }}>
+    {selectedLoading && <p className="calendar-loading-announcement" role="status">{translateUi("Loading watchlist releases…")}</p>}
+    {result && (result.failedSources.length > 0 || result.failedTitles > 0) && <div className="calendar-status calendar-partial" role="status"><span>{result.failedSources.length ? `${translateUi("Could not load")}: ${result.failedSources.map(id => CALENDAR_SOURCE_LABELS[id]).join(", ")}. ` : ""}{result.failedTitles > 0 ? translateUi("Some release details unavailable") : ""}</span><button ref={retryButton} disabled={loading} onKeyDown={returnToDay} onClick={() => setRetry(value => value + 1)}>{translateUi("Retry")}</button></div>}
+    <div className="calendar-selected-heading"><h2>{selectedDate.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })}</h2><span>{selectedLoading && !selectedReleases.length ? translateUi("Finding your releases…") : translateUi("{value0} releases", { value0: selectedReleases.length })}</span></div>
+    <div className="calendar-release-row" ref={cards} onKeyDown={returnToDay}>
       {selectedReleases.map(release => <ReleaseCard key={release.id} release={release} locale={locale} onOpen={openDetails} />)}
-      {!selectedReleases.length && !loading && <div className="calendar-empty"><CalendarDays size={24} /><span>{result?.titleCount === 0 && !result.failedSources.length ? translateUi("Add movies and series to your watchlists to see their releases here.") : translateUi("No scheduled releases for this day.")}</span></div>}
+      {!selectedReleases.length && !selectedLoading && <div className="calendar-empty"><CalendarDays size={24} /><span>{unavailableSource ? translateUi("Calendar unavailable") : emptySource ? (source === "all" ? translateUi("Add movies and series to your watchlists to see their releases here.") : translateUi("Add movies and series to this watchlist to see their releases here.")) : translateUi("No scheduled releases for this day.")}</span>{nextRelease && <button className="calendar-next-release" onClick={() => chooseDay(parseCalendarDate(nextRelease.date)!, true)}>{translateUi("Next release")}</button>}</div>}
     </div>
   </section>;
 }

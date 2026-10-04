@@ -149,6 +149,20 @@ class ReleaseCalendarViewModel @Inject constructor(
         else items.entries.firstOrNull { it.key.id == id }?.value.orEmpty().distinctBy { it.mediaType to it.id }.size
     }
 
+    private fun updateSources(snapshot: CalendarWatchlists, complete: Boolean) {
+        sourceSnapshot = snapshot
+        // A partial source result must never be reused as a complete private snapshot.
+        if (!complete) sourceLoadedAt = 0L
+        else if (sourceLoadedAt == 0L) sourceLoadedAt = System.currentTimeMillis()
+        _uiState.update { state ->
+            val available = listOf(ReleaseCalendarSource.ALL, ReleaseCalendarSource.ARVIO) + snapshot.items.keys
+            val sources = (available + if (complete) emptyList() else state.sources).distinct()
+            val selectedId = state.selectedSourceId.takeIf { id -> sources.any { it.id == id } }
+                ?: ReleaseCalendarSource.ALL.id
+            state.copy(sources = sources, selectedSourceId = selectedId, watchlistCount = countForSource(selectedId))
+        }
+    }
+
     private fun reload(forceSources: Boolean = false, forceRefresh: Boolean = false) {
         val profileId = activeProfileId ?: return
         val sequence = ++requestId
@@ -157,25 +171,23 @@ class ReleaseCalendarViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val current = _uiState.value
+                val language = contentLanguage
                 val snapshot = sourceSnapshot?.takeIf {
                     !forceSources && it.profileId == profileId && System.currentTimeMillis() - sourceLoadedAt < 2 * 60_000L
-                } ?: repository.loadWatchlists(profileId, forceRefresh).also {
-                    if (sequence == requestId && profileManager.getProfileIdSync() == profileId) {
-                        sourceSnapshot = it
-                        sourceLoadedAt = System.currentTimeMillis()
+                }
+                val result = if (snapshot != null) {
+                    updateSources(snapshot, complete = true)
+                    repository.loadMonth(snapshot, current.month, current.timezone, current.region, language) { partial ->
+                        if (sequence == requestId && profileManager.getProfileIdSync() == profileId) {
+                            _uiState.update { it.copy(entries = partial.entries, warnings = partial.warnings) }
+                        }
                     }
-                }
-                if (sequence != requestId || profileManager.getProfileIdSync() != profileId) return@launch
-                val sources = listOf(ReleaseCalendarSource.ALL, ReleaseCalendarSource.ARVIO) +
-                    snapshot.items.keys.filter { it != ReleaseCalendarSource.ARVIO }
-                _uiState.update { state ->
-                    val selectedId = state.selectedSourceId.takeIf { id -> sources.any { it.id == id } }
-                        ?: ReleaseCalendarSource.ALL.id
-                    state.copy(sources = sources.distinct(), selectedSourceId = selectedId, watchlistCount = countForSource(selectedId))
-                }
-                val result = repository.loadMonth(snapshot, current.month, current.timezone, current.region, contentLanguage) { partial ->
-                    if (sequence == requestId && profileManager.getProfileIdSync() == profileId) {
-                        _uiState.update { it.copy(entries = partial.entries, warnings = partial.warnings) }
+                } else {
+                    repository.loadCalendar(profileId, current.month, current.timezone, current.region, language, forceRefresh) { progress ->
+                        if (sequence == requestId && profileManager.getProfileIdSync() == profileId) {
+                            updateSources(progress.watchlists, progress.watchlistsComplete)
+                            _uiState.update { it.copy(entries = progress.month.entries, warnings = progress.month.warnings) }
+                        }
                     }
                 }
                 if (sequence != requestId || profileManager.getProfileIdSync() != profileId) return@launch

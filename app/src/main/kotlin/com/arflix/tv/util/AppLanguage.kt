@@ -104,6 +104,9 @@ fun tr(text: String): String {
         "Navigate days" -> R.string.calendar_navigate_days
         "Open day" -> R.string.calendar_open_day
         "Some sources unavailable" -> R.string.calendar_partial
+        "Some release details unavailable" -> R.string.calendar_partial_details
+        "Next release" -> R.string.calendar_next_release
+        "Refresh calendar" -> R.string.calendar_refresh
         "Finding your releases…" -> R.string.calendar_loading
         "Calendar unavailable" -> R.string.calendar_unavailable
         "Your watchlist, on the calendar" -> R.string.calendar_empty_watchlist
