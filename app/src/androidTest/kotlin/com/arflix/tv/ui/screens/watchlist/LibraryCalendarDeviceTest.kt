@@ -24,6 +24,7 @@ import com.arflix.tv.data.model.CalendarRelease
 import com.arflix.tv.data.model.CalendarReleaseKind
 import com.arflix.tv.data.model.ReleaseCalendarSource
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
+import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.screens.watchlist.calendar.ReleaseCalendarUiState
 import com.arflix.tv.ui.theme.ArvioTvTheme
@@ -81,6 +82,9 @@ class LibraryCalendarDeviceTest {
             val day = compose.onNodeWithTag("calendar-day-$referenceDate").getUnclippedBoundsInRoot()
             val overflow = compose.onNodeWithTag("calendar-more-$referenceDate", useUnmergedTree = true).getUnclippedBoundsInRoot()
             assertTrue("The selected day's release count must remain fully visible", overflow.bottom <= day.bottom)
+            assertPosterStrip(referenceDate, 3, "+2")
+            // Three releases must also be visible on an unfocused date, without overflow.
+            assertPosterStrip(LocalDate.of(2026, 10, 9), 3, null)
         } finally {
             capture("calendar-october-2026")
         }
@@ -134,6 +138,12 @@ class LibraryCalendarDeviceTest {
         assertEquals("Switching Library tabs must not resize or move the shared topbar", normalBounds,
             tags.map { compose.onNodeWithTag(it).getUnclippedBoundsInRoot() })
         compose.onNodeWithTag("app-topbar").assertHeightIsEqualTo(AppTopBarContentTopInset)
+        compose.onNodeWithTag("library-section-tabs").assertTopPositionInRootIsEqualTo(AppTopBarHeight)
+        val tabs = compose.onNodeWithTag("library-section-tabs").getUnclippedBoundsInRoot()
+        tags.drop(1).forEach { tag ->
+            assertTrue("Calendar content must not overlap a topbar control",
+                compose.onNodeWithTag(tag).getUnclippedBoundsInRoot().bottom <= tabs.top)
+        }
         listOf("calendar-today", "calendar-refresh").forEach { compose.onNodeWithTag(it).assertDoesNotExist() }
         listOf("Navigate days", "Open day", "Local time", "Amsterdam").forEach {
             compose.onAllNodes(hasText(it, substring = true)).assertCountEquals(0)
@@ -181,9 +191,10 @@ class LibraryCalendarDeviceTest {
         compose.onNodeWithTag("calendar-day-2026-10-26").assertIsDisplayed()
         compose.onNodeWithTag("calendar-day-2026-12-06").assertIsDisplayed()
         val count = compose.onNodeWithTag("calendar-more-$selected", useUnmergedTree = true)
-            .assertIsDisplayed().assertTextEquals("+4").getUnclippedBoundsInRoot()
+            .assertIsDisplayed().assertTextEquals("+2").getUnclippedBoundsInRoot()
         val cell = compose.onNodeWithTag("calendar-day-$selected").getUnclippedBoundsInRoot()
         assertTrue("Dense months must show the additional release count within the selected day", count.bottom <= cell.bottom)
+        assertPosterStrip(selected, 3, "+2")
         compose.onNodeWithTag("calendar-release-selected-episode").assertIsDisplayed()
         capture("calendar-six-week-month")
 
@@ -365,8 +376,9 @@ class LibraryCalendarDeviceTest {
         )
         return titles.associate { title ->
             val uri = assetUri("${title.id}-backdrop.jpg")
+            val poster = assetUri("${title.id}-poster.jpg")
             fixtureLogos[title.id] = assetUri("${title.id}-logo.png")
-            title.id to MediaItem(id = title.id, title = title.title, mediaType = title.type, image = uri, backdrop = uri)
+            title.id to MediaItem(id = title.id, title = title.title, mediaType = title.type, image = poster, backdrop = uri)
         }
     }
 
@@ -405,6 +417,19 @@ class LibraryCalendarDeviceTest {
             add(release("batman-23", 414906, 23, CalendarReleaseKind.DIGITAL, hour = null))
             add(release("last-of-us-30", 100088, 30, episode = 8, hour = 21))
         }
+    }
+
+    private fun assertPosterStrip(date: LocalDate, shown: Int, overflow: String?) {
+        val cell = compose.onNodeWithTag("calendar-day-$date").getUnclippedBoundsInRoot()
+        repeat(shown) { index ->
+            val poster = compose.onNodeWithTag("calendar-poster-$date-$index", useUnmergedTree = true)
+                .assertIsDisplayed().getUnclippedBoundsInRoot()
+            assertTrue("Every poster must fit inside its date", poster.left >= cell.left && poster.right <= cell.right
+                && poster.top >= cell.top && poster.bottom <= cell.bottom)
+        }
+        compose.onNodeWithTag("calendar-poster-$date-$shown", useUnmergedTree = true).assertDoesNotExist()
+        val more = compose.onNodeWithTag("calendar-more-$date", useUnmergedTree = true)
+        if (overflow == null) more.assertDoesNotExist() else more.assertIsDisplayed().assertTextEquals(overflow)
     }
 
     private fun focusDay(date: LocalDate) {

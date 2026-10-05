@@ -201,10 +201,14 @@ fun WatchlistScreen(
                     AppTopBar(SidebarItem.WATCHLIST, topFocused, topIndex, profile = currentProfile)
                 }
             }
-        Column(Modifier.fillMaxSize().padding(top = if (touch) 0.dp else AppTopBarContentTopInset)
+        Column(Modifier.fillMaxSize().padding(top = when {
+            touch -> 0.dp
+            calendarMode -> AppTopBarHeight
+            else -> AppTopBarContentTopInset
+        })
             .padding(horizontal = if (compact) 16.dp else 26.dp)) {
             if (touch) Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth().then(if (compact) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
+            Row(Modifier.fillMaxWidth().testTag("library-section-tabs").then(if (compact) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
                 .padding(bottom = if(compact) 10.dp else if(calendarMode) 0.dp else 6.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
                 LibrarySection.entries.forEachIndexed { index, entry ->

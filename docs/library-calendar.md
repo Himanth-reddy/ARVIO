@@ -43,6 +43,10 @@ toolbar only contains month navigation, the watchlist filter and connected-servi
 branding; it has no Today button, timezone caption, refresh button or navigation
 instruction footer. Retry remains available when a source fails. Phone date cells prioritize artwork
 and release counts; complete titles and times remain in the selected-day strip.
+On TV the Calendar content starts 16 dp closer to the unchanged shared topbar.
+Dates with multiple releases show up to three portrait posters and a `+N` count
+for further releases, both focused and unfocused. Single-release cells retain
+their title and time. The wide web layout follows the same poster-strip design.
 Touch toolbar controls have 44 dp minimum targets. Loading states do not imply an
 empty watchlist while sources are still being read.
 
@@ -136,3 +140,9 @@ requests. Emulator screenshots are saved under `artifacts/calendar` during QA.
   requests, not first-ever provider loading or complete artwork rendering. New
   remote metadata still requires network responses. Evidence, timing and build
   logs are in `artifacts/calendar-oct5`; web screenshots are in `artifacts/calendar`.
+
+The subsequent spacing/poster refinement passed all nine TV Calendar and two
+shared-topbar emulator scenarios. Assertions check unchanged topbar bounds, no
+overlap with the closer Calendar tabs, three posters within five-/six-week cells,
+and correct overflow. Web browser checks passed at all five existing viewport
+sizes, along with TypeScript. Evidence is in `artifacts/calendar-posters-oct5`.

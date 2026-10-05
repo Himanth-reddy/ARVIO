@@ -347,7 +347,7 @@ private fun CalendarDay(date: LocalDate, month: YearMonth, releases: List<Calend
         (if (releases.isEmpty()) "" else ", " + releases.joinToString { it.media.title })
     BoxWithConstraints(modifier.testTag("calendar-day-$date").semantics { contentDescription = accessibility; this.selected = selected }
         .onFocusChanged { if (it.isFocused) onFocused() }.clip(RoundedCornerShape(5.dp)).background(background).clickable(onClick = onClick)) {
-        if (!selected && first != null) {
+        if (!selected && first != null && (compact || releases.size == 1)) {
             AsyncImage(first.artwork(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(if (compact) Brush.verticalGradient(listOf(Color.Black.copy(.72f), Color.Transparent, Color.Black.copy(.12f)))
                 else Brush.horizontalGradient(listOf(Color.Black.copy(.9f), Color.Black.copy(.65f), Color.Black.copy(.05f)).let { if (rtl) it.reversed() else it })))
@@ -364,6 +364,27 @@ private fun CalendarDay(date: LocalDate, month: YearMonth, releases: List<Calend
                 Text(releases.size.toString(), Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(8.dp))
                     .background(if (selected) Color.White else Color.Black.copy(.7f)).padding(horizontal = 4.dp, vertical = 1.dp)
                     .testTag("calendar-day-count-$date"), color = titleColor, fontSize = 8.sp)
+            } else if (releases.size > 1) {
+                // Busy dates show the actual posters, whether focused or not. Reserve room
+                // for the date and overflow before sizing artwork so six-week months fit.
+                val shown = releases.take(3)
+                val extra = releases.size - shown.size
+                val availableWidth = (maxWidth - 32.dp - 3.dp * (shown.size - 1) - if (extra > 0) 20.dp else 0.dp).coerceAtLeast(1.dp)
+                val posterHeight = minOf((maxHeight - 8.dp).coerceAtLeast(1.dp), availableWidth / shown.size * 1.5f)
+                Row(Modifier.fillMaxSize().padding(start = 27.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    shown.forEachIndexed { index, release ->
+                        Box(Modifier.size(posterHeight / 1.5f, posterHeight).clip(RoundedCornerShape(3.dp))
+                            .background(if (selected) Color(0xFFE3E6E8) else Color(0xFF171B20))
+                            .testTag("calendar-poster-$date-$index"), contentAlignment = Alignment.Center) {
+                            Text(release.media.title.take(1), color = secondary, fontSize = 10.sp)
+                            AsyncImage(release.media.image.takeIf { it.isNotBlank() } ?: release.artwork(), null,
+                                Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        }
+                    }
+                    if (extra > 0) Text("+$extra", color = secondary, fontSize = 9.sp, maxLines = 1,
+                        modifier = Modifier.testTag("calendar-more-$date"))
+                }
             } else {
                 val dense = maxHeight < 45.dp
                 val dayTextStyle = LocalTextStyle.current.copy(platformStyle = PlatformTextStyle(includeFontPadding = false))
@@ -372,18 +393,12 @@ private fun CalendarDay(date: LocalDate, month: YearMonth, releases: List<Calend
                     Text(first.media.title, color = titleColor, style = dayTextStyle, fontSize = 10.sp, lineHeight = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(releaseSubtitle(first, timezone, locale, concise = selected && releases.size > 1), color = secondary,
                         style = dayTextStyle, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!dense && releases.size > 1) {
-                        if (selected) Text(releases[1].media.title, color = titleColor, style = dayTextStyle, fontSize = 10.sp, lineHeight = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (releases.size > (if (selected) 2 else 1)) Text("+${releases.size - (if (selected) 2 else 1)} ${tr("more")}", color = secondary, style = dayTextStyle, fontSize = 8.sp, lineHeight = 9.sp, modifier = Modifier.testTag("calendar-more-$date"))
-                    }
                 }
                 if (selected) Column(Modifier.align(Alignment.CenterEnd).padding(end = 5.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    releases.take(if (dense) 1 else 2).forEach { release ->
+                    releases.take(1).forEach { release ->
                         AsyncImage(release.artwork(), null, Modifier.size(width = 39.dp, height = if (dense) 25.dp else 18.dp).clip(RoundedCornerShape(3.dp)), contentScale = ContentScale.Crop)
                     }
                 }
-                if (dense && releases.size > 1) Text("+${releases.size - 1}", color = secondary, fontSize = 8.sp,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 7.dp, bottom = 2.dp).testTag("calendar-more-$date"))
             }
         }
     }

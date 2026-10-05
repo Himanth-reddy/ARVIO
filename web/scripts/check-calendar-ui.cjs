@@ -39,6 +39,22 @@ const { chromium } = require('@playwright/test');
       assert.equal(await page.locator('[role=gridcell]').count(), 35);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'No page overflow');
       if (width >= 1100) assert.ok((await page.locator('.calendar-release-card>small').first().boundingBox()).y + (await page.locator('.calendar-release-card>small').first().boundingBox()).height <= height, 'TV viewport includes full release caption and provider');
+      if (width >= 1100) {
+        const header = await page.locator('.library-test-header').boundingBox();
+        const tabs = await page.locator('.oled-library-toolbar').boundingBox();
+        assert.ok(tabs.y >= header.y + header.height && tabs.y - (header.y + header.height) <= 12, 'Calendar sits close below the unchanged topbar');
+      }
+      if (width > 650) {
+        const day = page.locator('[data-calendar-date="2026-10-16"]');
+        assert.equal(await day.locator('.calendar-day-poster').count(), 3);
+        assert.equal(await day.locator('.calendar-poster-more').textContent(), '+6');
+        for (const poster of await page.locator('.calendar-day-poster').all()) {
+          const image = await poster.boundingBox();
+          const cell = await poster.locator('xpath=ancestor::button').boundingBox();
+          assert.ok(image && image.x >= cell.x && image.x + image.width <= cell.x + cell.width
+            && image.y >= cell.y && image.y + image.height <= cell.y + cell.height, 'Every poster fits within its date');
+        }
+      }
       assert.equal(await page.locator('.calendar-timezone,.calendar-refresh,.calendar-today').count(), 0, 'Calendar toolbar contains only month and source controls');
       assert.ok((await page.locator('.calendar-release-row').textContent()).includes('Time TBA'));
       assert.ok((await page.locator('.calendar-release-row').textContent()).includes('21:00'));
@@ -59,6 +75,10 @@ const { chromium } = require('@playwright/test');
       assert.ok(await page.evaluate(() => Boolean(window.openedLibraryItem?.id)), 'Release opens real media details');
       await page.getByLabel('Calendar watchlist source').selectOption('arvio');
       assert.equal(await page.locator('.calendar-release-card').count(), 3);
+      if (width > 650) {
+        assert.equal(await page.locator('.calendar-day.is-selected .calendar-day-poster').count(), 3);
+        assert.equal(await page.locator('.calendar-day.is-selected .calendar-poster-more').count(), 0, 'Exactly three releases need no overflow marker');
+      }
       assert.equal(await page.locator('.calendar-source-legend').count(), 0, 'Filtered source is already named by its selector');
       await page.locator('[data-calendar-date="2026-10-17"]').click();
       assert.equal(await page.locator('[data-calendar-date="2026-10-16"]').getAttribute('aria-current'), 'date', 'Today marker survives selection change');
