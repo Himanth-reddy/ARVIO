@@ -78,7 +78,7 @@
 .library-calendar .calendar-next-release { min-height:44px; padding:8px 18px; border:1px solid #4c535a; border-radius:24px; color:#fff; white-space:nowrap; }
 .library-calendar .calendar-next-release:focus-visible { background:#fff; color:#080808; }
 @media(min-width:1100px) {
- .screen.oled-library.oled-calendar-screen { padding-top:84px; }
+ .screen.oled-library.oled-calendar-screen { padding-top:74px; }
  .library-calendar .calendar-day { height:clamp(40px,calc((100dvh - 550px) / var(--calendar-weeks)),82px); }
 }
 @media(min-width:1100px) and (max-height:850px) {

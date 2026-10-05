@@ -203,7 +203,7 @@ fun WatchlistScreen(
             }
         Column(Modifier.fillMaxSize().padding(top = when {
             touch -> 0.dp
-            calendarMode -> AppTopBarHeight
+            calendarMode -> AppTopBarHeight - 10.dp
             else -> AppTopBarContentTopInset
         })
             .padding(horizontal = if (compact) 16.dp else 26.dp)) {

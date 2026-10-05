@@ -138,7 +138,7 @@ class LibraryCalendarDeviceTest {
         assertEquals("Switching Library tabs must not resize or move the shared topbar", normalBounds,
             tags.map { compose.onNodeWithTag(it).getUnclippedBoundsInRoot() })
         compose.onNodeWithTag("app-topbar").assertHeightIsEqualTo(AppTopBarContentTopInset)
-        compose.onNodeWithTag("library-section-tabs").assertTopPositionInRootIsEqualTo(AppTopBarHeight)
+        compose.onNodeWithTag("library-section-tabs").assertTopPositionInRootIsEqualTo(AppTopBarHeight - 10.dp)
         val tabs = compose.onNodeWithTag("library-section-tabs").getUnclippedBoundsInRoot()
         tags.drop(1).forEach { tag ->
             assertTrue("Calendar content must not overlap a topbar control",
@@ -152,6 +152,13 @@ class LibraryCalendarDeviceTest {
             compose.onNodeWithTag("calendar-brand-${it.id}", useUnmergedTree = true).assertIsDisplayed()
         }
         capture("calendar-clean-toolbar")
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        tags.drop(1).forEach { tag ->
+            assertTrue("Focused topbar controls must still clear the Calendar tabs",
+                compose.onNodeWithTag(tag).getUnclippedBoundsInRoot().bottom <= tabs.top)
+        }
+        capture("calendar-focused-topbar")
     }
 
     @Test fun sourceFilterUpdatesTheSelectedDayWithoutLosingItsDate() {

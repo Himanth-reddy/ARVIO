@@ -43,7 +43,7 @@ toolbar only contains month navigation, the watchlist filter and connected-servi
 branding; it has no Today button, timezone caption, refresh button or navigation
 instruction footer. Retry remains available when a source fails. Phone date cells prioritize artwork
 and release counts; complete titles and times remain in the selected-day strip.
-On TV the Calendar content starts 16 dp closer to the unchanged shared topbar.
+On TV the Calendar content starts 26 dp closer to the unchanged shared topbar.
 Dates with multiple releases show up to three portrait posters and a `+N` count
 for further releases, both focused and unfocused. Single-release cells retain
 their title and time. The wide web layout follows the same poster-strip design.

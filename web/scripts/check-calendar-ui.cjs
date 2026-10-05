@@ -42,7 +42,7 @@ const { chromium } = require('@playwright/test');
       if (width >= 1100) {
         const header = await page.locator('.library-test-header').boundingBox();
         const tabs = await page.locator('.oled-library-toolbar').boundingBox();
-        assert.ok(tabs.y >= header.y + header.height && tabs.y - (header.y + header.height) <= 12, 'Calendar sits close below the unchanged topbar');
+        assert.ok(tabs.y >= header.y + header.height && tabs.y - (header.y + header.height) <= 2, 'Calendar sits close below the unchanged topbar');
       }
       if (width > 650) {
         const day = page.locator('[data-calendar-date="2026-10-16"]');
