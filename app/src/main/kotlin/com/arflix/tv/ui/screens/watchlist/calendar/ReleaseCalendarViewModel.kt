@@ -6,6 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.CalendarRelease
 import com.arflix.tv.data.model.ReleaseCalendarSource
 import com.arflix.tv.data.repository.CalendarWatchlists
+import com.arflix.tv.data.repository.CalendarMonthPreview
+import com.arflix.tv.data.repository.CalendarLoadProgress
+import com.arflix.tv.data.repository.ReleaseCalendarCache
+import com.arflix.tv.data.repository.calendarCacheDigest
+import com.arflix.tv.data.repository.mergeCalendarPreview
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ReleaseCalendarRepository
 import com.arflix.tv.data.repository.WatchlistRepository
@@ -61,7 +66,8 @@ class ReleaseCalendarViewModel @Inject constructor(
     @ApplicationContext context: Context,
     private val repository: ReleaseCalendarRepository,
     private val watchlistRepository: WatchlistRepository,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val cache: ReleaseCalendarCache
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ReleaseCalendarUiState())
     val uiState: StateFlow<ReleaseCalendarUiState> = _uiState.asStateFlow()
@@ -71,29 +77,41 @@ class ReleaseCalendarViewModel @Inject constructor(
     private var requestId = 0L
     private var activeProfileId: String? = null
     private var contentLanguage = "en-US"
+    private var privateCacheIdentity = ""
+    private var previewSourceCounts = emptyMap<String, Int>()
 
     init {
         viewModelScope.launch {
             profileManager.activeProfileId.distinctUntilChanged().collectLatest { profileId ->
                 activeProfileId = profileId
+                privateCacheIdentity = ""
                 sourceSnapshot = null
                 sourceLoadedAt = 0L
                 loadJob?.cancel()
                 requestId++
+                previewSourceCounts = emptyMap()
                 _uiState.update { old -> ReleaseCalendarUiState(month = old.month, selectedDate = old.selectedDate) }
+                // Populate the local StateFlow before deriving a private preview key. Its initial
+                // empty value must not briefly resurrect an older, now-removed watchlist.
+                watchlistRepository.getLocalWatchlistItems()
                 // Observe only this profile's connection identity. Tokens are never sent to UI or logs.
                 val credentialKeys = setOf("trakt_access_token", "simkl_access_token", "mdblist_api_key", "mdblist_access_token")
                     .map { "profile_${profileId}_$it" }.toSet()
                 val connections = context.traktDataStore.data.map { preferences ->
                     preferences.asMap().entries.filter { it.key.name in credentialKeys }
-                        .map { it.key.name to it.value.hashCode() }.sortedBy { it.first }
+                        .map { it.key.name to it.value.toString() }.sortedBy { it.first }
+                        .let { calendarCacheDigest(it.toString()) }
                 }.distinctUntilChanged()
                 val language = context.settingsDataStore.data.map { resolveAppLanguage(it, profileId) }.distinctUntilChanged()
                 combine(watchlistRepository.watchlistItems, connections, language) { items, connectionsKey, languageTag ->
-                    Triple(items, connectionsKey, languageTag)
-                }.distinctUntilChanged().collectLatest { (_, _, languageTag) ->
+                    // Artwork/progress enrichment does not change calendar membership and must
+                    // not cancel and restart every title request while the list fills in.
+                    Triple(items.map { "${it.mediaType}:${it.id}" }.distinct().sorted(), connectionsKey, languageTag)
+                }.distinctUntilChanged().collectLatest { (items, connectionsKey, languageTag) ->
                     contentLanguage = languageTag
+                    privateCacheIdentity = calendarCacheDigest("$profileId|$connectionsKey|$items|$languageTag")
                     sourceSnapshot = null
+                    previewSourceCounts = emptyMap()
                     _uiState.update { it.copy(entries = emptyList(), warnings = emptyList(), region = ContentRating.regionOf(languageTag)) }
                     reload(forceSources = true)
                 }
@@ -126,7 +144,6 @@ class ReleaseCalendarViewModel @Inject constructor(
     }
 
     fun refresh() {
-        repository.invalidateMetadata()
         sourceSnapshot = null
         _uiState.update { it.copy(timezone = ZoneId.systemDefault()) }
         reload(forceSources = true, forceRefresh = true)
@@ -144,7 +161,7 @@ class ReleaseCalendarViewModel @Inject constructor(
     }
 
     private fun countForSource(id: String): Int {
-        val items = sourceSnapshot?.items.orEmpty()
+        val items = sourceSnapshot?.items ?: return previewSourceCounts[id] ?: 0
         return if (id == ReleaseCalendarSource.ALL.id) mergeCalendarWatchlists(items).size
         else items.entries.firstOrNull { it.key.id == id }?.value.orEmpty().distinctBy { it.mediaType to it.id }.size
     }
@@ -165,6 +182,7 @@ class ReleaseCalendarViewModel @Inject constructor(
 
     private fun reload(forceSources: Boolean = false, forceRefresh: Boolean = false) {
         val profileId = activeProfileId ?: return
+        if (privateCacheIdentity.isBlank()) return
         val sequence = ++requestId
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -172,6 +190,20 @@ class ReleaseCalendarViewModel @Inject constructor(
             try {
                 val current = _uiState.value
                 val language = contentLanguage
+                val cacheKey = "$privateCacheIdentity|${current.month}|${current.timezone.id}|${current.region}"
+                val preview = if (!forceRefresh) cache.readMonth(cacheKey) else null
+                var lastPreviewWrite = 0L
+                var latestProgress: CalendarLoadProgress? = null
+                if (sequence != requestId || profileManager.getProfileIdSync() != profileId) return@launch
+                if (preview != null) {
+                    previewSourceCounts = preview.sourceCounts
+                    _uiState.update { state -> state.copy(
+                        entries = preview.entries,
+                        sources = ReleaseCalendarSource.entries.filter { it.id in preview.sourceCounts || it == ReleaseCalendarSource.ALL || it == ReleaseCalendarSource.ARVIO },
+                        watchlistCount = preview.sourceCounts[state.selectedSourceId] ?: 0
+                    ) }
+                }
+                if (forceRefresh) repository.invalidateMetadata()
                 val snapshot = sourceSnapshot?.takeIf {
                     !forceSources && it.profileId == profileId && System.currentTimeMillis() - sourceLoadedAt < 2 * 60_000L
                 }
@@ -179,19 +211,40 @@ class ReleaseCalendarViewModel @Inject constructor(
                     updateSources(snapshot, complete = true)
                     repository.loadMonth(snapshot, current.month, current.timezone, current.region, language) { partial ->
                         if (sequence == requestId && profileManager.getProfileIdSync() == profileId) {
-                            _uiState.update { it.copy(entries = partial.entries, warnings = partial.warnings) }
+                            // Cached source snapshots need the same failure/removal reconciliation
+                            // as fresh providers, including when changing back to an earlier month.
+                            val progress = CalendarLoadProgress(snapshot, partial, true, partial.completedTitles)
+                            latestProgress = progress
+                            _uiState.update { it.copy(entries = mergeCalendarPreview(preview?.entries.orEmpty(), progress), warnings = partial.warnings) }
                         }
-                    }
+                    }.also { completed -> latestProgress = CalendarLoadProgress(snapshot, completed, true, completed.completedTitles) }
                 } else {
                     repository.loadCalendar(profileId, current.month, current.timezone, current.region, language, forceRefresh) { progress ->
                         if (sequence == requestId && profileManager.getProfileIdSync() == profileId) {
+                            latestProgress = progress
                             updateSources(progress.watchlists, progress.watchlistsComplete)
-                            _uiState.update { it.copy(entries = progress.month.entries, warnings = progress.month.warnings) }
+                            _uiState.update { it.copy(entries = mergeCalendarPreview(preview?.entries.orEmpty(), progress), warnings = progress.month.warnings) }
+                            // The first usable dates also survive leaving the app while a slower
+                            // provider is still busy. Never replace a full preview with a partial one.
+                            val now = System.currentTimeMillis()
+                            if (preview == null && progress.month.entries.isNotEmpty() && now - lastPreviewWrite >= 2_000L) {
+                                lastPreviewWrite = now
+                                cache.writeMonth(cacheKey, CalendarMonthPreview(progress.month.entries,
+                                    _uiState.value.sources.associate { it.id to countForSource(it.id) }))
+                            }
                         }
                     }
                 }
                 if (sequence != requestId || profileManager.getProfileIdSync() != profileId) return@launch
-                _uiState.update { it.copy(entries = result.entries, warnings = result.warnings, isLoading = false) }
+                val finalEntries = latestProgress?.let { mergeCalendarPreview(preview?.entries.orEmpty(), it) } ?: result.entries
+                _uiState.update { it.copy(entries = finalEntries, warnings = result.warnings, isLoading = false) }
+                // Successful removals are persisted even if another provider failed. Retained
+                // fallback dates keep the original expiry, so outages cannot preserve them forever.
+                val failedSources = latestProgress?.watchlists?.failedSources.orEmpty().map { it.id }.toSet()
+                val counts = _uiState.value.sources.associate { source -> source.id to
+                    (if (source.id in failedSources) preview?.sourceCounts?.get(source.id) ?: countForSource(source.id) else countForSource(source.id)) }
+                val refreshedAt = if (result.warnings.isNotEmpty() && preview != null) preview.refreshedAt else System.currentTimeMillis()
+                cache.writeMonth(cacheKey, CalendarMonthPreview(finalEntries, counts, refreshedAt))
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {

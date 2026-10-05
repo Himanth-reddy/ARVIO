@@ -11,7 +11,7 @@ interface Details {
   seasons?: Season[]; last_episode_to_air?: Episode; next_episode_to_air?: Episode;
   release_dates?: { results?: Array<{ iso_3166_1: string; release_dates: ReleaseDate[] }> };
 }
-export interface CalendarResult { releases: CalendarRelease[]; failedSources: CalendarSource[]; pendingSources: CalendarSource[]; failedTitles: number; titleCount: number; sourceTitleCounts: Partial<Record<CalendarSource, number>> }
+export interface CalendarResult { releases: CalendarRelease[]; failedSources: CalendarSource[]; pendingSources: CalendarSource[]; failedTitles: number; failedTitleKeys?: string[]; titleCount: number; sourceTitleCounts: Partial<Record<CalendarSource, number>>; sourceTitleIds?: Partial<Record<CalendarSource, string[]>> }
 export interface CalendarRead { source: CalendarSource; read: () => Promise<MediaItem[]> }
 export interface CalendarLoadOptions {
   sources: CalendarRead[]; start: string; end: string; language: string; region: string; customApiKey?: string; signal?: AbortSignal;
@@ -81,12 +81,12 @@ export function movieCalendarReleases(title: CalendarTitle, details: Details, re
 export function calendarSeasonCandidates(seasons: Season[], start: string, end: string): Season[] {
   // A later season starting does not prove the previous season has finished.
   // Specials and unknown season dates must be queried too.
-  return [...seasons].filter(row => row.season_number >= 0 && (!row.air_date || row.air_date <= end)).sort((a, b) => a.season_number - b.season_number);
+  return [...seasons].filter(row => row.season_number >= 0 && (!row.air_date || row.air_date <= end)).sort((a, b) => b.season_number - a.season_number);
 }
 
-async function titleReleases(title: CalendarTitle, options: CalendarLoadOptions, publish: (release: CalendarRelease) => void): Promise<{ failed: boolean }> {
+async function titleReleases(title: CalendarTitle, options: CalendarLoadOptions, publish: (release: CalendarRelease) => void, readMetadata: ReturnType<typeof queue>): Promise<{ failed: boolean }> {
   const { item } = title;
-  const details = await metadata<Details>(`${item.mediaType}/${item.id}`, options, item.mediaType === "movie" ? { append_to_response: "release_dates" } : {});
+  const details = await readMetadata(() => metadata<Details>(`${item.mediaType}/${item.id}`, options, item.mediaType === "movie" ? { append_to_response: "release_dates" } : {}));
   if (details.adult) return { failed: false };
   const hydrated: CalendarTitle = { ...title, item: { ...item, ...mapTmdbItem(details, item.mediaType), traktId: item.traktId } };
   if (item.mediaType === "movie") { movieCalendarReleases(hydrated, details, options.region).forEach(publish); return { failed: false }; }
@@ -102,7 +102,7 @@ async function titleReleases(title: CalendarTitle, options: CalendarLoadOptions,
   let failed = false;
   for (const season of calendarSeasonCandidates(details.seasons ?? [], options.start, options.end)) {
     try {
-      const data = await metadata<{ episodes?: Episode[] }>(`tv/${item.id}/season/${season.season_number}`, options);
+      const data = await readMetadata(() => metadata<{ episodes?: Episode[] }>(`tv/${item.id}/season/${season.season_number}`, options));
       for (const episode of data.episodes ?? []) publishEpisode(episode);
     } catch (error) { if (options.signal?.aborted) throw error; failed = true; }
   }
@@ -116,15 +116,18 @@ export async function loadCalendar(options: CalendarLoadOptions): Promise<Calend
   const failedSources = new Set<CalendarSource>();
   const pendingSources = new Set(options.sources.map(row => row.source));
   const sourceTitleCounts: CalendarResult["sourceTitleCounts"] = {};
+  const sourceTitleIds: NonNullable<CalendarResult["sourceTitleIds"]> = {};
   const titleJobs = new Map<string, Promise<void>>();
   const timeJobs: Promise<void>[] = [];
   const requestedTimes = new Set<string>();
   const unavailableTimeSeasons = new Set<string>();
   const timeDeadlines = new Map<string, number>();
-  const readTitle = queue(4), readIdentity = queue(4), readTime = queue(4);
+  // A historical season must not occupy a title slot while other titles still
+  // need their first details response. Bound individual requests instead.
+  const readMetadata = queue(4), readIdentity = queue(4), readTime = queue(4);
   const snapshot = (): CalendarResult => ({
     releases: sortCalendarReleases([...releases.values()].filter(row => row.date >= options.start && row.date <= options.end).map(row => ({ ...row, sources: [...(titles.get(`${row.item.mediaType}:${row.item.id}`)?.sources ?? row.sources)] }))),
-    failedSources: [...failedSources], pendingSources: [...pendingSources], failedTitles: failedTitles.size, titleCount: titles.size, sourceTitleCounts: { ...sourceTitleCounts }
+    failedSources: [...failedSources], pendingSources: [...pendingSources], failedTitles: failedTitles.size, failedTitleKeys: [...failedTitles], titleCount: titles.size, sourceTitleCounts: { ...sourceTitleCounts }, sourceTitleIds: Object.fromEntries(Object.entries(sourceTitleIds).map(([source, ids]) => [source, [...ids]]))
   });
   let publicationTimer: ReturnType<typeof setTimeout> | undefined;
   let lastPublished = 0, publishedFirstRelease = false, publishedInitial = false;
@@ -167,7 +170,7 @@ export async function loadCalendar(options: CalendarLoadOptions): Promise<Calend
   await Promise.all(options.sources.map(async ({ source, read }) => {
     try {
       const items = (await bounded(read, options)).filter(item => !item.isHomeServer).map(item => ({ ...item }));
-      sourceTitleCounts[source] = items.length; publish();
+      sourceTitleCounts[source] = items.length; sourceTitleIds[source] = []; publish();
       await Promise.all(items.map(async (item, index) => {
         if (item.id <= 0) {
           const id = await readIdentity(() => bounded(() => resolveTmdbId(item), options)).catch(() => null);
@@ -176,6 +179,7 @@ export async function loadCalendar(options: CalendarLoadOptions): Promise<Calend
         if (options.signal?.aborted) return;
         if (item.id <= 0) { failedTitles.add(`${source}:${index}`); return; }
         const key = `${item.mediaType}:${item.id}`;
+        sourceTitleIds[source]!.push(key);
         const previous = titles.get(key);
         if (previous) {
           if (!previous.sources.includes(source)) previous.sources.push(source);
@@ -183,12 +187,12 @@ export async function loadCalendar(options: CalendarLoadOptions): Promise<Calend
           publish();
         } else {
           const title: CalendarTitle = { item, sources: [source] }; titles.set(key, title);
-          titleJobs.set(key, readTitle(async () => {
+          titleJobs.set(key, (async () => {
             if (options.signal?.aborted) return;
-            try { if ((await titleReleases(title, options, publishRelease)).failed) failedTitles.add(key); }
+            try { if ((await titleReleases(title, options, publishRelease, readMetadata)).failed) failedTitles.add(key); }
             catch { if (!options.signal?.aborted) failedTitles.add(key); }
             publish();
-          }));
+          })());
         }
         await titleJobs.get(key);
       }));

@@ -47,6 +47,7 @@ class ReleaseCalendarRepositoryTest {
     private val mdb = mockk<MdbListRepository>()
     private val media = mockk<MediaRepository>()
     private val profiles = mockk<ProfileManager>()
+    private val cache = mockk<ReleaseCalendarCache>()
     private lateinit var repository: ReleaseCalendarRepository
     private val month = YearMonth.of(2026, 10)
 
@@ -60,7 +61,10 @@ class ReleaseCalendarRepositoryTest {
         coEvery { simklAuth.isConnected() } returns false
         coEvery { mdb.getWatchlist() } returns RemoteWatchlistResult(false, null, 0)
         coEvery { media.getLogoUrl(any<MediaType>(), any()) } returns null
-        repository = ReleaseCalendarRepository(tmdb, traktApi, own, trakt, simklAuth, simkl, mdb, media, profiles)
+        coEvery { cache.readValue<Any>(any(), any()) } returns null
+        coEvery { cache.writeValue(any(), any()) } just Runs
+        coEvery { cache.clearMetadata() } just Runs
+        repository = ReleaseCalendarRepository(tmdb, traktApi, own, trakt, simklAuth, simkl, mdb, media, profiles, cache)
     }
 
     @After fun tearDown() = unmockkAll()
@@ -312,5 +316,111 @@ class ReleaseCalendarRepositoryTest {
         advanceUntilIdle()
         assertEquals(beforeCancel, updates.size)
         assertTrue(updates.all { it.month.entries.isEmpty() })
+    }
+
+    @Test fun `public metadata restored from disk needs no network after repository recreation`() = runTest {
+        coEvery { cache.readValue<TmdbMovieDetails>("movie:1:en-US", any()) } returns
+            TmdbMovieDetails(1, "Saved movie", releaseDate = "2026-10-04")
+        val result = repository.loadMonth(repository.loadWatchlists("fixture-profile"), month, ZoneId.of("UTC"), "US")
+        assertEquals("Saved movie", result.entries.single().media.title)
+        coVerify(exactly = 0) { tmdb.getMovieDetails(any(), any(), any(), any()) }
+    }
+
+    @Test fun `concurrent month loads share a single metadata request`() = runTest {
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } coAnswers {
+            delay(1_000)
+            TmdbMovieDetails(1, "Shared movie", releaseDate = "2026-10-04")
+        }
+        val lists = repository.loadWatchlists("fixture-profile")
+        val first = async { repository.loadMonth(lists, month, ZoneId.of("UTC"), "US") }
+        val second = async { repository.loadMonth(lists, month.plusMonths(1), ZoneId.of("UTC"), "US") }
+        assertEquals(1, first.await().entries.size)
+        assertTrue(second.await().entries.isEmpty())
+        coVerify(exactly = 1) { tmdb.getMovieDetails(1, any(), any(), any()) }
+    }
+
+    @Test fun `preview remains visible during pending providers and drops removed titles on refresh`() = runTest {
+        val saved = com.arflix.tv.data.model.CalendarRelease("saved", MediaItem(99, "Removed movie"),
+            month.atDay(4), kind = com.arflix.tv.data.model.CalendarReleaseKind.MOVIE, sourceIds = setOf("trakt"))
+        val pending = CalendarLoadProgress(CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to emptyList())),
+            CalendarMonthResult(emptyList(), emptyList()), false)
+        assertEquals(listOf(saved), mergeCalendarPreview(listOf(saved), pending))
+        val refreshed = pending.copy(watchlists = CalendarWatchlists("fixture-profile",
+            mapOf(ReleaseCalendarSource.ARVIO to emptyList(), ReleaseCalendarSource.TRAKT to emptyList())))
+        assertTrue(mergeCalendarPreview(listOf(saved), refreshed).isEmpty())
+        assertTrue(mergeCalendarPreview(listOf(saved), pending.copy(watchlistsComplete = true)).isEmpty())
+    }
+
+    @Test fun `completed title metadata replaces obsolete cached release dates`() = runTest {
+        val movie = MediaItem(99, "Rescheduled movie")
+        val saved = com.arflix.tv.data.model.CalendarRelease("old-date", movie, month.atDay(4),
+            kind = com.arflix.tv.data.model.CalendarReleaseKind.MOVIE, sourceIds = setOf("arvio"))
+        val corrected = saved.copy(id = "new-date", date = month.atDay(12))
+        val update = CalendarLoadProgress(CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(movie))),
+            CalendarMonthResult(listOf(corrected), emptyList()), true, setOf(MediaType.MOVIE to 99))
+        assertEquals(listOf(corrected), mergeCalendarPreview(listOf(saved), update))
+    }
+
+    @Test fun `slow historical seasons cannot starve a later provider's first release`() = runTest {
+        coEvery { own.getLocalWatchlistItems() } returns listOf(MediaItem(5, "Long show", mediaType = MediaType.TV))
+        every { trakt.isAuthenticated } returns flowOf(true)
+        coEvery { trakt.getWatchlistSyncResultWithAuthState() } coAnswers {
+            delay(1)
+            true to TraktRepository.WatchlistSyncResult(listOf(MediaItem(1, "New movie")), 1)
+        }
+        coEvery { tmdb.getTvDetails(5, any(), any(), any()) } returns TmdbTvDetails(5, "Long show",
+            seasons = (1..12).map { TmdbTvSeason(seasonNumber = it, airDate = "2020-01-01") })
+        val requestedSeasons = mutableListOf<Int>()
+        coEvery { tmdb.getTvSeason(5, any(), any(), any()) } coAnswers {
+            requestedSeasons += secondArg<Int>()
+            delay(10_000)
+            TmdbSeasonDetails(episodes = emptyList())
+        }
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } returns TmdbMovieDetails(1, "New movie", releaseDate = "2026-10-04")
+        val updates = mutableListOf<Pair<Long, CalendarLoadProgress>>()
+        val request = async { repository.loadCalendar("fixture-profile", month, ZoneId.of("UTC"), "US") { updates += currentTime to it } }
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(listOf(12, 11), requestedSeasons)
+        assertTrue(updates.any { (time, update) -> time == 1L && update.month.entries.any { it.media.id == 1 } })
+        request.cancelAndJoin()
+    }
+
+    @Test fun `healthy removal wins alongside failed provider while its fallback survives`() = runTest {
+        val removed = com.arflix.tv.data.model.CalendarRelease("removed", MediaItem(98, "Removed movie"),
+            month.atDay(4), kind = com.arflix.tv.data.model.CalendarReleaseKind.MOVIE, sourceIds = setOf("trakt"))
+        val unavailable = removed.copy(id = "unavailable", media = MediaItem(99, "MDB movie"), sourceIds = setOf("mdblist"))
+        val progress = CalendarLoadProgress(CalendarWatchlists("fixture-profile",
+            mapOf(ReleaseCalendarSource.TRAKT to emptyList(), ReleaseCalendarSource.MDBLIST to emptyList()),
+            listOf("MDBList could not be refreshed."), setOf(ReleaseCalendarSource.MDBLIST)),
+            CalendarMonthResult(emptyList(), listOf("MDBList could not be refreshed.")), true)
+        assertEquals(listOf(unavailable), mergeCalendarPreview(listOf(removed, unavailable), progress))
+    }
+
+    @Test fun `refreshed duplicate title keeps failed provider membership`() = runTest {
+        val movie = MediaItem(1, "Shared movie")
+        val saved = com.arflix.tv.data.model.CalendarRelease("movie", movie, month.atDay(4),
+            kind = com.arflix.tv.data.model.CalendarReleaseKind.MOVIE, sourceIds = setOf("trakt", "mdblist"))
+        val refreshed = saved.copy(sourceIds = setOf("trakt"))
+        val snapshot = CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.TRAKT to listOf(movie),
+            ReleaseCalendarSource.MDBLIST to emptyList()), listOf("MDBList unavailable"), setOf(ReleaseCalendarSource.MDBLIST))
+        val progress = CalendarLoadProgress(snapshot, CalendarMonthResult(listOf(refreshed), snapshot.warnings), true,
+            setOf(MediaType.MOVIE to 1))
+        assertEquals(setOf("trakt", "mdblist"), mergeCalendarPreview(listOf(saved), progress).single().sourceIds)
+    }
+
+    @Test fun `reused source snapshot preserves failed provider previews when switching month`() = runTest {
+        val saved = com.arflix.tv.data.model.CalendarRelease("mdb", MediaItem(99, "Unavailable movie"), month.atDay(4),
+            kind = com.arflix.tv.data.model.CalendarReleaseKind.MOVIE, sourceIds = setOf("mdblist"))
+        val snapshot = CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(MediaItem(1, "Own movie")),
+            ReleaseCalendarSource.MDBLIST to emptyList()), listOf("MDBList unavailable"), setOf(ReleaseCalendarSource.MDBLIST))
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } returns TmdbMovieDetails(1, "Own movie", releaseDate = "2026-10-04")
+        val result = repository.loadMonth(snapshot, month, ZoneId.of("UTC"), "US")
+        val progress = CalendarLoadProgress(snapshot, result, true, result.completedTitles)
+        assertEquals(setOf(MediaType.MOVIE to 1), result.completedTitles)
+        assertEquals(setOf(1, 99), mergeCalendarPreview(listOf(saved), progress).map { it.media.id }.toSet())
+        val emptySnapshot = snapshot.copy(items = mapOf(ReleaseCalendarSource.MDBLIST to emptyList()))
+        val empty = repository.loadMonth(emptySnapshot, month, ZoneId.of("UTC"), "US")
+        assertEquals(listOf(saved), mergeCalendarPreview(listOf(saved), CalendarLoadProgress(emptySnapshot, empty, true, empty.completedTitles)))
     }
 }

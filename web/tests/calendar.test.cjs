@@ -97,7 +97,7 @@ test('source and season failures retain other releases and report partial data',
 test('overlapping seasons, specials and unknown dates are not silently dropped; ended series avoid needless requests', async () => {
   const module = loader(async path => ({ id: 2, name: show.title, status: 'Ended', last_episode_to_air: { season_number: 1, episode_number: 5, air_date: '2025-10-10' }, seasons: [{ id: 1, season_number: 1 }] }));
   const candidates = module.calendarSeasonCandidates([{ id: 1, season_number: 0 }, { id: 2, season_number: 1, air_date: '2024-01-01' }, { id: 3, season_number: 2, air_date: '2025-01-01' }, { id: 4, season_number: 3, air_date: '2027-01-01' }], options.start, options.end);
-  assert.deepEqual(json(candidates.map(row => row.season_number)), [0, 1, 2]);
+  assert.deepEqual(json(candidates.map(row => row.season_number)), [2, 1, 0]);
   const result = await module.loadCalendar({ ...options, sources: [{ source: 'arvio', read: async () => [show] }] });
   assert.equal(result.releases.length, 0); assert.equal(result.failedTitles, 0);
 });
@@ -206,4 +206,23 @@ test('large episode batches coalesce progress and expired enrichment queues skip
   assert.equal(timeCalls, 4, 'Expired queue entries do not start new network requests');
   assert.ok(snapshots.length <= 4, 'Progress snapshots are coalesced instead of copied/sorted per episode');
   assert.equal(snapshots.at(-1).releases.length, 80, 'Final snapshot is immediate and complete');
+});
+
+test('historical season walks cannot block the first details response of later watchlist titles', async () => {
+  const oldSeasons = deferred(), painted = deferred();
+  const calls = [];
+  const module = loader(async path => {
+    calls.push(path);
+    if (path.includes('/season/')) return oldSeasons.promise;
+    if (path === 'movie/5') return { id: 5, title: 'Upcoming movie', release_date: '2026-10-16' };
+    return { id: Number(path.split('/')[1]), name: 'Long-running series', seasons: [{ id: 1, season_number: 1 }] };
+  });
+  const request = module.loadCalendar({ ...options, sources: [{ source: 'arvio', read: async () => [
+    ...Array.from({ length: 4 }, (_, index) => ({ ...show, id: index + 1 })), { ...movie, id: 5 }
+  ] }], onProgress: result => { if (result.releases.some(row => row.item.id === 5)) painted.resolve(result); } });
+  const first = await Promise.race([painted.promise, new Promise((_, reject) => setTimeout(() => reject(Error('First paint blocked by historical seasons')), 1000))]);
+  assert.equal(first.releases[0].item.id, 5);
+  assert.ok(calls.indexOf('movie/5') < calls.indexOf('tv/1/season/1'));
+  oldSeasons.resolve({ episodes: [] });
+  assert.equal((await request).releases.length, 1);
 });

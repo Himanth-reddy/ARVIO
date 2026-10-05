@@ -82,7 +82,8 @@ fun WatchlistScreen(
     onCalendarSelectDate: (LocalDate) -> Unit = {},
     onCalendarChangeMonth: (Long) -> Unit = {},
     onCalendarSelectSource: (String) -> Unit = {},
-    onCalendarRefresh: () -> Unit = {}
+    onCalendarRefresh: () -> Unit = {},
+    calendarViewModel: ReleaseCalendarViewModel? = null
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val servers by viewModel.libraryState.collectAsStateWithLifecycle()
@@ -176,9 +177,8 @@ fun WatchlistScreen(
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black).testTag("oled-library")) {
         val compact = touch && maxWidth < 700.dp
         val sideWidth = if (touch) 160.dp else 126.dp
-        Column(Modifier.fillMaxSize().padding(horizontal = if (compact) 16.dp else if (calendarMode) 22.dp else 26.dp)) {
             if (!touch) {
-                Box(Modifier.fillMaxWidth().height(if (calendarMode) 44.dp else 60.dp).focusRequester(topFocus).onFocusChanged { topFocused = it.isFocused }
+                Box(Modifier.fillMaxWidth().height(AppTopBarContentTopInset).focusRequester(topFocus).onFocusChanged { topFocused = it.isFocused }
                     .onKeyEvent { event ->
                         // The top bar's index runs left-to-right, but Compose mirrors
                         // the row in an RTL locale, so the physical key has to be
@@ -198,10 +198,12 @@ fun WatchlistScreen(
                             else -> false
                         }
                     }.focusable()) {
-                    AppTopBar(SidebarItem.WATCHLIST, topFocused, topIndex, profile = currentProfile,
-                        compact = calendarMode, modifier = if (calendarMode) Modifier else Modifier.offset(y = (-6).dp))
+                    AppTopBar(SidebarItem.WATCHLIST, topFocused, topIndex, profile = currentProfile)
                 }
-            } else Spacer(Modifier.height(12.dp))
+            }
+        Column(Modifier.fillMaxSize().padding(top = if (touch) 0.dp else AppTopBarContentTopInset)
+            .padding(horizontal = if (compact) 16.dp else 26.dp)) {
+            if (touch) Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth().then(if (compact) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
                 .padding(bottom = if(compact) 10.dp else if(calendarMode) 0.dp else 6.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
@@ -228,7 +230,8 @@ fun WatchlistScreen(
                     onRefresh = onCalendarRefresh, onOpenDetails = onNavigateToDetails,
                     modifier = Modifier.weight(1f), onExitUp = { calendarTab.requestFocus() })
                 else LibraryCalendarRoute(onOpenDetails = onNavigateToDetails,
-                    modifier = Modifier.weight(1f), onExitUp = { calendarTab.requestFocus() })
+                    modifier = Modifier.weight(1f), onExitUp = { calendarTab.requestFocus() },
+                    viewModel = calendarViewModel ?: hiltViewModel())
             } else {
             if (compact) Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (!collections) OledControl(scopeSources.firstOrNull { it.id == selectedId }?.title ?: tr("Choose library"),

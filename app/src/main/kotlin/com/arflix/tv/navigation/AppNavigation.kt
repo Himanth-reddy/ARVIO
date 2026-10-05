@@ -278,6 +278,8 @@ fun AppNavigation(
         // Watchlist screen
         composable(Screen.Watchlist.route) {
             WatchlistScreen(
+                // Warm the current month while the user browses the other Library tabs.
+                calendarViewModel = hiltViewModel(),
                 currentProfile = currentProfile,
                 onNavigateToDetails = { mediaType, mediaId ->
                     navController.navigate(Screen.Details.createRoute(mediaType, mediaId))

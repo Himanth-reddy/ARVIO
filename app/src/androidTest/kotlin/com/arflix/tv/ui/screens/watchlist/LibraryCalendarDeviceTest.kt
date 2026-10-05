@@ -23,6 +23,8 @@ import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.CalendarRelease
 import com.arflix.tv.data.model.CalendarReleaseKind
 import com.arflix.tv.data.model.ReleaseCalendarSource
+import com.arflix.tv.ui.components.AppTopBarContentTopInset
+import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.screens.watchlist.calendar.ReleaseCalendarUiState
 import com.arflix.tv.ui.theme.ArvioTvTheme
 import com.arflix.tv.util.DeviceType
@@ -113,15 +115,33 @@ class LibraryCalendarDeviceTest {
         compose.onNodeWithTag("calendar-release-selected-episode").assertIsFocused()
     }
 
-    @Test fun monthControlsAndTodayKeepSelectionInTheVisibleMonth() {
+    @Test fun monthControlsKeepSelectionInTheVisibleMonth() {
         show(LocalDate.of(2026, 10, 31))
         compose.onNodeWithTag("calendar-next-month").performClick()
         assertDate(LocalDate.of(2026, 11, 30))
         compose.onNodeWithText("November 2026").assertIsDisplayed()
         compose.onNodeWithTag("calendar-previous-month").performClick()
         assertDate(LocalDate.of(2026, 10, 30))
-        compose.onNodeWithTag("calendar-today").performClick()
-        assertDate(LocalDate.now(timezone))
+        compose.onNodeWithTag("calendar-today").assertDoesNotExist()
+    }
+
+    @Test fun calendarKeepsTheNormalTopBarAndOnlyNecessaryControls() {
+        show(selectCalendar = false)
+        val tags = listOf("app-topbar", "topbar-profile") + SidebarItem.entries.map { "topbar-item-${it.name}" }
+        val normalBounds = tags.map { compose.onNodeWithTag(it).getUnclippedBoundsInRoot() }
+        compose.onNodeWithText("Calendar").performClick()
+        compose.waitForIdle()
+        assertEquals("Switching Library tabs must not resize or move the shared topbar", normalBounds,
+            tags.map { compose.onNodeWithTag(it).getUnclippedBoundsInRoot() })
+        compose.onNodeWithTag("app-topbar").assertHeightIsEqualTo(AppTopBarContentTopInset)
+        listOf("calendar-today", "calendar-refresh").forEach { compose.onNodeWithTag(it).assertDoesNotExist() }
+        listOf("Navigate days", "Open day", "Local time", "Amsterdam").forEach {
+            compose.onAllNodes(hasText(it, substring = true)).assertCountEquals(0)
+        }
+        listOf(ReleaseCalendarSource.TRAKT, ReleaseCalendarSource.SIMKL, ReleaseCalendarSource.MDBLIST).forEach {
+            compose.onNodeWithTag("calendar-brand-${it.id}", useUnmergedTree = true).assertIsDisplayed()
+        }
+        capture("calendar-clean-toolbar")
     }
 
     @Test fun sourceFilterUpdatesTheSelectedDayWithoutLosingItsDate() {
@@ -212,7 +232,7 @@ class LibraryCalendarDeviceTest {
         })
         focusDay(referenceDate)
         compose.onNodeWithTag("calendar-loading").assertIsDisplayed()
-        compose.onNodeWithTag("calendar-refresh").assertIsNotEnabled()
+        compose.onNodeWithTag("calendar-refresh").assertDoesNotExist()
         compose.onAllNodes(hasText("Add movies and shows", substring = true)).assertCountEquals(0)
         compose.onNodeWithText("0 releases").assertDoesNotExist()
         capture("calendar-loading")
@@ -221,21 +241,19 @@ class LibraryCalendarDeviceTest {
         compose.onNodeWithTag("calendar-day-$referenceDate").assertIsFocused()
         compose.onNodeWithTag("calendar-release-selected-episode").assertIsDisplayed()
         compose.onNodeWithText("5 releases").assertIsDisplayed()
-        compose.onNodeWithTag("calendar-refresh").assertIsNotEnabled()
         compose.runOnIdle { calendar = calendar.copy(isLoading = false) }
-        compose.onNodeWithTag("calendar-refresh").assertIsEnabled().performClick()
-        compose.runOnIdle { assertEquals(1, refreshRequests) }
+        compose.runOnIdle { assertEquals(0, refreshRequests) }
 
         compose.runOnIdle { calendar = calendar.copy(entries = emptyList(), error = "Fixture source unavailable") }
         focusDay(referenceDate)
         key(Key.DirectionCenter)
         compose.onNodeWithTag("calendar-retry").assertIsFocused()
-        compose.runOnIdle { assertEquals("Opening an empty day must focus Retry without refreshing", 1, refreshRequests) }
+        compose.runOnIdle { assertEquals("Opening an empty day must focus Retry without refreshing", 0, refreshRequests) }
         key(Key.DirectionUp)
         compose.onNodeWithTag("calendar-day-$referenceDate").assertIsFocused()
         key(Key.DirectionCenter)
         key(Key.DirectionCenter)
-        compose.runOnIdle { assertEquals(2, refreshRequests) }
+        compose.runOnIdle { assertEquals(1, refreshRequests) }
     }
 
     @Test fun todayMarkerRemainsVisibleWhenAnotherDayIsSelected() {
@@ -245,7 +263,7 @@ class LibraryCalendarDeviceTest {
         compose.onNodeWithTag("calendar-today-marker-$today", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithTag("calendar-day-$today").assertIsNotSelected()
         compose.onNodeWithTag("calendar-day-$otherDay").assertIsSelected()
-        compose.onNodeWithTag("calendar-today").performClick()
+        focusDay(today)
         assertDate(today)
         compose.onNodeWithTag("calendar-day-$today").assertIsSelected()
         compose.onNodeWithTag("calendar-today-marker-$today", useUnmergedTree = true).assertIsDisplayed()
@@ -256,7 +274,7 @@ class LibraryCalendarDeviceTest {
             compose.activity.resources.configuration.screenWidthDp < 600)
         val selected = referenceDate.plusMonths(1)
         show(selectedDate = selected, device = DeviceType.PHONE, configure = ::novemberFixture)
-        listOf("calendar-previous-month", "calendar-next-month", "calendar-today", "calendar-source-filter", "calendar-refresh")
+        listOf("calendar-previous-month", "calendar-next-month", "calendar-source-filter")
             .forEach { tag -> compose.onNodeWithTag(tag).assertHeightIsAtLeast(44.dp).assertWidthIsAtLeast(44.dp) }
         compose.onNodeWithTag("calendar-source-filter").performClick()
         ReleaseCalendarSource.entries.forEach { source ->
@@ -282,7 +300,7 @@ class LibraryCalendarDeviceTest {
             releaseInstant = release.releaseInstant?.atZone(timezone)?.plusMonths(1)?.toInstant())
     })
 
-    private fun show(selectedDate: LocalDate = referenceDate, device: DeviceType = DeviceType.TV,
+    private fun show(selectedDate: LocalDate = referenceDate, device: DeviceType = DeviceType.TV, selectCalendar: Boolean = true,
                      configure: (ReleaseCalendarUiState) -> ReleaseCalendarUiState = { it }) {
         val fixtureItems = fixtureMedia()
         calendar = configure(ReleaseCalendarUiState(
@@ -318,7 +336,7 @@ class LibraryCalendarDeviceTest {
                 }
             }
         }
-        compose.onNodeWithText("Calendar").performClick()
+        if (selectCalendar) compose.onNodeWithText("Calendar").performClick()
         compose.waitForIdle()
     }
 

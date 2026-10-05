@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -146,8 +145,7 @@ fun LibraryCalendarPane(
         val scroll = rememberScrollState()
         Column(Modifier.fillMaxSize().then(if (scrollable) Modifier.verticalScroll(scroll) else Modifier)) {
             CalendarToolbar(state, locale, compactToolbar, monthButton, onChangeMonth,
-                onToday = { selectAndFocus(LocalDate.now(state.timezone)) },
-                onSources = { showSources = true }, onRefresh = onRefresh, onExitUp = onExitUp)
+                onSources = { showSources = true }, onExitUp = onExitUp)
             if (compact && hasProblem) {
                 CalendarButton(tr("Some release details unavailable") + " · " + tr("Retry"),
                     retryModifier.padding(vertical = 5.dp), onClick = onRefresh)
@@ -244,23 +242,7 @@ fun LibraryCalendarPane(
                     }
                 }
             }
-            if (!touch) Row(Modifier.fillMaxWidth().height(22.dp), horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text("← →", color = Color.White, fontSize = 15.sp)
-                    Text(tr("Navigate days"), color = CalendarSecondary, fontSize = 9.sp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.size(18.dp).border(1.dp, Color.White, RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
-                        Text("OK", color = Color.White, fontSize = 8.sp)
-                    }
-                    Text(tr("Open day"), color = CalendarSecondary, fontSize = 9.sp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("↶", color = Color.White, fontSize = 17.sp)
-                    Text(tr("Back"), color = CalendarSecondary, fontSize = 9.sp)
-                }
-            } else Spacer(Modifier.height(16.dp + LocalBottomBarInset.current))
+            Spacer(Modifier.height(if (touch) 16.dp + LocalBottomBarInset.current else 8.dp))
         }
     }
     if (showSources) Dialog(onDismissRequest = { showSources = false }) {
@@ -282,7 +264,7 @@ fun LibraryCalendarPane(
 
 @Composable
 private fun CalendarToolbar(state: ReleaseCalendarUiState, locale: Locale, compact: Boolean, monthButton: FocusRequester,
-    onMonth: (Long) -> Unit, onToday: () -> Unit, onSources: () -> Unit, onRefresh: () -> Unit, onExitUp: () -> Unit) {
+    onMonth: (Long) -> Unit, onSources: () -> Unit, onExitUp: () -> Unit) {
     val touch = LocalDeviceType.current.isTouchDevice()
     Column {
         Row(Modifier.fillMaxWidth().height(if (compact || touch) 44.dp else 24.dp)
@@ -294,7 +276,6 @@ private fun CalendarToolbar(state: ReleaseCalendarUiState, locale: Locale, compa
                 fontSize = if (compact) 15.sp else 13.sp, maxLines = 1, fontWeight = FontWeight.Medium,
                 modifier = Modifier.testTag("calendar-month-label").then(if (compact) Modifier.weight(1f) else Modifier))
             CalendarArrow(true, Modifier.testTag("calendar-next-month")) { onMonth(1) }
-            CalendarButton(tr("Today"), Modifier.testTag("calendar-today"), onClick = onToday)
             if (!compact) {
                 CalendarButton(tr(state.sources.firstOrNull { it.id == state.selectedSourceId }?.label ?: "All watchlists"),
                     Modifier.widthIn(min = 118.dp).testTag("calendar-source-filter"), dropdown = true, onClick = onSources)
@@ -303,45 +284,26 @@ private fun CalendarToolbar(state: ReleaseCalendarUiState, locale: Locale, compa
                         CalendarSourceBadge(source)
                     }
                 }
-                Text(tr("Local time") + " · " + state.timezone.id.substringAfterLast('/').replace('_', ' '),
-                    color = CalendarSecondary, fontSize = 9.sp, maxLines = 1)
-                CalendarRefresh(state.isLoading, onRefresh)
             }
         }
         if (compact) Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CalendarButton(tr(state.sources.firstOrNull { it.id == state.selectedSourceId }?.label ?: "All watchlists"),
                 Modifier.testTag("calendar-source-filter"), dropdown = true, onClick = onSources)
-            Text(tr("Local time") + " · " + state.timezone.id.substringAfterLast('/').replace('_', ' '), color = CalendarSecondary,
-                fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f))
-            CalendarRefresh(state.isLoading, onRefresh)
         }
-    }
-}
-
-@Composable
-private fun CalendarRefresh(loading: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val label = tr("Refresh calendar")
-    val touch = LocalDeviceType.current.isTouchDevice()
-    Box(Modifier.size(if (touch) 44.dp else 24.dp).testTag("calendar-refresh")
-        .semantics { contentDescription = label }.onFocusChanged { focused = it.isFocused }
-        .clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color.Transparent)
-        .clickable(enabled = !loading, onClick = onClick), contentAlignment = Alignment.Center) {
-        if (loading) CircularProgressIndicator(Modifier.size(14.dp), color = CalendarSecondary, strokeWidth = 1.5.dp)
-        else Icon(Icons.Outlined.Refresh, null, tint = if (focused) Color.Black else CalendarSecondary, modifier = Modifier.size(if (touch) 20.dp else 15.dp))
     }
 }
 
 @Composable
 private fun CalendarSourceBadge(source: ReleaseCalendarSource) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        val drawable = when (source) { ReleaseCalendarSource.TRAKT -> R.drawable.ic_trakt
-            ReleaseCalendarSource.SIMKL -> R.drawable.ic_simkl; ReleaseCalendarSource.MDBLIST -> R.drawable.ic_mdblist; else -> null }
-        drawable?.let { Icon(painterResource(it), contentDescription = null,
-            tint = when (source) { ReleaseCalendarSource.TRAKT -> Color(0xFFED2433); ReleaseCalendarSource.MDBLIST -> Color(0xFFFFD539); else -> Color.White },
-            modifier = Modifier.size(14.dp)) }
-        Text(source.label, color = CalendarSecondary, fontSize = 10.sp, maxLines = 1)
+        val drawable = when (source) { ReleaseCalendarSource.TRAKT -> R.drawable.calendar_trakt_official
+            ReleaseCalendarSource.SIMKL -> R.drawable.calendar_simkl_official
+            ReleaseCalendarSource.MDBLIST -> R.drawable.calendar_mdblist_official; else -> null }
+        drawable?.let { Image(painterResource(it), contentDescription = source.label,
+            modifier = (if (source == ReleaseCalendarSource.SIMKL) Modifier.width(54.dp).height(14.dp) else Modifier.size(18.dp))
+                .testTag("calendar-brand-${source.id}"), contentScale = ContentScale.Fit) }
+        if (source != ReleaseCalendarSource.SIMKL) Text(source.label, color = CalendarSecondary, fontSize = 10.sp, maxLines = 1)
     }
 }
 

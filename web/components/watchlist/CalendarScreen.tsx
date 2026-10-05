@@ -1,7 +1,7 @@
 "use client";
 
-import { CalendarDays, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { useApp, authClient, traktClient } from "@/lib/store";
 import { useTranslation } from "@/lib/i18n";
 import { pullCloudWatchlist } from "@/lib/cloud";
@@ -11,6 +11,7 @@ import { mdblistClient } from "@/lib/mdblist";
 import { traktItemToMedia } from "@/lib/mappers";
 import { getLogoUrl } from "@/lib/tmdb";
 import { loadCalendar, type CalendarRead, type CalendarResult } from "@/lib/calendarLoader";
+import { calendarConnectionFingerprint, mergeCalendarRefresh, readCalendarSnapshot, saveCalendarSnapshot } from "@/lib/calendarSnapshot";
 import { CALENDAR_KIND_LABELS, CALENDAR_SOURCE_LABELS, calendarDate, calendarEpisodeLabel, calendarMonthDays, calendarTime, parseCalendarDate, shiftCalendarMonth, type CalendarRelease, type CalendarSource } from "@/lib/calendar";
 import type { MediaItem } from "@/lib/types";
 
@@ -18,7 +19,7 @@ type SourceFilter = "all" | CalendarSource;
 const views = new Map<string, { month: string; selected: string; source: SourceFilter }>();
 
 function SourceMark({ source }: { source: CalendarSource }) {
-  return <span className={`calendar-source-mark ${source}`} aria-hidden="true"><img src={source === "arvio" ? "/arvio-icon-192.png" : `/logos/calendar_${source}.svg`} alt="" /></span>;
+  return <span className={`calendar-source-mark ${source}`} aria-hidden="true"><img src={source === "arvio" ? "/arvio-icon-192.png" : `/logos/calendar_${source}.${source === "trakt" ? "svg" : "png"}`} alt="" /></span>;
 }
 
 function ReleaseCard({ release, locale, onOpen }: { release: CalendarRelease; locale: string; onOpen: (item: MediaItem) => void }) {
@@ -41,7 +42,6 @@ export function CalendarScreen() {
   const [month, setMonth] = useState(() => parseCalendarDate(saved?.month) ?? new Date());
   const [selected, setSelected] = useState(() => saved?.selected ?? calendarDate(new Date()));
   const [source, setSource] = useState<SourceFilter>(saved?.source ?? "all");
-  const [result, setResult] = useState<CalendarResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const grid = useRef<HTMLDivElement>(null);
@@ -50,16 +50,24 @@ export function CalendarScreen() {
   const focusDate = useRef<string | null>(null);
   const locale = settings.language || "en";
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const zoneLabel = zone?.split("/").at(-1)?.replace(/_/g, " ") || "";
   const days = useMemo(() => calendarMonthDays(month), [month]);
   const firstDay = calendarDate(days[0]);
   const lastDay = calendarDate(days[days.length - 1]);
   const sources = useMemo(() => (["arvio", ...(traktConnected ? ["trakt"] : []), ...(simklConnected ? ["simkl"] : []), ...(mdblistConnected ? ["mdblist"] : [])] as CalendarSource[]), [traktConnected, simklConnected, mdblistConnected]);
+  let region = "US";
+  try { region = new Intl.Locale(locale).region || (typeof navigator !== "undefined" ? new Intl.Locale(navigator.language).region : undefined) || "US"; } catch { /* Stable fallback for legacy locale codes. */ }
+  const watchlistSignature = watchlist.map(item => `${item.mediaType}:${item.id}:${item.imdbId ?? ""}`).sort().join(",");
+  const connections = calendarConnectionFingerprint([traktConnected ? traktClient.token?.access_token : null, simklConnected ? simklClient.token?.access_token : null, mdblistConnected ? mdblistClient.token?.accessToken || mdblistClient.key : null]);
+  const snapshotKey = `${scope}:${connections}:${firstDay}:${lastDay}:${locale}:${region}:${zone}:${sources.join(",")}:${watchlistSignature}`;
+  const cached = useMemo(() => readCalendarSnapshot(snapshotKey), [snapshotKey]);
+  const [loaded, setLoaded] = useState<{ key: string; value: CalendarResult | null }>(() => ({ key: snapshotKey, value: cached }));
+  const result = loaded.key === snapshotKey ? loaded.value : cached;
   useEffect(() => { if (source !== "all" && !sources.includes(source)) setSource("all"); }, [source, sources]);
   useEffect(() => { views.set(scope, { month: calendarDate(month), selected, source }); if (views.size > 12) views.delete(views.keys().next().value!); }, [scope, month, selected, source]);
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setResult(null);
+    const initial = readCalendarSnapshot(snapshotKey);
+    setLoading(true); setLoaded({ key: snapshotKey, value: initial });
     const sourceReads: CalendarRead[] = [{ source: "arvio", read: async () => auth?.userId && activeProfile?.id
       ? applyPendingWatchlist(authClient, activeProfile.id, await pullCloudWatchlist(authClient, activeProfile.id))
       : watchlist }];
@@ -75,17 +83,15 @@ export function CalendarScreen() {
       if (!request) { request = traktClient.calendarSeason(item.id, season, item.traktId); seasonTimes.set(key, request); }
       return (await request).find(row => row.season === season && row.number === episode)?.first_aired;
     };
-    let region = "US";
-    try { region = new Intl.Locale(locale).region || new Intl.Locale(navigator.language).region || "US"; } catch { /* Stable fallback for legacy locale codes. */ }
     // Padding handles UTC air times that land on a neighbouring local day.
     const start = parseCalendarDate(firstDay)!; start.setDate(start.getDate() - 1);
     const end = parseCalendarDate(lastDay)!; end.setDate(end.getDate() + 1);
-    void loadCalendar({ sources: sourceReads, start: calendarDate(start), end: calendarDate(end), language: locale, region, customApiKey: settings.customTmdbApiKey, signal: controller.signal, episodeTime, onProgress: value => { if (!controller.signal.aborted) setResult(value); } })
-      .then(value => { if (!controller.signal.aborted) setResult(value); })
-      .catch(() => { if (!controller.signal.aborted) setResult({ releases: [], failedSources: sources, pendingSources: [], failedTitles: 0, titleCount: 0, sourceTitleCounts: {} }); })
+    void loadCalendar({ sources: sourceReads, start: calendarDate(start), end: calendarDate(end), language: locale, region, customApiKey: settings.customTmdbApiKey, signal: controller.signal, episodeTime, onProgress: value => { if (!controller.signal.aborted) setLoaded({ key: snapshotKey, value: mergeCalendarRefresh(initial, value) }); } })
+      .then(value => { if (!controller.signal.aborted) { setLoaded({ key: snapshotKey, value: mergeCalendarRefresh(initial, value) }); saveCalendarSnapshot(snapshotKey, value); } })
+      .catch(() => { if (!controller.signal.aborted) setLoaded({ key: snapshotKey, value: mergeCalendarRefresh(initial, { releases: [], failedSources: sources, pendingSources: [], failedTitles: 0, titleCount: 0, sourceTitleCounts: {} }) }); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [scope, auth?.userId, activeProfile?.id, firstDay, lastDay, locale, settings.customTmdbApiKey, sources, watchlist, retry, traktConnected, simklConnected, mdblistConnected]);
+  }, [scope, auth?.userId, activeProfile?.id, firstDay, lastDay, locale, region, settings.customTmdbApiKey, sources, snapshotKey, retry, traktConnected, simklConnected, mdblistConnected]);
 
   const releases = useMemo(() => (result?.releases ?? []).filter(row => source === "all" || row.sources.includes(source)), [result, source]);
   const byDay = useMemo(() => { const grouped = new Map<string, CalendarRelease[]>(); for (const row of releases) grouped.set(row.date, [...(grouped.get(row.date) ?? []), row]); return grouped; }, [releases]);
@@ -124,14 +130,11 @@ export function CalendarScreen() {
   const returnToDay = (event: KeyboardEvent) => {
     if (event.key === "Escape" || event.key === "ArrowUp") { event.preventDefault(); event.stopPropagation(); grid.current?.querySelector<HTMLButtonElement>(`[data-calendar-date="${selected}"]`)?.focus(); }
   };
-  return <section className="library-calendar" aria-label={translateUi("Release calendar")}>
+  return <section className="library-calendar" style={{ "--calendar-weeks": days.length / 7 } as CSSProperties} aria-label={translateUi("Release calendar")}>
     <div className="calendar-toolbar">
       <div className="calendar-month-controls"><button aria-label={translateUi("Previous month")} onClick={() => moveMonth(-1)}><ChevronLeft /></button><h1>{month.toLocaleDateString(locale, { month: "long", year: "numeric" })}</h1><button aria-label={translateUi("Next month")} onClick={() => moveMonth(1)}><ChevronRight /></button></div>
-      <button className="calendar-today" onClick={() => { setMonth(new Date()); setSelected(calendarDate(new Date())); }}>{translateUi("Today")}</button>
       <select value={source} onChange={event => setSource(event.target.value as SourceFilter)} aria-label={translateUi("Calendar watchlist source")}><option value="all">{translateUi("All watchlists")}</option>{sources.map(id => <option key={id} value={id}>{CALENDAR_SOURCE_LABELS[id]}</option>)}</select>
-      {source === "all" && <div className="calendar-source-legend">{sources.map(id => <span key={id}><SourceMark source={id} />{CALENDAR_SOURCE_LABELS[id]}</span>)}</div>}
-      <span className="calendar-timezone" title={zone}>{translateUi("Local time")} · {zoneLabel}</span>
-      <button className="calendar-refresh" aria-label={translateUi("Refresh calendar")} disabled={loading} onClick={() => setRetry(value => value + 1)}>{loading ? <LoaderCircle className="calendar-spinner" size={18} /> : <RefreshCw size={18} />}</button>
+      {source === "all" && <div className="calendar-source-legend">{sources.map(id => <span key={id} aria-label={CALENDAR_SOURCE_LABELS[id]}><SourceMark source={id} />{id !== "simkl" && CALENDAR_SOURCE_LABELS[id]}</span>)}</div>}
     </div>
     <div className="calendar-weekdays" aria-hidden="true">{days.slice(0, 7).map(day => <span key={day.getDay()}><span className="calendar-weekday-full">{day.toLocaleDateString(locale, { weekday: "long" })}</span><span className="calendar-weekday-short">{day.toLocaleDateString(locale, { weekday: "short" })}</span></span>)}</div>
     <div className="calendar-month-grid" ref={grid} role="grid" aria-label={month.toLocaleDateString(locale, { month: "long", year: "numeric" })} aria-busy={selectedLoading}>
