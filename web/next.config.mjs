@@ -36,7 +36,9 @@ const nextConfig = {
     NEXT_PUBLIC_TRAKT_CLIENT_ID:
       process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID || process.env.TRAKT_CLIENT_ID || "",
     NEXT_PUBLIC_SIMKL_CLIENT_ID:
-      process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID || process.env.SIMKL_CLIENT_ID || ""
+      process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID || process.env.SIMKL_CLIENT_ID || "",
+    NEXT_PUBLIC_SIMKL_V2_CLIENT_ID:
+      process.env.NEXT_PUBLIC_SIMKL_V2_CLIENT_ID || process.env.SIMKL_V2_CLIENT_ID || ""
   },
   images: {
     remotePatterns: [

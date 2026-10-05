@@ -552,11 +552,11 @@
     <string name="settings_badge_full_short">Voll</string>
     <string name="settings_search_lists">Listen suchen</string>
     <string name="settings_paste_url">URL einfügen</string>
-    <string name="settings_ph_trakt_mdblist">Trakt-, MDBList- oder TMDB-URL</string>
+    <string name="settings_ph_trakt_mdblist">Trakt-, MDBList, SIMKL- oder TMDB-URL</string>
     <string name="settings_add_url">URL hinzufügen</string>
     <string name="settings_searching_both_sources">Beide Quellen werden durchsucht</string>
     <string name="settings_lists_found">%1$d Listen gefunden</string>
-    <string name="settings_searches_trakt_mdblist">Durchsucht Trakt und MDBList automatisch</string>
+    <string name="settings_searches_trakt_mdblist">Durchsucht Trakt und MDBList, SIMKL automatisch</string>
     <string name="settings_tap_field_to_edit">Tippe auf ein Feld zum Bearbeiten</string>
     <string name="settings_press_select_to_edit">Auswählen auf einem Feld drücken, um zu bearbeiten</string>
     <string name="settings_searching_lists">Listen werden durchsucht</string>
@@ -1563,7 +1563,7 @@
     <string name="catalog_url_invalid_format">Ungültiges URL-Format</string>
     <string name="catalog_url_invalid_host">Ungültiger Host</string>
     <string name="catalog_url_trakt_hint">Nutze eine Trakt-Listen-URL: trakt.tv/users/{user}/lists/{list}</string>
-    <string name="catalog_url_unsupported">Nur Trakt- und MDBList-URLs werden unterstützt</string>
+    <string name="catalog_url_unsupported">Nur Trakt- und MDBList, SIMKL-URLs werden unterstützt</string>
     <string name="homeserver_enter_url">Gültige Server-URL eingeben</string>
     <string name="homeserver_enter_password">Passwort oder Token eingeben</string>
     <string name="homeserver_enter_username">Benutzernamen eingeben</string>

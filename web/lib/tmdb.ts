@@ -286,6 +286,23 @@ export async function loadCatalog(
     };
   }
 
+  if (catalog.sourceType === "simkl" && catalog.sourceUrl) {
+    const { loadSimklCustomList } = await import("./simklLists");
+    const list = await loadSimklCustomList(catalog.sourceUrl);
+    const refs: Array<{ type: MediaType; id: number }> = [];
+    for (let start = 0; start < list.items.length && refs.length < 60; start += 6) {
+      const batch = await Promise.all(list.items.slice(start, start + 6).map(async item => {
+        const type: MediaType = item.type === "movie" || item.type === "movies" || item.anime_type === "movie" ? "movie" : "tv";
+        const id = await resolveTmdbId({ mediaType: type, tmdbId: Number(item.ids?.tmdb) || null,
+          imdbId: item.ids?.imdb, title: item.title, year: item.year }).catch(() => null);
+        return id ? { type, id } : null;
+      }));
+      refs.push(...batch.filter((ref): ref is { type: MediaType; id: number } => ref !== null));
+    }
+    return { id: catalog.id, title: catalog.name, items: await hydrateRefs(refs, language),
+      sourceLabel: "SIMKL", sourceUrl: catalog.sourceUrl, layout: catalog.layout ?? "landscape" };
+  }
+
   if (catalog.sourceType === "addon") {
     const items = await loadAddonCatalog(catalog, addons, language);
     return {

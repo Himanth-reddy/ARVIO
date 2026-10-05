@@ -615,11 +615,11 @@
     <string name="settings_badge_full_short">Cheio</string>
     <string name="settings_search_lists">Buscar listas</string>
     <string name="settings_paste_url">Colar URL</string>
-    <string name="settings_ph_trakt_mdblist">URL do Trakt, MDBList ou TMDB</string>
+    <string name="settings_ph_trakt_mdblist">URL do Trakt, MDBList, SIMKL ou TMDB</string>
     <string name="settings_add_url">Adicionar URL</string>
     <string name="settings_searching_both_sources">Buscando em ambas as fontes</string>
     <string name="settings_lists_found">%1$d listas encontradas</string>
-    <string name="settings_searches_trakt_mdblist">Busca automaticamente no Trakt e MDBList</string>
+    <string name="settings_searches_trakt_mdblist">Busca automaticamente no Trakt e MDBList, SIMKL</string>
     <string name="settings_tap_field_to_edit">Toque em um campo para editar</string>
     <string name="settings_press_select_to_edit">Pressione Selecionar em um campo para editar</string>
     <string name="settings_searching_lists">Buscando listas</string>

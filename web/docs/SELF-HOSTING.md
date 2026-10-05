@@ -37,7 +37,7 @@ exclude it. Compose injects its values at runtime.
 
 1. **TMDB:** request your own API key in [TMDB API settings](https://www.themoviedb.org/settings/api). Put the **API key (v3 auth)** in `TMDB_API_KEY`. Do not paste the longer read-access bearer token. This supplies built-in catalogs and metadata; it does not supply video.
 2. **Trakt:** register an application under [Trakt API applications](https://trakt.tv/oauth/applications). Configure your public client ID and server-only client secret. ARVIO uses the device-code flow; connect it under Settings > Accounts after building. Follow Trakt's application requirements and usage limits.
-3. **Simkl:** register your application in [Simkl developer settings](https://simkl.com/settings/developer/). Set `SIMKL_CLIENT_ID` and, if using OAuth token exchange, `SIMKL_CLIENT_SECRET`. The in-app PIN connection uses the public client ID.
+3. **SIMKL:** register a new AUTH V2 app in [SIMKL developer settings](https://simkl.com/settings/developer/) using the public mobile/desktop/browser type. Set `SIMKL_V2_CLIENT_ID`; new PIN connections use PKCE and need no client secret. Keep `SIMKL_CLIENT_ID` only for existing V1 connections during migration. Custom-list contents require SIMKL PRO/VIP; ARVIO Premium does not provide that entitlement.
 4. **MDBList:** paste your personal key in the app's Accounts settings, not a public environment variable.
 5. **Telegram:** obtain application credentials at [my.telegram.org](https://my.telegram.org). The browser client embeds the application ID/hash. Never substitute a bot token, account password, one-time code or session string; account authorization happens separately in the app.
 
@@ -53,11 +53,11 @@ without preventing the basic setup.
 ### Build-Time Versus Runtime
 
 - `NEXT_PUBLIC_SELF_HOSTED` is a **build-time** deployment choice. Changing a running container's environment cannot turn the hosted service into an independent installation or vice versa.
-- Independent installations load optional public application configuration from a same-origin `/api/selfhost-config` script before the app starts. **Restart/recreate the server/container** after changing `TRAKT_CLIENT_ID`, `SIMKL_CLIENT_ID`, Telegram application credentials or your resolver URL; no image rebuild is required. The response is marked `private, no-store` and never exports TMDB keys, OAuth secrets, ARVIO Cloud credentials or account sessions. If blocked, optional integrations stay disabled rather than borrowing hosted credentials.
+- Independent installations load optional public application configuration from a same-origin `/api/selfhost-config` script before the app starts. **Restart/recreate the server/container** after changing `TRAKT_CLIENT_ID`, `SIMKL_V2_CLIENT_ID`, the legacy `SIMKL_CLIENT_ID`, Telegram application credentials or your resolver URL; no image rebuild is required. The response is marked `private, no-store` and never exports TMDB keys, OAuth secrets, ARVIO Cloud credentials or account sessions. If blocked, optional integrations stay disabled rather than borrowing hosted credentials.
 - Docker/Unraid supports canonical runtime names `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and `ARVIO_RESOLVER_URL`. Existing `NEXT_PUBLIC_TELEGRAM_API_ID`, `NEXT_PUBLIC_TELEGRAM_API_HASH` and `NEXT_PUBLIC_ARVIO_RESOLVER_URL` aliases still work. Canonical runtime names take precedence. Telegram requires the application ID (positive integer) and the 32-character hexadecimal application hash together.
 - A resolver URL is public application configuration: use HTTPS (or HTTP on `localhost`), without embedded credentials, query parameters or a fragment. Only use your own compatible resolver. This setting does not enable unrestricted relay/transcoding.
 - `TMDB_API_KEY`, `TRAKT_CLIENT_SECRET` and `SIMKL_CLIENT_SECRET` stay server-side. Restart/recreate the server after changing them. Never prefix these with `NEXT_PUBLIC_`.
-- For tracker IDs, either canonical `TRAKT_CLIENT_ID` / `SIMKL_CLIENT_ID` or their public aliases work; prefer the canonical names in the provided template. Docker does not accept credential build arguments.
+- For tracker IDs, either canonical `TRAKT_CLIENT_ID` / `SIMKL_V2_CLIENT_ID` / legacy `SIMKL_CLIENT_ID` or their `NEXT_PUBLIC_` aliases work; prefer the canonical names in the provided template. Docker does not accept credential build arguments.
 - The self-host Docker image always builds in independent mode. Do not use it for the official paid deployment.
 
 Docker's build context is `web/` only and never requires the Android source tree

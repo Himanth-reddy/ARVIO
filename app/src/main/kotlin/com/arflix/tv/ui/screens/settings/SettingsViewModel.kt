@@ -282,6 +282,7 @@ data class SettingsUiState(
     val isSimklConnected: Boolean = false,
     val isSimklAuthStarting: Boolean = false,
     val isSimklPolling: Boolean = false,
+    val isSimklV2Connected: Boolean = false,
     val simklUserCode: String? = null,
     val simklVerificationUrl: String? = null,
     val simklCodeExpiresAtMillis: Long? = null,
@@ -2965,6 +2966,10 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
+    fun refreshSimklListsConnection() {
+        _uiState.value = _uiState.value.copy(isSimklV2Connected = simklAuthManager.isV2Connected())
+    }
+
     fun searchCatalogLists(query: String = _uiState.value.catalogSearchQuery) {
         val normalizedQuery = query.trim()
         catalogSearchJob?.cancel()
@@ -5223,6 +5228,7 @@ class SettingsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isSimklPolling = false,
                             isSimklConnected = true,
+                            isSimklV2Connected = simklAuthManager.isV2Connected(),
                             simklUserCode = null,
                             simklCodeExpiresAtMillis = null,
                             simklVerificationUrl = null,
@@ -5279,6 +5285,7 @@ class SettingsViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isSimklPolling = false,
                         isSimklConnected = true,
+                            isSimklV2Connected = simklAuthManager.isV2Connected(),
                         simklUserCode = null,
                         simklCodeExpiresAtMillis = null,
                         simklVerificationUrl = null,
@@ -5306,6 +5313,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun cancelSimklAuth() {
+        simklAuthManager.cancelPinAuth()
         simklPollingJob?.cancel()
         simklPollingJob = null
         _uiState.value = _uiState.value.copy(

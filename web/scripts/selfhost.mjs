@@ -27,7 +27,7 @@ if (command === "setup") {
   if (env.NEXT_PUBLIC_SELF_HOSTED !== "true") errors.push("Set NEXT_PUBLIC_SELF_HOSTED=true for an independent installation.");
   if (!/^[a-f0-9]{32}$/i.test(env.TMDB_API_KEY ?? "")) errors.push("Add your TMDB API v3 key (32 hexadecimal characters), not the API read-access bearer token.");
   const traktId = env.NEXT_PUBLIC_TRAKT_CLIENT_ID || env.TRAKT_CLIENT_ID;
-  const simklId = env.NEXT_PUBLIC_SIMKL_CLIENT_ID || env.SIMKL_CLIENT_ID;
+  const simklId = env.NEXT_PUBLIC_SIMKL_V2_CLIENT_ID || env.SIMKL_V2_CLIENT_ID;
   if (traktId && !env.TRAKT_CLIENT_SECRET) errors.push("TRAKT_CLIENT_SECRET is required for your Trakt OAuth token exchange/refresh.");
   if (Boolean(env.TELEGRAM_API_ID || env.NEXT_PUBLIC_TELEGRAM_API_ID) !== Boolean(env.TELEGRAM_API_HASH || env.NEXT_PUBLIC_TELEGRAM_API_HASH)) errors.push("Set both Telegram application credentials, or leave both empty.");
   for (const name of ["NEXT_PUBLIC_TMDB_API_KEY", "NEXT_PUBLIC_TRAKT_CLIENT_SECRET", "NEXT_PUBLIC_SIMKL_CLIENT_SECRET"]) {

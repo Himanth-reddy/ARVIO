@@ -1243,9 +1243,9 @@ export async function saveCloudTrackingSelection(
     );
     const incomingSimklAccessToken = selection.simklToken?.access_token;
     const previousSimklAccessToken = previousSelection.simklAccessToken;
-    const writeSimklCredential = changedDomains.has("simkl") || Boolean(
+    const writeSimklCredential = !selection.simklToken?.refresh_token && !incomingSimklAccessToken?.startsWith("simkl_at_") && (changedDomains.has("simkl") || Boolean(
       incomingSimklAccessToken && incomingSimklAccessToken !== previousSimklAccessToken
-    );
+    ));
     const defaultMode: TrackingReadMode = selection.provider === "TRAKT"
         ? "trakt"
         : selection.provider === "SIMKL"

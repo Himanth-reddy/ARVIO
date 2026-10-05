@@ -742,11 +742,11 @@
     <string name="settings_badge_full_short">Full</string>
     <string name="settings_search_lists">Search Lists</string>
     <string name="settings_paste_url">Paste URL</string>
-    <string name="settings_ph_trakt_mdblist">Trakt, MDBList or TMDB URL</string>
+    <string name="settings_ph_trakt_mdblist">Trakt, MDBList, SIMKL or TMDB URL</string>
     <string name="settings_add_url">Add URL</string>
     <string name="settings_searching_both_sources">Searching both sources</string>
     <string name="settings_lists_found">%1$d lists found</string>
-    <string name="settings_searches_trakt_mdblist">Searches Trakt and MDBList automatically</string>
+    <string name="settings_searches_trakt_mdblist">Searches Trakt and MDBList, SIMKL automatically</string>
     <string name="settings_tap_field_to_edit">Tap a field to edit</string>
     <string name="settings_press_select_to_edit">Press Select on a field to edit</string>
     <string name="settings_searching_lists">Searching lists</string>
@@ -1616,7 +1616,7 @@
     <string name="catalog_url_invalid_format">Invalid URL format</string>
     <string name="catalog_url_invalid_host">Invalid host</string>
     <string name="catalog_url_trakt_hint">Use a Trakt list URL: trakt.tv/users/{user}/lists/{list}</string>
-    <string name="catalog_url_unsupported">Only Trakt, MDBList and TMDB URLs are supported</string>
+    <string name="catalog_url_unsupported">Only Trakt, MDBList, SIMKL and TMDB URLs are supported</string>
     <string name="iptv_progress_loading_channels">Loading channels from portal...</string>
     <string name="iptv_progress_loading_full_epg">Loading full EPG (%1$d/%2$d)...</string>
     <string name="iptv_progress_loading_live">Loading live streams...</string>
@@ -1878,5 +1878,10 @@
     <string name="catalog_collections_invalid">This is not a valid collections file (Nuvio collections export JSON expected)</string>
     <string name="catalog_tmdb_title">TMDB catalog</string>
     <string name="catalog_url_tmdb_hint">Use a TMDB list, collection, company, network, person, keyword or genre page URL</string>
+    <string name="catalog_url_simkl_hint">Use a SIMKL custom-list URL, e.g. simkl.com/5/list/14462.</string>
+    <string name="settings_simkl_lists_hint">SIMKL personal, followed and featured official lists. List items require SIMKL PRO/VIP.</string>
+    <string name="settings_simkl_lists_connect">Connect SIMKL</string>
+    <string name="settings_simkl_lists_connected">SIMKL connected</string>
+    <string name="settings_simkl_open">Open SIMKL</string>
 </resources>
 

@@ -2794,12 +2794,16 @@ fun SettingsScreen(
 
 
         if (showCatalogInput) {
+            LaunchedEffect(Unit) { viewModel.refreshSimklListsConnection() }
             CatalogDiscoveryModal(
                 query = uiState.catalogSearchQuery,
                 results = uiState.catalogSearchResults,
                 isSearching = uiState.isCatalogSearching,
                 error = uiState.catalogSearchError?.localizedText(),
                 manualUrl = catalogInputUrl,
+                simklConnected = uiState.isSimklV2Connected,
+                simklConnecting = uiState.isSimklAuthStarting || uiState.isSimklPolling,
+                onConnectSimkl = viewModel::startSimklAuth,
                 addedCatalogUrls = uiState.catalogs.mapNotNull { it.sourceUrl }.toSet(),
                 onQueryChange = viewModel::setCatalogSearchQuery,
                 onSearch = { viewModel.searchCatalogLists() },
@@ -3190,13 +3194,16 @@ fun SettingsScreen(
 
         uiState.simklUserCode?.let { simklCode ->
             val verificationUrl = uiState.simklVerificationUrl ?: "https://simkl.com/pin"
+            val isV2 = verificationUrl.contains("user_code=")
             val isTouch = LocalDeviceType.current.isTouchDevice()
             val clipboardManager = LocalClipboardManager.current
             TraktActivationModal(
                 title = stringResource(R.string.settings_simkl_connect_title),
                 // Not the shared settings_activation_instruction_* lines: both promise the code
                 // travels with the link or QR, which SIMKL's PIN page does not support.
-                instruction = if (isTouch) {
+                instruction = if (isV2) {
+                    stringResource(R.string.settings_activation_visit_instruction, "simkl.com/pin")
+                } else if (isTouch) {
                     stringResource(R.string.settings_simkl_instruction_touch, verificationUrl)
                 } else {
                     stringResource(R.string.settings_activation_visit_instruction, verificationUrl)
@@ -3206,10 +3213,11 @@ fun SettingsScreen(
                 // SIMKL's PIN page (auth v1) ignores a code in the link, so unlike Trakt the
                 // phone button copies the code first and the user pastes it on the page.
                 onOpenUrl = {
-                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(simklCode))
+                    if (!isV2) clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(simklCode))
                     openExternalUrl(context, verificationUrl)
                 },
-                openUrlLabel = stringResource(R.string.settings_simkl_copy_and_open),
+                openUrlLabel = stringResource(if (isV2) R.string.settings_simkl_open else R.string.settings_simkl_copy_and_open),
+                qrData = verificationUrl,
                 showCopyCode = false,
                 expiresAtMillis = uiState.simklCodeExpiresAtMillis,
                 onDismiss = { viewModel.cancelSimklAuth() }
@@ -8847,7 +8855,7 @@ private fun IptvSettings(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun CatalogDiscoveryModal(
+internal fun CatalogDiscoveryModal(
     query: String,
     results: List<CatalogDiscoveryResult>,
     isSearching: Boolean,
@@ -8859,19 +8867,20 @@ private fun CatalogDiscoveryModal(
     onAddResult: (CatalogDiscoveryResult) -> Unit,
     onManualUrlChange: (String) -> Unit,
     onManualAdd: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    simklConnected: Boolean = false,
+    simklConnecting: Boolean = false,
+    onConnectSimkl: () -> Unit = {}
 ) {
     val focusManager = LocalFocusManager.current
     val view = LocalView.current
     var editingInput by remember { mutableStateOf<CatalogDiscoveryInputTarget?>(null) }
-    var optimisticAddedUrls by remember { mutableStateOf(emptySet<String>()) }
     val normalizedAddedCatalogUrls = remember(addedCatalogUrls) {
         addedCatalogUrls.map { normalizeCatalogDiscoveryUrl(it) }.toSet()
     }
     fun addResult(result: CatalogDiscoveryResult) {
         val normalizedUrl = normalizeCatalogDiscoveryUrl(result.sourceUrl)
-        if (normalizedUrl in normalizedAddedCatalogUrls || normalizedUrl in optimisticAddedUrls) return
-        optimisticAddedUrls = optimisticAddedUrls + normalizedUrl
+        if (normalizedUrl in normalizedAddedCatalogUrls) return
         onAddResult(result)
     }
     fun submitSearch() {
@@ -8909,6 +8918,16 @@ private fun CatalogDiscoveryModal(
                     .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(if (isCompact) 12.dp else 18.dp))
                     .padding(if (isCompact) 10.dp else 18.dp)
             ) {
+                Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.settings_simkl_lists_hint), style = ArflixTypography.caption,
+                        color = TextSecondary, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(12.dp))
+                    DiscoveryActionButton(
+                        label = stringResource(if (simklConnected) R.string.settings_simkl_lists_connected else R.string.settings_simkl_lists_connect),
+                        enabled = !simklConnecting,
+                        onClick = onConnectSimkl
+                    )
+                }
                 if (isCompact) {
                     Column(
                         modifier = Modifier
@@ -9100,8 +9119,7 @@ private fun CatalogDiscoveryModal(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 itemsIndexed(results, key = { _, item -> item.id }) { _, item ->
-                                    val isAdded = normalizeCatalogDiscoveryUrl(item.sourceUrl) in normalizedAddedCatalogUrls ||
-                                        normalizeCatalogDiscoveryUrl(item.sourceUrl) in optimisticAddedUrls
+                                    val isAdded = normalizeCatalogDiscoveryUrl(item.sourceUrl) in normalizedAddedCatalogUrls
                                     CatalogDiscoveryResultRow(
                                         result = item,
                                         isAdded = isAdded,
@@ -9688,6 +9706,7 @@ private fun normalizeCatalogDiscoveryUrl(url: String): String {
 private fun sourceLabel(sourceType: CatalogSourceType): String {
     return when (sourceType) {
         CatalogSourceType.TRAKT -> "Trakt"
+        CatalogSourceType.SIMKL -> "SIMKL"
         CatalogSourceType.MDBLIST -> "MDBList"
         CatalogSourceType.TMDB -> "TMDB"
         CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_source_builtin)

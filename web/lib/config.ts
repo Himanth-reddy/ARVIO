@@ -22,6 +22,7 @@ export const config = {
   get traktClientId() { return browserSelfhostRuntimeConfig()?.traktClientId ?? process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID ?? ""; },
   // OAuth secrets belong only on the server, never in the browser bundle.
   traktClientSecret: "",
+  get simklV2ClientId() { return browserSelfhostRuntimeConfig()?.simklV2ClientId ?? (process.env.NEXT_PUBLIC_SIMKL_V2_CLIENT_ID || process.env.SIMKL_V2_CLIENT_ID || (selfHosted ? "" : "ebde0a0712da059710ba65ba3efe1edb601c2e5ae8e23c048c8d6df58ed922c2")); },
   get simklClientId() { return browserSelfhostRuntimeConfig()?.simklClientId ?? (process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID || process.env.SIMKL_CLIENT_ID || ""); },
   allowNetlifyMediaProxy: envValue(process.env.NEXT_PUBLIC_ALLOW_NETLIFY_MEDIA_PROXY, "false") === "true",
   // Web subscription: the Ko-fi membership page the paywall links to, and a
@@ -91,7 +92,7 @@ export function hasTraktConfig() {
 }
 
 export function hasSimklConfig() {
-  return hasNetlifyBackendUrl() || (config.simklClientId.length > 10 && !config.simklClientId.startsWith("__"));
+  return config.simklV2ClientId.length > 10 && !config.simklV2ClientId.startsWith("__");
 }
 
 export function getAuthPortalUrl(): string {

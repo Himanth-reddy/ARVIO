@@ -7,7 +7,7 @@ const { load } = require('./load.cjs');
 
 const env = {
   NEXT_PUBLIC_SELF_HOSTED: 'true',
-  TRAKT_CLIENT_ID: 'own-trakt-public-id', SIMKL_CLIENT_ID: 'own-simkl-public-id',
+  TRAKT_CLIENT_ID: 'own-trakt-public-id', SIMKL_CLIENT_ID: 'own-simkl-public-id', SIMKL_V2_CLIENT_ID: 'own-simkl-v2-public-id',
   TELEGRAM_API_ID: '123456', TELEGRAM_API_HASH: 'a'.repeat(32),
   ARVIO_RESOLVER_URL: 'https://resolver.example/api/',
   TMDB_API_KEY: 'private-tmdb-key', TRAKT_CLIENT_SECRET: 'private-trakt-secret',
@@ -22,7 +22,7 @@ function route(values) {
   }, { process: { env: values } });
 }
 
-test('runtime bootstrap exposes exactly five allowlisted public fields, never server/account secrets', async () => {
+test('runtime bootstrap exposes only allowlisted public fields, never server/account secrets', async () => {
   const response = route(env).GET();
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'application/javascript; charset=utf-8');
@@ -32,7 +32,7 @@ test('runtime bootstrap exposes exactly five allowlisted public fields, never se
   const window = {};
   vm.runInNewContext(text, { window });
   assert.deepEqual(JSON.parse(JSON.stringify(window.__ARVIO_SELFHOST_CONFIG__)), {
-    traktClientId: env.TRAKT_CLIENT_ID, simklClientId: env.SIMKL_CLIENT_ID,
+    traktClientId: env.TRAKT_CLIENT_ID, simklClientId: env.SIMKL_CLIENT_ID, simklV2ClientId: env.SIMKL_V2_CLIENT_ID,
     telegramApiId: env.TELEGRAM_API_ID, telegramApiHash: env.TELEGRAM_API_HASH,
     resolverUrl: 'https://resolver.example/api'
   });
@@ -75,7 +75,7 @@ test('canonical runtime names take precedence; existing public aliases still wor
   const canonical = m.serverSelfhostRuntimeConfig({ ...env, NEXT_PUBLIC_TRAKT_CLIENT_ID: 'stale-built-id' });
   assert.equal(canonical.traktClientId, env.TRAKT_CLIENT_ID);
   const aliases = m.serverSelfhostRuntimeConfig({
-    NEXT_PUBLIC_TRAKT_CLIENT_ID: env.TRAKT_CLIENT_ID, NEXT_PUBLIC_SIMKL_CLIENT_ID: env.SIMKL_CLIENT_ID,
+    NEXT_PUBLIC_TRAKT_CLIENT_ID: env.TRAKT_CLIENT_ID, NEXT_PUBLIC_SIMKL_CLIENT_ID: env.SIMKL_CLIENT_ID, NEXT_PUBLIC_SIMKL_V2_CLIENT_ID: env.SIMKL_V2_CLIENT_ID,
     NEXT_PUBLIC_TELEGRAM_API_ID: env.TELEGRAM_API_ID, NEXT_PUBLIC_TELEGRAM_API_HASH: env.TELEGRAM_API_HASH,
     NEXT_PUBLIC_ARVIO_RESOLVER_URL: env.ARVIO_RESOLVER_URL
   });

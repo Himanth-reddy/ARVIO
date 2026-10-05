@@ -908,7 +908,7 @@ export function AppProvider({
             }
           } else {
             traktClient.setToken(cloudTracking.traktToken);
-            simklClient.setToken(cloudTracking.simklToken);
+            if (!simklClient.token?.refresh_token) simklClient.setToken(cloudTracking.simklToken);
             mdblistClient.setKey(cloudTracking.mdbListApiKey);
             if (cloudTracking.mdbListAccessToken) {
               mdblistClient.setToken({

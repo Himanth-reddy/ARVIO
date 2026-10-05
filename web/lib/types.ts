@@ -130,6 +130,7 @@ export type CatalogSourceType =
   | "tmdb"
   | "mdblist"
   | "trakt"
+  | "simkl"
   | "addon"
   | "home-server"
   | "template";

@@ -39,6 +39,7 @@ import { Component, CSSProperties, useEffect, useRef, useState, type ReactNode }
 import { createPortal } from "react-dom";
 import { defaultCatalogs, mergeCatalogs, updateHiddenCatalogIds } from "@/lib/catalogs";
 import { parseCustomCollections, mergeImportedCollections } from "@/lib/customCollections";
+import { loadSimklCustomList, parseSimklListUrl, searchSimklCustomLists, type SimklCustomList } from "@/lib/simklLists";
 import { textRequest, proxiedUrl } from "@/lib/http";
 import {
   config,
@@ -2243,6 +2244,10 @@ function CatalogsSection() {
   ).filter((catalog) => catalog.sourceType !== "home-server");
   const [homeServerCatalogs, setHomeServerCatalogs] = useState<CatalogConfig[]>([]);
   const [customCatalogUrl, setCustomCatalogUrl] = useState("");
+  const [simklQuery, setSimklQuery] = useState("");
+  const [simklResults, setSimklResults] = useState<SimklCustomList[]>([]);
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  useEffect(() => { setSimklResults([]); setSimklQuery(""); }, [activeProfile?.id]);
   const [collectionsInput, setCollectionsInput] = useState("");
   const [importingCollections, setImportingCollections] = useState(false);
   const catalogs = [...homeServerCatalogs, ...standardCatalogs];
@@ -2287,6 +2292,24 @@ function CatalogsSection() {
     updateCatalogs(next);
   };
 
+  const addSimklCatalog = async (rawUrl: string) => {
+    const simkl = parseSimklListUrl(rawUrl);
+    if (!simkl || catalogBusy) return;
+    const profile = activeProfile?.id;
+    setCatalogBusy(true);
+    try {
+      if (catalogs.some(c => c.sourceType === "simkl" && c.sourceUrl && parseSimklListUrl(c.sourceUrl)?.id === simkl.id)) throw new Error("This catalogue is already added.");
+      const list = await loadSimklCustomList(simkl.url);
+      if (!mounted.current || currentImportTarget.current.profileId !== profile) return;
+      const latest = currentImportTarget.current.catalogs;
+      if (latest.some(c => c.sourceType === "simkl" && c.sourceUrl && parseSimklListUrl(c.sourceUrl)?.id === simkl.id)) throw new Error("This catalogue is already added.");
+      updateCatalogs([{ id: `custom_${crypto.randomUUID()}`, name: list.name, sourceType: "simkl", sourceUrl: simkl.url,
+        sourceRef: `simkl_list:${simkl.id}`, mediaType: list.media_type === "movies" ? "movie" : "tv", enabled: true }, ...latest]);
+      setCustomCatalogUrl("");
+    } catch (error) { if (mounted.current && currentImportTarget.current.profileId === profile) setToast((error as Error).message); }
+    finally { if (mounted.current) setCatalogBusy(false); }
+  };
+
   return (
     <Panel title={translateUi("Catalogs (Home Rows)")}>
       <div className="inline-form">
@@ -2324,14 +2347,21 @@ function CatalogsSection() {
         <input
           value={customCatalogUrl}
           onChange={(e) => setCustomCatalogUrl(e.target.value)}
-          placeholder={translateUi("https://mdblist.com/lists/user/list")}
+          placeholder="Trakt / MDBList / SIMKL list URL"
         />
         <button
           type="button"
           className="primary"
-          onClick={() => {
+          disabled={catalogBusy}
+          onClick={async () => {
+            if (catalogBusy) return;
             if (!customCatalogUrl.trim()) {
               setToast("Enter a catalog URL first.");
+              return;
+            }
+            const simkl = parseSimklListUrl(customCatalogUrl);
+            if (simkl) {
+              await addSimklCatalog(simkl.url);
               return;
             }
             updateCatalogs([
@@ -2356,6 +2386,24 @@ function CatalogsSection() {
         >
           <RotateCcw size={18} /> {translateUi(" Reset")}</button>
       </div>
+      <p className="muted">SIMKL custom-list contents require SIMKL PRO or VIP. Search personal, followed, shared and featured official lists below, or paste any accessible list URL.</p>
+      <div className="inline-form">
+        <input value={simklQuery} onChange={event => setSimklQuery(event.target.value)} placeholder="Search SIMKL lists" />
+        <button type="button" className="secondary" disabled={catalogBusy || simklQuery.trim().length < 2} onClick={async () => {
+          const profile = activeProfile?.id;
+          setCatalogBusy(true);
+          try {
+            const results = await searchSimklCustomLists(simklQuery);
+            if (mounted.current && currentImportTarget.current.profileId === profile) setSimklResults(results);
+          } catch (error) { if (mounted.current && currentImportTarget.current.profileId === profile) setToast((error as Error).message); }
+          finally { if (mounted.current) setCatalogBusy(false); }
+        }}>{translateUi("Search")}</button>
+      </div>
+      {simklResults.length > 0 && <div className="settings-list">{simklResults.map(list => <div className="settings-list-row" key={list.id}>
+        <span>{list.name} · SIMKL · {list.counts?.items ?? "—"}</span>
+        <button type="button" className="secondary" disabled={catalogBusy || catalogs.some(c => c.sourceRef === `simkl_list:${list.id}`)}
+          onClick={() => void addSimklCatalog(list.user?.id ? `https://simkl.com/${list.user.id}/list/${list.id}` : `https://simkl.com/lists/${list.id}`)}>{translateUi("Add")}</button>
+      </div>)}</div>}
       <div className="settings-list">
         {catalogs.map((catalog, index) => (
           <div

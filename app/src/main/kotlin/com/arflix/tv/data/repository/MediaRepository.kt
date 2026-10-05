@@ -110,7 +110,8 @@ class MediaRepository @Inject constructor(
     private val traktApi: TraktApi,
     private val okHttpClient: OkHttpClient,
     private val streamRepository: StreamRepository,
-    private val homeServerRepository: HomeServerRepository
+    private val homeServerRepository: HomeServerRepository,
+    private val simklListsRepository: com.arflix.tv.data.repository.simkl.SimklListsRepository? = null
 ) {
 
     data class CategoryPageResult(
@@ -980,6 +981,7 @@ class MediaRepository @Inject constructor(
         }
         val mediaRefs = when (catalog.sourceType) {
             CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
+            CatalogSourceType.SIMKL -> loadSimklCatalogRefs(catalog, effectiveMaxItems)
             CatalogSourceType.MDBLIST -> loadMdblistCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
             CatalogSourceType.TMDB -> loadTmdbCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
             CatalogSourceType.ADDON -> loadAddonCatalogRefsPage(catalog, offset = 0, limit = effectiveMaxItems).refs
@@ -1033,6 +1035,7 @@ class MediaRepository @Inject constructor(
         } else {
             val mediaRefs = when (catalog.sourceType) {
                 CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
+                CatalogSourceType.SIMKL -> loadSimklCatalogRefs(catalog, offset + effectiveLimit + 1)
                 CatalogSourceType.MDBLIST -> loadMdblistCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
                 CatalogSourceType.TMDB -> loadTmdbCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
                 CatalogSourceType.ADDON -> emptyList()
@@ -3238,6 +3241,33 @@ class MediaRepository @Inject constructor(
         val mediaType = parts.getOrNull(3)?.takeIf { it.isNotBlank() }?.lowercase(Locale.US)
         if (mediaType != null && mediaType !in setOf("movie", "tv")) return null
         return ParsedCatalogUrl.Tmdb(kind = kind, id = id, mediaType = mediaType, slug = null)
+    }
+
+    private suspend fun loadSimklCatalogRefs(catalog: CatalogConfig, limit: Int): List<Pair<MediaType, Int>> = coroutineScope {
+        val id = catalog.sourceRef?.removePrefix("simkl_list:")?.toLongOrNull()
+            ?: catalog.sourceUrl?.let { CatalogUrlParser.parseSimkl(it)?.id } ?: return@coroutineScope emptyList()
+        val list = simklListsRepository?.load(id) ?: return@coroutineScope emptyList()
+        val semaphore = Semaphore(6)
+        val refs = LinkedHashSet<Pair<MediaType, Int>>()
+        for (batch in list.items.chunked(6)) {
+            val resolved = batch.map { item -> async {
+                semaphore.withPermit {
+                    try {
+                        val type = if (item.type in setOf("movie", "movies") || item.animeType == "movie") MediaType.MOVIE else MediaType.TV
+                        item.tmdb?.takeIf { it > 0 }?.let { type to it }
+                            ?: item.imdb?.let { resolveImdbToTmdbRef(it, type) }
+                            ?: item.tvdb?.let { tvdb ->
+                                tmdbApi.findByExternalId(tvdb.toString(), apiKey, "tvdb_id").tvResults.firstOrNull()?.id?.let { MediaType.TV to it }
+                            }
+                            ?: resolveTitleToTmdbRef(item.title, type)
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { null }
+                }
+            } }.awaitAll().filterNotNull()
+            refs += resolved
+            if (refs.size >= limit) break
+        }
+        refs.toList()
     }
 
     private suspend fun loadTraktCatalogRefs(sourceUrl: String?, sourceRef: String? = null): List<Pair<MediaType, Int>> {

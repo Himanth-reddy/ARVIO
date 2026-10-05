@@ -69,7 +69,7 @@ class SimklSyncService @Inject constructor(
         val playback: List<com.arflix.tv.data.api.SimklPlaybackItem>?
     )
 
-    private val clientId: String get() = Constants.SIMKL_CLIENT_ID
+    private val clientId: String get() = authManager.effectiveClientId
     private val gson = Gson()
 
     private val snapshotCacheFile: File?
@@ -180,7 +180,7 @@ class SimklSyncService @Inject constructor(
             return@withLock false
         }
         val tokenScope = MessageDigest.getInstance("SHA-256")
-            .digest(token.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            .digest((if (token.startsWith("simkl_at_")) authManager.cacheIdentity(token) else token).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
         if (activeTokenScope != tokenScope) {
             clearCachedState(deletePersisted = activeTokenScope != null)
             activeTokenScope = tokenScope
@@ -657,7 +657,7 @@ class SimklSyncService @Inject constructor(
         key: Pair<MediaType, Int>,
         item: MediaItem
     ) {
-        val normalized = status?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return
+        val normalized = status?.trim()?.lowercase()?.takeIf { it.isNotBlank() }?.let { if (it == "notinteresting") "dropped" else it } ?: return
         cachedLibraryItems.getOrPut(normalized) { linkedMapOf() }[key] = item
     }
 

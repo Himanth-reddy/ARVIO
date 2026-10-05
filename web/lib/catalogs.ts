@@ -42,6 +42,7 @@ function normalizedSourceType(value: unknown): CatalogConfig["sourceType"] {
   const raw = String(value ?? "").trim().toLowerCase().replace(/_/g, "-");
   if (raw === "preinstalled") return "preinstalled";
   if (raw === "trakt") return "trakt";
+  if (raw === "simkl") return "simkl";
   if (raw === "mdblist" || raw === "mdb-list") return "mdblist";
   if (raw === "addon") return "addon";
   if (raw === "home-server" || raw === "homeserver") return "home-server";

@@ -18,7 +18,7 @@ const ownEnv = {
   ...hostedEnv, NEXT_PUBLIC_SELF_HOSTED: 'true',
   TMDB_API_KEY: 'b'.repeat(32), TRAKT_CLIENT_ID: 'own-trakt-public-id',
   TRAKT_CLIENT_SECRET: 'trakt-private-secret', SIMKL_CLIENT_ID: 'own-simkl-public-id',
-  SIMKL_CLIENT_SECRET: 'simkl-private-secret', NEXT_PUBLIC_SIMKL_CLIENT_ID: '',
+  SIMKL_CLIENT_SECRET: 'simkl-private-secret', NEXT_PUBLIC_SIMKL_CLIENT_ID: '', SIMKL_V2_CLIENT_ID: 'own-v2-public-client-id',
 };
 function configuration(env) { return load('lib/config.ts', {}, { process: { env } }); }
 function route(provider, env, fetch) {

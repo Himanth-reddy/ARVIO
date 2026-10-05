@@ -4,6 +4,7 @@
 export interface SelfhostRuntimeConfig {
   traktClientId: string;
   simklClientId: string;
+  simklV2ClientId: string;
   telegramApiId: string;
   telegramApiHash: string;
   resolverUrl: string;
@@ -39,6 +40,7 @@ export function normalizeSelfhostRuntimeConfig(value: Partial<SelfhostRuntimeCon
   return {
     traktClientId: publicId(value.traktClientId),
     simklClientId: publicId(value.simklClientId),
+    simklV2ClientId: publicId(value.simklV2ClientId),
     telegramApiId: id && hash ? id : "",
     telegramApiHash: id && hash ? hash : "",
     resolverUrl: publicResolver(value.resolverUrl)
@@ -59,6 +61,7 @@ export function serverSelfhostRuntimeConfig(env: Record<string, string | undefin
   return normalizeSelfhostRuntimeConfig({
     traktClientId: env.TRAKT_CLIENT_ID || env.NEXT_PUBLIC_TRAKT_CLIENT_ID || "",
     simklClientId: env.SIMKL_CLIENT_ID || env.NEXT_PUBLIC_SIMKL_CLIENT_ID || "",
+    simklV2ClientId: env.SIMKL_V2_CLIENT_ID || env.NEXT_PUBLIC_SIMKL_V2_CLIENT_ID || "",
     telegramApiId: env.TELEGRAM_API_ID || env.NEXT_PUBLIC_TELEGRAM_API_ID || "",
     telegramApiHash: env.TELEGRAM_API_HASH || env.NEXT_PUBLIC_TELEGRAM_API_HASH || "",
     resolverUrl: env.ARVIO_RESOLVER_URL || env.NEXT_PUBLIC_ARVIO_RESOLVER_URL || ""
