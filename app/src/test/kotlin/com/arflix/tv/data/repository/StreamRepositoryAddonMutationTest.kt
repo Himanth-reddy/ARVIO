@@ -79,9 +79,11 @@ class StreamRepositoryAddonMutationTest {
             stringPreferencesKey("profile_${firstArg<String>()}_${secondArg<String>()}")
         }
         api = mockk(relaxed = true)
+        val httpRuntime = mockk<HttpLocalScraperRuntime>(relaxed = true)
+        coEvery { httpRuntime.fetchInstallCandidate(any(), any()) } returns null
         repository = StreamRepository(
             RuntimeEnvironment.getApplication(), api, mockk(relaxed = true), profiles,
-            mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            mockk(relaxed = true), mockk(relaxed = true), httpRuntime, mockk(relaxed = true),
             CloudSyncInvalidationBus(), mockk(relaxed = true), mockk(relaxed = true)
         )
     }
