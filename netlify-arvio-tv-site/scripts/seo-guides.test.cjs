@@ -12,7 +12,10 @@ const routes = [
   { route: '/jellyfin-android-tv/', pt: '/pt-br/jellyfin-android-tv/', es: '/es/jellyfin-android-tv/', updated: '2026-10-05' },
   { route: '/plex-emby-jellyfin/', pt: '/pt-br/plex-emby-jellyfin/', es: '/es/plex-emby-jellyfin/', updated: '2026-10-05' },
   { route: '/debrid-usenet-android-tv/', pt: '/pt-br/debrid-usenet-android-tv/', es: '/es/debrid-usenet-android-tv/', updated: '2026-10-05' },
-  { route: '/stremio-addons-android-tv/', updated: '2026-10-05' }
+  { route: '/stremio-addons-android-tv/', updated: '2026-10-05' },
+  { route: '/live-tv-epg/', pt: '/pt-br/tv-ao-vivo-epg/', es: '/es/tv-en-vivo-epg/', updated: '2026-10-05' },
+  { route: '/trakt-simkl-sync/', pt: '/pt-br/sincronizacao-trakt-simkl/', es: '/es/sincronizacion-trakt-simkl/', updated: '2026-10-05' },
+  { route: '/ai-subtitles-android-tv/', pt: '/pt-br/legendas-ia-android-tv/', es: '/es/subtitulos-ia-android-tv/', updated: '2026-10-05' }
 ];
 const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', copy: '©', hellip: '…' };
 
