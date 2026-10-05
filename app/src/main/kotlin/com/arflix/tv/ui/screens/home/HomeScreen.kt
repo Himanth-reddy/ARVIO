@@ -1036,6 +1036,7 @@ fun HomeScreen(
 
     // ── IPTV + service-collection hero player state ──
     val isHeroIptv = displayHeroItem != null && viewModel.isIptvItem(displayHeroItem)
+    val iptvChannelsVersion by viewModel.iptvChannelsVersion.collectAsStateWithLifecycle()
     val isHeroCollection = displayHeroItem != null && viewModel.isCollectionItem(displayHeroItem)
     // Track service-collection "played once" — after the video ends we stop
     // re-spawning the player until the user focuses a *different* service.
@@ -1053,8 +1054,15 @@ fun HomeScreen(
         // Keep the idle gate for heavier IPTV/live playback, but do not delay MP4 previews.
         serviceHeroVideoUrl != null -> serviceHeroVideoUrl
         suppressHeroVideoPlayback -> null
-        isHeroIptv -> displayHeroItem?.let { viewModel.getIptvStreamUrl(it.id) }
+        // Reading the version re-evaluates this once resolveIptvChannels() finds the channel.
+        isHeroIptv -> displayHeroItem?.takeIf { iptvChannelsVersion >= 0 }?.let { viewModel.getIptvStreamUrl(it.id) }
         else -> null
+    }
+    // A focused channel card whose channel isn't known yet: look it up now rather than
+    // waiting for the home load to rebuild its row.
+    LaunchedEffect(displayHeroItem?.id, isHeroIptv) {
+        val item = displayHeroItem?.takeIf { isHeroIptv } ?: return@LaunchedEffect
+        if (viewModel.getIptvStreamUrl(item.id) == null) viewModel.resolveIptvChannels(listOf(item))
     }
 
     var heroPlaybackHandles by remember { mutableStateOf<HomeHeroPlaybackHandles?>(null) }
