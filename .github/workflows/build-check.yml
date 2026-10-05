@@ -42,6 +42,7 @@ jobs:
         run: |
           node ../netlify-arvio-tv-site/scripts/validate-localized-guides.mjs
           node --test ../netlify-arvio-tv-site/scripts/seo-guides.test.cjs
+          node --test ../netlify-arvio-tv-site/scripts/premium-membership.test.cjs
       - name: Check web types
         if: matrix.directory == 'web'
         run: npx tsc --noEmit
