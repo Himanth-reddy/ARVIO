@@ -1853,6 +1853,8 @@ class PlayerViewModel @Inject constructor(
     private data class ExternalIds(val imdbId: String?, val tvdbId: Int?)
 
     private suspend fun resolveExternalIds(mediaType: MediaType, mediaId: Int): ExternalIds {
+        // A native addon item's own id stands in for the IMDb id: streams are requested by it.
+        if (mediaId < 0) return ExternalIds(mediaRepository.getCachedImdbId(mediaType, mediaId), null)
         return try {
             val ids = when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieExternalIds(mediaId, Constants.TMDB_API_KEY)
@@ -7665,6 +7667,8 @@ class PlayerViewModel @Inject constructor(
             isUpNext = true,
             episodeAirDate = next.airDate.orEmpty(),
             emitUpdate = aired,
+            addonNativeId = mediaRepository.getCachedItem(MediaType.TV, currentMediaId)?.addonNativeId,
+            addonNativeAddonId = mediaRepository.getCachedItem(MediaType.TV, currentMediaId)?.addonNativeAddonId,
         )
     }
 
@@ -7704,7 +7708,8 @@ class PlayerViewModel @Inject constructor(
                 streamAddonId = streamAddonIdForCheck,
                 title = currentTitle,
                 isLiveStream = currentIsLiveStreamPlayback,
-                addons = currentInstalledAddons
+                addons = currentInstalledAddons,
+                isAddonNative = mediaRepository.isAddonNative(currentMediaId)
             )
 
             // Scrobble start/pause/updates with debounce
@@ -7834,7 +7839,9 @@ class PlayerViewModel @Inject constructor(
                         durationSeconds = durationSeconds,
                         streamKey = streamKey,
                         streamAddonId = streamAddonId,
-                        streamTitle = streamTitle
+                        streamTitle = streamTitle,
+                        addonNativeId = mediaRepository.getCachedItem(currentMediaType, currentMediaId)?.addonNativeId,
+                        addonNativeAddonId = mediaRepository.getCachedItem(currentMediaType, currentMediaId)?.addonNativeAddonId
                     )
 
                     // Push local CW to cloud so other devices see mid-playback progress.

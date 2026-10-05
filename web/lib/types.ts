@@ -245,6 +245,8 @@ export interface StreamSource {
   originalUrl?: string | null;
   // Set when this source should play through the in-browser MKV remux path.
   remux?: boolean;
+  // Preserve an explicit audio choice while preparing/remounting this source.
+  remuxAudioIndex?: number;
 }
 
 export interface InstalledAddon {
@@ -507,6 +509,7 @@ export interface AppSettings {
   // Catalogs / addons
   catalogs: CatalogConfig[];
   hiddenCatalogIds: string[];
+  hiddenAddonCatalogIds: string[];
   hiddenHomeServerCatalogIds: string[];
   disabledAddonIds: string[];
   // Home servers

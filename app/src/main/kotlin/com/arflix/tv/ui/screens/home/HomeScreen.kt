@@ -514,7 +514,7 @@ private fun preferredHomeStartRowIndex(categories: List<Category>): Int {
 }
 
 private fun isActionableHomeItem(item: MediaItem?): Boolean {
-    return item != null && item.id > 0 && !item.isPlaceholder
+    return item != null && item.hasOpenableId && !item.isPlaceholder
 }
 
 @androidx.compose.runtime.Immutable
@@ -535,9 +535,12 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
         .build()
     val heroDataSourceFactory =
         OkHttpDataSource.Factory(heroOkHttp).setUserAgent(OkHttpProvider.getAppUserAgent(context))
+    // The hero previews favorite IPTV channels, so it needs the same non-IDR keyframe
+    // extractors as the TV screens or those channels stall on the home screen.
     val heroHlsFactory = HlsMediaSource.Factory(heroDataSourceFactory)
         .setAllowChunklessPreparation(true)
-    val heroDefaultFactory = DefaultMediaSourceFactory(context)
+        .setExtractorFactory(com.arflix.tv.ui.screens.tv.live.iptvHlsExtractorFactory())
+    val heroDefaultFactory = DefaultMediaSourceFactory(context, com.arflix.tv.ui.screens.tv.live.iptvExtractorsFactory())
         .setDataSourceFactory(heroDataSourceFactory)
     val loadControl = DefaultLoadControl.Builder()
         .setBufferDurationsMs(2_000, 8_000, 750, 1_500)
@@ -1033,6 +1036,7 @@ fun HomeScreen(
 
     // ── IPTV + service-collection hero player state ──
     val isHeroIptv = displayHeroItem != null && viewModel.isIptvItem(displayHeroItem)
+    val iptvChannelsVersion by viewModel.iptvChannelsVersion.collectAsStateWithLifecycle()
     val isHeroCollection = displayHeroItem != null && viewModel.isCollectionItem(displayHeroItem)
     // Track service-collection "played once" — after the video ends we stop
     // re-spawning the player until the user focuses a *different* service.
@@ -1050,8 +1054,15 @@ fun HomeScreen(
         // Keep the idle gate for heavier IPTV/live playback, but do not delay MP4 previews.
         serviceHeroVideoUrl != null -> serviceHeroVideoUrl
         suppressHeroVideoPlayback -> null
-        isHeroIptv -> displayHeroItem?.let { viewModel.getIptvStreamUrl(it.id) }
+        // Reading the version re-evaluates this once resolveIptvChannels() finds the channel.
+        isHeroIptv -> displayHeroItem?.takeIf { iptvChannelsVersion >= 0 }?.let { viewModel.getIptvStreamUrl(it.id) }
         else -> null
+    }
+    // A focused channel card whose channel isn't known yet: look it up now rather than
+    // waiting for the home load to rebuild its row.
+    LaunchedEffect(displayHeroItem?.id, isHeroIptv) {
+        val item = displayHeroItem?.takeIf { isHeroIptv } ?: return@LaunchedEffect
+        if (viewModel.getIptvStreamUrl(item.id) == null) viewModel.resolveIptvChannels(listOf(item))
     }
 
     var heroPlaybackHandles by remember { mutableStateOf<HomeHeroPlaybackHandles?>(null) }

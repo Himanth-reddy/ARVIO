@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import com.arflix.tv.network.OkHttpProvider
+import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -745,7 +746,7 @@ class CatalogRepository @Inject constructor(
             return Result.failure(CatalogException(R.string.catalog_pack_invalid_url_scheme))
         }
 
-        val json = fetchUrl(trimmed)
+        val json = fetchUrl(trimmed, fresh = true)
             ?: return Result.failure(CatalogException(R.string.catalog_pack_fetch_failed))
         val manifest = try {
             val type = object : com.google.gson.reflect.TypeToken<CatalogPackManifest>() {}.type
@@ -847,7 +848,7 @@ class CatalogRepository @Inject constructor(
         val json = if (isRawJson) {
             trimmed
         } else {
-            fetchUrl(url ?: return null) ?: return if (url.endsWith(".json", ignoreCase = true)) {
+            fetchUrl(url ?: return null, fresh = true) ?: return if (url.endsWith(".json", ignoreCase = true)) {
                 Result.failure(CatalogException(R.string.catalog_pack_fetch_failed))
             } else {
                 null
@@ -1263,12 +1264,17 @@ class CatalogRepository @Inject constructor(
         return CatalogRepoRegexes.TRAKT_URL_REGEX.find(html)?.value
     }
 
-    private suspend fun fetchUrl(url: String): String? {
+    /**
+     * [fresh] skips the HTTP cache for user-initiated imports: re-importing an edited pack must
+     * not get the copy cached by the previous import.
+     */
+    private suspend fun fetchUrl(url: String, fresh: Boolean = false): String? {
         return withContext(Dispatchers.IO) {
             try {
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
+                    .apply { if (fresh) cacheControl(CacheControl.FORCE_NETWORK) }
                     .build()
                 okHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use null

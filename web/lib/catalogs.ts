@@ -77,8 +77,10 @@ function isLegacyServiceCatalog(catalog: CatalogConfig) {
   return catalog.sourceType === "mdblist" && ["netflix", "disney", "prime", "hbo", "apple_tv", "hulu", "paramount"].includes(catalog.id);
 }
 
-export function mergeCatalogs(saved: CatalogConfig[] | undefined, hiddenIds: string[] = []) {
-  const cleaned = (saved ?? [])
+export function mergeCatalogs(saved: CatalogConfig[] | undefined, hiddenIds: string[] = [], hiddenAddonIds: string[] = []) {
+  // A saved empty list is intentional, just as it is on Android. Only a new
+  // installation without a saved list should receive the defaults.
+  const cleaned = (saved ?? defaultCatalogs)
     .filter(isValidCatalog)
     .map(normalizedCatalog)
     .filter((catalog) => catalog.id !== "favorite_tv")
@@ -88,24 +90,34 @@ export function mergeCatalogs(saved: CatalogConfig[] | undefined, hiddenIds: str
       !catalog.sourceUrl?.trim() && !catalog.sourceRef?.trim() && !catalog.addonId?.trim()
     ))
     .filter((catalog) => !isLegacyServiceCatalog(catalog));
-  if (cleaned.length) {
-    const hiddenRails = new Set(cleaned.filter(c => String(c.kind).toUpperCase() === "COLLECTION_RAIL" && !c.collectionRailKey &&
-      (hiddenIds.includes(c.id) || c.enabled === false)).map(c => String(c.collectionGroup).toUpperCase()));
-    return cleaned.map((catalog) => ({
-      ...catalog,
-      enabled: !hiddenIds.includes(catalog.id) && catalog.enabled !== false &&
-        !(String(catalog.kind).toUpperCase() === "COLLECTION" && !catalog.collectionRailKey &&
-          (hiddenRails.has(String(catalog.collectionGroup).toUpperCase()) ||
-            hiddenIds.includes(`collection_row_${String(catalog.collectionGroup).toLowerCase()}`)))
-    }));
-  }
-  const savedById = new Map(cleaned.map((catalog) => [catalog.id, catalog]));
-  const merged = defaultCatalogs.map((catalog) => ({
+  const hidden = new Set(hiddenIds);
+  const hiddenAddons = new Set(hiddenAddonIds);
+  const seen = new Set<string>();
+  return cleaned.filter(catalog => {
+    if (seen.has(catalog.id)) return false;
+    seen.add(catalog.id);
+    return true;
+  }).map(catalog => ({
     ...catalog,
-    ...savedById.get(catalog.id),
-    enabled: !hiddenIds.includes(catalog.id) && (savedById.get(catalog.id)?.enabled ?? catalog.enabled)
+    enabled: catalog.enabled !== false && !hidden.has(catalog.id) &&
+      !(catalog.sourceType === "addon" && hiddenAddons.has(catalog.id)) &&
+      !(String(catalog.kind).toUpperCase() === "COLLECTION_RAIL" &&
+        hidden.has(`collection_row_${String(catalog.collectionRailKey || catalog.collectionGroup).toLowerCase()}`))
   }));
-  const defaultIds = new Set(defaultCatalogs.map((catalog) => catalog.id));
-  const custom = cleaned.filter((catalog) => !defaultIds.has(catalog.id));
-  return [...merged, ...custom];
+}
+
+export function updateHiddenCatalogIds(catalogs: CatalogConfig[], hiddenIds: string[] = []) {
+  const present = new Set(catalogs.map(catalog => catalog.id));
+  for (const catalog of catalogs) {
+    const key = catalog.collectionRailKey || catalog.collectionGroup;
+    if (key && String(catalog.kind).toUpperCase() === "COLLECTION_RAIL") {
+      present.add(`collection_row_${key.toLowerCase()}`);
+    }
+  }
+  // Keep tombstones for deleted/unavailable catalogs so discovery on another
+  // device cannot restore them after an unrelated reorder or rename.
+  return [...new Set([
+    ...hiddenIds.filter(id => !present.has(id)),
+    ...catalogs.filter(catalog => !catalog.enabled).map(catalog => catalog.id)
+  ])];
 }

@@ -207,7 +207,23 @@ data class StremioMetaPreview(
     val year: String? = null,
     @SerializedName("imdb_id") val imdbId: String? = null,
     @SerializedName("tmdb_id") val tmdbId: String? = null,
-    @SerializedName("moviedb_id") val moviedbId: String? = null
+    @SerializedName("moviedb_id") val moviedbId: String? = null,
+    // Only the full /meta response carries these.
+    val videos: List<StremioMetaVideo>? = null,
+    val posterShape: String? = null
+)
+
+/** A series episode in an addon's /meta response. */
+data class StremioMetaVideo(
+    val id: String? = null,
+    val title: String? = null,
+    val name: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val released: String? = null,
+    val thumbnail: String? = null,
+    val overview: String? = null,
+    val description: String? = null
 )
 
 data class StremioMetaResponse(

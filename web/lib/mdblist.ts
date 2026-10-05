@@ -139,9 +139,9 @@ export class MdbListClient {
 
   // ===== Reads (Trakt-compatible shapes) =====
 
-  async watchlist(): Promise<unknown[]> {
+  async watchlist(options: { throwOnError?: boolean } = {}): Promise<unknown[]> {
     if (!this.isConnected) return [];
-    const rows = await this.request<MdbWatchlistRow[]>("watchlist/items?unified=true&limit=1000", {}).catch(() => []);
+    const rows = await this.request<MdbWatchlistRow[]>("watchlist/items?unified=true&limit=1000", {}).catch((error) => { if (options.throwOnError) throw error; return []; });
     return (rows ?? []).map((row) => {
       const isShow = row.mediatype === "show";
       const media = { title: row.title, year: row.release_year, ids: { tmdb: row.ids?.tmdb ?? row.id } };

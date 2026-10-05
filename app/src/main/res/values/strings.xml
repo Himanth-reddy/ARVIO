@@ -105,6 +105,8 @@
     <string name="confirm">Confirm</string>
     <string name="retry">Retry</string>
     <string name="search_discover_load_failed">Could not load titles</string>
+    <string name="partner_link_loading">Opening title details…</string>
+    <string name="partner_link_failed">Could not find or load this title. Try again or open another link.</string>
     <string name="search_discover_load_more">Load more</string>
     <string name="delete">Delete</string>
     <string name="add">Add</string>

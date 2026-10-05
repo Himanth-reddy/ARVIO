@@ -123,6 +123,8 @@ class MediaRepository @Inject constructor(
     private val apiKey = Constants.TMDB_API_KEY
     private val gson = Gson()
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Lazy so constructing the repository (tests do, with mocks) doesn't touch disk.
+    private val addonNative by lazy { AddonNativeCatalog(context, streamRepository, gson) }
 
     /** TMDB content language (e.g. "en-US", "fr-FR", "nl-NL"). */
     @Volatile
@@ -398,7 +400,7 @@ class MediaRepository @Inject constructor(
     }
 
     fun getCachedItem(mediaType: MediaType, mediaId: Int): MediaItem? {
-        return cachedMediaEntry(mediaType, mediaId)?.item
+        return cachedMediaEntry(mediaType, mediaId)?.item ?: addonNative.card(mediaType, mediaId)
     }
 
     private fun cachedMediaEntry(mediaType: MediaType, mediaId: Int): MediaCacheEntry? =
@@ -467,10 +469,25 @@ class MediaRepository @Inject constructor(
 
     fun getCachedImdbId(mediaType: MediaType, mediaId: Int): String? {
         val cacheKey = detailsCacheKey(mediaType, mediaId)
-        return imdbIdCache[cacheKey]
+        // A native addon item has no IMDb id; its addon's own id takes that place, which
+        // routes stream requests (details, player, next episode) back to that addon.
+        return imdbIdCache[cacheKey] ?: if (mediaId < 0) addonNative.streamId(mediaId) else null
+    }
+
+    /** True for a native addon item (see [AddonNativeCatalog]). */
+    fun isAddonNative(mediaId: Int): Boolean = mediaId < 0 && addonNative.isNative(mediaId)
+
+    // Catalog rows show native items as registered cards: loading full addon metadata per
+    // card would cost one request per item, and the details screen loads it anyway.
+    private suspend fun catalogItemFor(type: MediaType, mediaId: Int): MediaItem? = when {
+        mediaId < 0 -> addonNative.card(type, mediaId)
+        type == MediaType.MOVIE -> getMovieDetails(mediaId)
+        else -> getTvDetails(mediaId)
     }
 
     suspend fun getImdbRating(mediaType: MediaType, mediaId: Int, imdbId: String? = null): String? {
+        // No IMDb rating exists under a negative stand-in id (native addon / home-server items).
+        if (mediaId <= 0 && imdbId?.startsWith("tt", ignoreCase = true) != true) return null
         val cacheKey = detailsCacheKey(mediaType, mediaId)
         getFromCache(imdbRatingCache, cacheKey)?.let { return it }
 
@@ -705,6 +722,7 @@ class MediaRepository @Inject constructor(
     }
 
     fun cacheItem(item: MediaItem) {
+        if (item.isAddonNative) addonNative.restore(item)
         val cacheKey = detailsCacheKey(item.mediaType, item.id)
         val now = System.currentTimeMillis()
         detailsCache.compute(cacheKey) { _, existing ->
@@ -974,12 +992,7 @@ class MediaRepository @Inject constructor(
         val jobs = mediaRefs.distinct().take(effectiveMaxItems).map { (type, tmdbId) ->
             async {
                 semaphore.withPermit {
-                    runCatching {
-                        when (type) {
-                            MediaType.MOVIE -> getMovieDetails(tmdbId)
-                            MediaType.TV -> getTvDetails(tmdbId)
-                        }
-                    }.getOrNull()
+                    runCatching { catalogItemFor(type, tmdbId) }.getOrNull()
                 }
             }
         }
@@ -1041,12 +1054,7 @@ class MediaRepository @Inject constructor(
         val jobs = pageRefs.map { (type, tmdbId) ->
             async {
                 semaphore.withPermit {
-                    runCatching {
-                        when (type) {
-                            MediaType.MOVIE -> getMovieDetails(tmdbId)
-                            MediaType.TV -> getTvDetails(tmdbId)
-                        }
-                    }.getOrNull()
+                    runCatching { catalogItemFor(type, tmdbId) }.getOrNull()
                 }
             }
         }
@@ -1267,7 +1275,9 @@ class MediaRepository @Inject constructor(
             }
         }
         pageRefs.forEach { (type, tmdbId) ->
+            // Native addon items have no TMDB record to fall back on; their card is registered.
             val cachedItem = getCachedItem(type, tmdbId)
+                ?: if (tmdbId < 0) addonNative.card(type, tmdbId) else null
             if (cachedItem != null) {
                 itemsByRef[type to tmdbId] = cachedItem
                 finishedRefs += type to tmdbId
@@ -1924,7 +1934,33 @@ class MediaRepository @Inject constructor(
         val seenTitle = HashSet<String>()
         val seenMetaId = HashSet<String>()
 
+        // Items whose addon serves its own metadata are shown as they are instead of being
+        // matched to TMDB (a match would drop everything TMDB doesn't list, and streams for
+        // a TMDB match would be requested by IMDb id, which that addon doesn't answer).
+        val nativeRefs = mutableListOf<Pair<MediaType, Int>>()
+        val nativeMetaIds = HashSet<String>()
+        val nativeItems = mutableListOf<MediaItem>()
         metas.forEach { meta ->
+            if (parseTmdbRefFromAddonMeta(meta, typeHint) != null || extractImdbId(meta) != null) return@forEach
+            val metaId = meta.id?.trim().orEmpty()
+            val mediaType = typeHint ?: addonCatalogTypeToMediaType(meta.type) ?: return@forEach
+            val requestType = if (mediaType == MediaType.TV) "series" else "movie"
+            if (metaId.isBlank() || !addonServesOwnMeta(descriptor.addonId, requestType, metaId)) {
+                return@forEach
+            }
+            val item = addonNative.register(descriptor.addonId, meta, mediaType) ?: return@forEach
+            if (nativeMetaIds.add(metaId)) {
+                nativeItems += item
+                nativeRefs += mediaType to item.id
+            }
+        }
+        if (nativeItems.isNotEmpty()) {
+            cacheItems(nativeItems)
+            addonNative.flush()
+        }
+
+        metas.forEach { meta ->
+            if (meta.id?.trim() in nativeMetaIds) return@forEach
             val direct = parseTmdbRefFromAddonMeta(meta, typeHint)
             if (direct != null) {
                 directRefs += direct
@@ -1946,6 +1982,7 @@ class MediaRepository @Inject constructor(
         }
 
         metas.forEach { meta ->
+            if (meta.id?.trim() in nativeMetaIds) return@forEach
             if (parseTmdbRefFromAddonMeta(meta, typeHint) != null) return@forEach
             if (extractImdbId(meta) != null) return@forEach
             val title = meta.name?.trim().orEmpty()
@@ -1987,7 +2024,16 @@ class MediaRepository @Inject constructor(
             }
         }.mapNotNull { it.await() }
 
-        (directRefs + resolvedFromMeta + resolvedImdbRefs + resolvedTitleRefs).distinct()
+        (nativeRefs + directRefs + resolvedFromMeta + resolvedImdbRefs + resolvedTitleRefs).distinct()
+    }
+
+    private suspend fun addonServesOwnMeta(addonId: String, type: String, metaId: String): Boolean = try {
+        streamRepository.addonServesOwnMeta(addonId, type, metaId)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // Unknown means "match it to TMDB as before", never a failed row.
+        false
     }
 
     private suspend fun resolveAddonMetaToTmdbRef(
@@ -2246,6 +2292,10 @@ class MediaRepository @Inject constructor(
      * Get movie details (cached)
      */
     suspend fun getMovieDetails(movieId: Int): MediaItem {
+        if (movieId < 0 && addonNative.isNative(movieId)) {
+            return addonNative.details(MediaType.MOVIE, movieId)?.also { cacheItem(it) }
+                ?: throw IllegalStateException("Native addon item $movieId has no details")
+        }
         getCachedItem(MediaType.MOVIE, movieId)?.let { if (movieId < 0 && it.isHomeServer) return it }
         getCachedFullItem(MediaType.MOVIE, movieId)?.let { cached ->
             if (cached.imdbRating.isNotBlank()) return cached
@@ -2276,6 +2326,10 @@ class MediaRepository @Inject constructor(
      * Get TV show details (cached)
      */
     suspend fun getTvDetails(tvId: Int): MediaItem {
+        if (tvId < 0 && addonNative.isNative(tvId)) {
+            return addonNative.details(MediaType.TV, tvId)?.also { cacheItem(it) }
+                ?: throw IllegalStateException("Native addon item $tvId has no details")
+        }
         getCachedItem(MediaType.TV, tvId)?.let { if (tvId < 0 && it.isHomeServer) return it }
         getCachedFullItem(MediaType.TV, tvId)?.let { cached ->
             if (cached.imdbRating.isNotBlank()) return cached
@@ -2374,6 +2428,7 @@ class MediaRepository @Inject constructor(
      * episode IMDb ratings asynchronously in the background.
      */
     suspend fun getSeasonEpisodes(tvId: Int, seasonNumber: Int): List<Episode> {
+        if (tvId < 0 && addonNative.isNative(tvId)) return addonNative.episodes(tvId, seasonNumber)
         val cacheKey = "tv_${tvId}_season_$seasonNumber"
         val cachedEpisodes = getFromCache(seasonEpisodesCache, cacheKey)
 
@@ -2519,6 +2574,8 @@ class MediaRepository @Inject constructor(
      * Get logo URL for a media item (cached)
      */
     suspend fun getLogoUrl(mediaType: MediaType, mediaId: Int): String? {
+        // TMDB knows nothing under a negative stand-in id (native addon / home-server items).
+        if (mediaId <= 0) return null
         val cacheKey = "${mediaType}_logo_$mediaId"
         logoCache[cacheKey]?.let { cached ->
             if (System.currentTimeMillis() - cached.timestamp < CACHE_TTL_MS) {
@@ -2738,9 +2795,9 @@ class MediaRepository @Inject constructor(
     }
 
     /** Titles and known-for rows share one request; optional artwork must not delay them. */
-    suspend fun searchWithPeople(query: String, maxPeople: Int = 3): MediaSearchResults {
+    suspend fun searchWithPeople(query: String, maxPeople: Int = 3): MediaSearchResults = coroutineScope {
         val trimmed = query.trim()
-        if (trimmed.isEmpty()) return MediaSearchResults(emptyList(), emptyList())
+        if (trimmed.isEmpty()) return@coroutineScope MediaSearchResults(emptyList(), emptyList())
 
         val response = tmdbApi.searchMulti(apiKey, trimmed, language = contentLanguage)
         val items = response.results
@@ -2776,7 +2833,20 @@ class MediaRepository @Inject constructor(
         }
 
         cacheItems(items + rows.flatMap { it.items })
-        return MediaSearchResults(items, rows)
+        MediaSearchResults(items, rows)
+    }
+
+    /** Native addon items matching [query] (see [StreamRepository.searchNativeAddonCatalogs]). */
+    suspend fun searchNativeAddonItems(query: String): List<MediaItem> = try {
+        streamRepository.searchNativeAddonCatalogs(query).flatMap { page ->
+            val descriptor = AddonCatalogDescriptor(page.addonId, page.catalogType, page.catalogId)
+            parseAddonPageRefs(page.metas, descriptor)
+                .mapNotNull { (type, id) -> if (id < 0) addonNative.card(type, id) else null }
+        }.distinctBy { it.mediaType to it.id }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        emptyList()
     }
 
     /**

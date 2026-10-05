@@ -640,7 +640,9 @@ class DetailsViewModel @Inject constructor(
                 } else null
 
                 availableAnimeStructure = structure
-                val activeStructure = if (animeStructuringStyle == AnimeStructuringStyle.BROADCAST) structure else null
+                // Alternate broadcast seasons omit TMDB specials. An explicit season-zero
+                // destination must keep canonical episodes rather than becoming season one.
+                val activeStructure = if (animeStructuringStyle == AnimeStructuringStyle.BROADCAST && seasonToLoad != 0) structure else null
                 animeSeasonStructure = activeStructure
 
                 // Resolve TV show seasonal episodes directly without intermediate layout flash
@@ -3191,6 +3193,8 @@ class DetailsViewModel @Inject constructor(
     private data class ExternalIds(val imdbId: String?, val tvdbId: Int?)
 
     private suspend fun resolveExternalIds(mediaType: MediaType, mediaId: Int): ExternalIds {
+        // A native addon item's own id stands in for the IMDb id: streams are requested by it.
+        if (mediaId < 0) return ExternalIds(mediaRepository.getCachedImdbId(mediaType, mediaId), null)
         return try {
             val ids = when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieExternalIds(mediaId, Constants.TMDB_API_KEY)

@@ -395,8 +395,12 @@ class HomeViewModel @Inject constructor(
         var nextOffset: Int = loadedCount
     )
 
-    // IPTV favorite channels — maps MediaItem.id (Int hash) to channel data
-    private val iptvChannelMap = mutableMapOf<Int, com.arflix.tv.data.model.IptvChannel>()
+    // IPTV favorite channels — maps MediaItem.id (Int hash) to channel data. Written from IO
+    // (row builds, [resolveIptvChannels]) and read from composition.
+    private val iptvChannelMap = java.util.concurrent.ConcurrentHashMap<Int, com.arflix.tv.data.model.IptvChannel>()
+    // Bumped when [resolveIptvChannels] adds channels, so the hero re-reads its stream URL.
+    private val _iptvChannelsVersion = MutableStateFlow(0)
+    val iptvChannelsVersion: StateFlow<Int> = _iptvChannelsVersion.asStateFlow()
     private val _sportsHomeRows = MutableStateFlow<List<Category>>(emptyList())
     val sportsHomeRows: StateFlow<List<Category>> = combine(
         _sportsHomeRows,
@@ -560,7 +564,7 @@ class HomeViewModel @Inject constructor(
     private fun isActionableMediaItem(item: MediaItem): Boolean {
         // Non-actionable items are expected during filtering: invalid IDs cannot be opened,
         // placeholders are synthetic UI entries, and collection tiles use their own handling.
-        return item.id > 0 && !item.isPlaceholder && !isCollectionItem(item) && !isSportsHomeItem(item)
+        return item.hasOpenableId && !item.isPlaceholder && !isCollectionItem(item) && !isSportsHomeItem(item)
     }
 
     private fun continueWatchingKey(mediaType: MediaType, id: Int): String {
@@ -896,7 +900,8 @@ class HomeViewModel @Inject constructor(
                 id = item.id,
                 streamAddonId = item.streamAddonId,
                 title = item.title,
-                addons = installedAddons
+                addons = installedAddons,
+                isAddonNative = !item.addonNativeId.isNullOrBlank()
             )
         }
         if (nonLiveItems.isEmpty()) return emptyList()
@@ -904,6 +909,7 @@ class HomeViewModel @Inject constructor(
         val seasonEpisodesCache = HashMap<Pair<Int, Int>, List<com.arflix.tv.data.model.Episode>?>()
 
         return nonLiveItems.mapNotNull { item ->
+            if (!item.addonNativeId.isNullOrBlank()) mediaRepository.cacheItem(item.toMediaItem())
             if (item.mediaType != MediaType.TV) {
 
                 return@mapNotNull item
@@ -926,6 +932,7 @@ class HomeViewModel @Inject constructor(
             }
 
             val cacheKey = item.id to season
+            if (!item.addonNativeId.isNullOrBlank()) return@mapNotNull item
             val seasonEpisodes = if (seasonEpisodesCache.containsKey(cacheKey)) {
                 seasonEpisodesCache[cacheKey]
             } else {
@@ -975,6 +982,40 @@ class HomeViewModel @Inject constructor(
 
     /** Get the stream URL for an IPTV MediaItem. */
     fun getIptvStreamUrl(itemId: Int): String? = iptvChannelMap[itemId]?.streamUrl
+
+    /**
+     * Looks up the channels behind IPTV cards this view model didn't build itself. Rows
+     * preloaded at startup carry the cards but not their channels, and the full home load
+     * only rebuilds the Favorite TV row after every other row (tens of seconds on a cold
+     * start), so until then a focused channel card had no stream URL and no preview.
+     */
+    fun resolveIptvChannels(items: List<MediaItem>) {
+        val pending = items
+            .filter { isIptvItem(it) && !iptvChannelMap.containsKey(it.id) }
+            .mapNotNull { item -> getIptvChannelId(item)?.let { it to item.id } }
+            .toMap()
+        if (pending.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val found = runCatching {
+                val snapshot = iptvRepository.getMemoryCachedSnapshot()
+                    ?: iptvRepository.getCachedSnapshotOrNull()
+                val byId = snapshot?.channels.orEmpty()
+                    .filter { it.id in pending }
+                    .associateByTo(HashMap()) { it.id }
+                val missing = pending.keys - byId.keys
+                if (missing.isNotEmpty()) {
+                    iptvRepository.pagedChannelsByIds(missing).forEach { byId[it.id] = it }
+                }
+                byId.values
+            }.getOrDefault(emptyList())
+            var added = false
+            found.forEach { channel ->
+                val itemId = pending[channel.id] ?: return@forEach
+                if (iptvChannelMap.putIfAbsent(itemId, channel) == null) added = true
+            }
+            if (added) _iptvChannelsVersion.update { it + 1 }
+        }
+    }
 
     private fun iptvChannelToMediaItem(
         channel: com.arflix.tv.data.model.IptvChannel,
@@ -2342,6 +2383,7 @@ class HomeViewModel @Inject constructor(
         categories.forEach { cat -> cat.items.forEach { mediaRepository.cacheItem(it) } }
         heroItem?.let { mediaRepository.cacheItem(it) }
         putCachedLogos(logoCache)
+        resolveIptvChannels(categories.flatMap { it.items })
 
         // Filter out any existing continue_watching from preloaded data
         val filteredCategories = categories.filter { it.id != "continue_watching" }.toMutableList()
