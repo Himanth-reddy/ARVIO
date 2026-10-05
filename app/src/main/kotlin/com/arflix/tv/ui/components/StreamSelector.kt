@@ -86,7 +86,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.clickable
@@ -545,7 +545,6 @@ fun StreamSelector(
                 modifier = Modifier
                     .fillMaxSize()
                     .focusRequester(focusRequester)
-                    .focusable()
                     .graphicsLayer {
                         if (isMobile) {
                             if (!isVisible && isPredictiveBackCommitted) {
@@ -570,7 +569,11 @@ fun StreamSelector(
                             Color.Transparent
                         }
                     )
-                    .onKeyEvent { event ->
+                    .onPreviewKeyEvent { event ->
+                    val isSelect = event.key == Key.Enter || event.key == Key.DirectionCenter
+                    if (isSelect && (event.type == KeyEventType.KeyUp || event.nativeKeyEvent.repeatCount > 0)) {
+                        return@onPreviewKeyEvent true
+                    }
                     if (event.type == KeyEventType.KeyDown) {
                         val isRtl = isRtlLayoutDirection
                         val actualKey = event.key
@@ -647,6 +650,7 @@ fun StreamSelector(
                         }
                     } else false
                 }
+                    .focusable()
         ) {
             if (!isMobile) {
                 OledSourceSelectorTv(

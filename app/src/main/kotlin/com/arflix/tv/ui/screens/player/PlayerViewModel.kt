@@ -7681,6 +7681,11 @@ class PlayerViewModel @Inject constructor(
     ): Job? {
         if (duration <= 0) return null
 
+        // A completion transaction must not be cancelled/restarted by the ended polling tick
+        // or the player's disposal save. It can finish after the UI's short navigation wait.
+        if (progressSaveCompleting && progressSaveJob?.isActive == true) return progressSaveJob
+        val completing = playbackState == Player.STATE_ENDED || progressPercent >= Constants.WATCHED_THRESHOLD
+
         // On pause/stop, replace an in-flight periodic save. During normal playback,
         // debounce by returning the save that is already running.
         if (!isPlaying || playbackState == Player.STATE_ENDED) {
@@ -7689,7 +7694,12 @@ class PlayerViewModel @Inject constructor(
             return progressSaveJob
         }
 
-        val job = viewModelScope.launch(Dispatchers.IO) {
+        progressSaveCompleting = completing
+        val completionProfileId = profileManager.getProfileIdSync()
+        val job = viewModelScope.launchPlaybackProgressSave(completing, stopWhen = {
+            // A surviving final save still belongs to the profile that watched this video.
+            profileManager.activeProfileId.first { it != completionProfileId }
+        }) {
             val currentTime = System.currentTimeMillis()
             val progressFraction = (progressPercent / 100f).coerceIn(0f, 1f)
             // Trackers store a percentage, never a position, so a resume time on
@@ -7944,6 +7954,7 @@ class PlayerViewModel @Inject constructor(
         job.invokeOnCompletion {
             if (progressSaveJob === job) {
                 progressSaveJob = null
+                progressSaveCompleting = false
             }
         }
         return job
@@ -7972,6 +7983,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     private var progressSaveJob: Job? = null
+    private var progressSaveCompleting = false
     private var mediaLoadJob: Job? = null
     private var subtitleRefreshJob: Job? = null
     private var vodAppendJob: Job? = null

@@ -272,7 +272,6 @@ fun DetailsScreen(
     var reviewIndex by remember { mutableIntStateOf(0) }
     var similarIndex by remember { mutableIntStateOf(0) }
     var collectionIndex by remember { mutableIntStateOf(0) }
-    var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
 
     // Sidebar state
     var isSidebarFocused by remember { mutableStateOf(false) }
@@ -398,7 +397,6 @@ fun DetailsScreen(
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
-        suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
 
     // Place episode focus for whichever season is actually loaded. Keyed on currentSeason (which
@@ -544,9 +542,10 @@ fun DetailsScreen(
             val ep = state.episodes.getOrNull(idx)
             if (ep != null) {
                 episodeIndex = idx
-                if (currentSelectedEpisodeIdentity.value != ep.identity) {
+                if (isMobile && currentSelectedEpisodeIdentity.value != ep.identity) {
                     selectedEpisodeIdentity = ep.identity
                 } else if (isMobile || !state.autoPlaySingleSource) {
+                    selectedEpisodeIdentity = ep.identity
                     showStreamSelector = true
                     viewModel.loadStreams(state.imdbId, ep.identity)
                 } else {
@@ -631,6 +630,11 @@ fun DetailsScreen(
                     return@onPreviewKeyEvent true
                 }
                 if (event.type == KeyEventType.KeyDown) {
+                    // One physical OK press performs one action, even while a Bluetooth remote
+                    // repeats its DOWN events. Season holds are timed from the original DOWN.
+                    if ((event.key == Key.Enter || event.key == Key.DirectionCenter) &&
+                        event.nativeKeyEvent.repeatCount > 0
+                    ) return@onPreviewKeyEvent true
 
                     val isRtl = isRtlLayoutDirection
                     val actualKey = event.key
@@ -852,9 +856,9 @@ fun DetailsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(appBackgroundDark())
+            .then(keyModifier)
             .focusRequester(focusRequester)
             .focusable()
-            .then(keyModifier)
     ) {
         // Main content - full screen with sidebar overlay (same as HomeScreen)
         Crossfade(
