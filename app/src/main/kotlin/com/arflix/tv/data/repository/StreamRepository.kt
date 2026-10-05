@@ -70,7 +70,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.streamDataStore: DataStore<Preferences> by preferencesDataStore(name = "stream_prefs")
+internal val Context.streamDataStore: DataStore<Preferences> by preferencesDataStore(name = "stream_prefs")
 
 /**
  * Callback for streaming results as they arrive -
@@ -718,11 +718,10 @@ class StreamRepository @Inject constructor(
     }
 
     suspend fun toggleAddon(addonId: String) {
-        val addons = installedAddons.first().toMutableList()
-        val index = addons.indexOfFirst { it.id == addonId }
-        if (index >= 0) {
-            addons[index] = addons[index].copy(isEnabled = !addons[index].isEnabled)
-            saveAddons(addons)
+        updateAddons { current ->
+            current.map { addon ->
+                if (addon.id == addonId) addon.copy(isEnabled = !addon.isEnabled) else addon
+            }
         }
     }
 
@@ -843,11 +842,7 @@ class StreamRepository @Inject constructor(
     suspend fun addCustomAddon(url: String, customName: String? = null): Result<Addon> = withContext(Dispatchers.IO) {
         try {
             val newAddon = hydrateCustomAddon(url, customName)
-            val addons = installedAddons.first().toMutableList()
-            // Remove existing addon with same ID if present
-            addons.removeAll { it.id == newAddon.id }
-            addons.add(newAddon)
-            saveAddons(addons, addedIds = setOf(newAddon.id))
+            installPreparedAddon(newAddon)
 
             Result.success(newAddon)
         } catch (e: Exception) {
@@ -875,12 +870,14 @@ class StreamRepository @Inject constructor(
      */
     suspend fun installPreparedAddon(addon: Addon, replaceAddonIds: Set<String> = emptySet()) =
         withContext(Dispatchers.IO) {
-            val addons = installedAddons.first().toMutableList()
-            val replacedIndex = addons.indexOfFirst { it.id in replaceAddonIds }
-            addons.removeAll { it.id == addon.id || it.id in replaceAddonIds }
-            // A replacement keeps the old addon's place in the list.
-            if (replacedIndex in 0..addons.size) addons.add(replacedIndex, addon) else addons.add(addon)
-            saveAddons(addons, addedIds = setOf(addon.id), removedIds = replaceAddonIds - addon.id)
+            updateAddons(addedIds = setOf(addon.id), removedIds = replaceAddonIds - addon.id) { current ->
+                val addons = current.toMutableList()
+                val replacedIndex = addons.indexOfFirst { it.id in replaceAddonIds }
+                addons.removeAll { it.id == addon.id || it.id in replaceAddonIds }
+                // A replacement keeps the old addon's place in the list.
+                if (replacedIndex in 0..addons.size) addons.add(replacedIndex, addon) else addons.add(addon)
+                addons
+            }
         }
 
     /**
@@ -924,7 +921,14 @@ class StreamRepository @Inject constructor(
             }
         }
 
-        saveAddons(updatedAddons)
+        val originalsById = currentAddons.associateBy { it.id }
+        val refreshedById = updatedAddons.associateBy { it.id }
+        updateAddons { latest ->
+            // A slow refresh must not undo an install, removal or toggle made while fetching.
+            latest.map { addon ->
+                if (addon == originalsById[addon.id]) refreshedById[addon.id] ?: addon else addon
+            }
+        }
 
         synchronized(streamResultCache) { streamResultCache.clear() }
         resolvedStreamCache.clear()
@@ -962,10 +966,7 @@ class StreamRepository @Inject constructor(
             manifest = candidate.manifest,
             transportUrl = candidate.transportUrl
         )
-        val addons = installedAddons.first().toMutableList()
-        addons.removeAll { it.id == addonId }
-        addons.add(newAddon)
-        saveAddons(addons, addedIds = setOf(newAddon.id))
+        installPreparedAddon(newAddon)
         return newAddon
     }
 
@@ -1014,8 +1015,7 @@ class StreamRepository @Inject constructor(
             .toSet()
         if (removableIds.isEmpty()) return@withContext false
 
-        val retained = current.filterNot { it.id in removableIds }
-        saveAddons(retained, removedIds = removableIds)
+        updateAddons(removedIds = removableIds) { latest -> latest.filterNot { it.id in removableIds } }
         true
     }
 
@@ -1112,9 +1112,7 @@ class StreamRepository @Inject constructor(
 
     suspend fun removeAddon(addonId: String) {
         if (addonId == "opensubtitles") return
-        val current = installedAddons.first()
-        val addons = current.filter { it.id != addonId }
-        saveAddons(addons, removedIds = setOf(addonId))
+        updateAddons(removedIds = setOf(addonId)) { current -> current.filter { it.id != addonId } }
     }
 
     @Deprecated(
@@ -1130,15 +1128,19 @@ class StreamRepository @Inject constructor(
     suspend fun moveAddonDown(addonId: String): Boolean = moveAddon(addonId, 1)
 
     private suspend fun moveAddon(addonId: String, direction: Int): Boolean {
-        val currentAddons = installedAddons.first().toMutableList()
-        val currentIndex = currentAddons.indexOfFirst { it.id == addonId }
-        if (currentIndex == -1) return false
-        val newIndex = currentIndex + direction
-        if (newIndex !in currentAddons.indices) return false
-        val item = currentAddons.removeAt(currentIndex)
-        currentAddons.add(newIndex, item)
-        saveAddons(currentAddons)
-        return true
+        var moved = false
+        updateAddons { current ->
+            val addons = current.toMutableList()
+            val currentIndex = addons.indexOfFirst { it.id == addonId }
+            val newIndex = currentIndex + direction
+            if (currentIndex >= 0 && newIndex in addons.indices) {
+                val item = addons.removeAt(currentIndex)
+                addons.add(newIndex, item)
+                moved = true
+            }
+            addons
+        }
+        return moved
     }
 
     suspend fun replaceAddonsFromCloud(addons: List<Addon>) {
@@ -1221,12 +1223,22 @@ class StreamRepository @Inject constructor(
     }
 
     private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true,
-        removedIds: Set<String> = emptySet(), addedIds: Set<String> = emptySet()) {
+        removedIds: Set<String> = emptySet(), addedIds: Set<String> = emptySet()) =
+        updateAddons(stampChange, removedIds, addedIds) { addons }
+
+    private suspend fun updateAddons(
+        stampChange: Boolean = true,
+        removedIds: Set<String> = emptySet(),
+        addedIds: Set<String> = emptySet(),
+        transform: (List<Addon>) -> List<Addon>
+    ) {
         // Save locally to the shared account-level addon list. Mirror to the
         // active profile key so older builds/cloud payloads can still recover it.
         context.streamDataStore.edit { prefs ->
+            val previous = addonCloudState(prefs)
+            val addons = transform(previous.addons)
+            if (stampChange && addons == previous.addons && addedIds.isEmpty() && removedIds.isEmpty()) return@edit
             if (stampChange) {
-                val previous = addonCloudState(prefs)
                 val timestamp = maxOf(System.currentTimeMillis(), previous.updatedAt + 1)
                 val changes = recordAddonChanges(previous.changes, addedIds, removedIds, timestamp)
                 prefs[addonChangesKey] = gson.toJson(changes)
