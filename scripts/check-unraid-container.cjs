@@ -50,7 +50,7 @@ async function configuration(url) {
   const match = script.match(/^window\.__ARVIO_SELFHOST_CONFIG__ = (.+);\n?$/);
   assert.ok(match, 'Expected a JSON-only allowlisted configuration bootstrap.');
   const values = JSON.parse(match[1]);
-  assert.deepEqual(Object.keys(values).sort(), ['resolverUrl','simklClientId','telegramApiHash','telegramApiId','traktClientId']);
+  assert.deepEqual(Object.keys(values).sort(), ['resolverUrl','simklClientId','simklV2ClientId','telegramApiHash','telegramApiId','traktClientId']);
   return { values, script };
 }
 
@@ -80,6 +80,7 @@ async function configuration(url) {
       TRAKT_CLIENT_ID: 'unraid-trakt-public-id',
       TRAKT_CLIENT_SECRET: secretMarker,
       SIMKL_CLIENT_ID: 'unraid-simkl-public-id',
+      SIMKL_V2_CLIENT_ID: 'unraid-simkl-v2-public-id',
       SIMKL_CLIENT_SECRET: secretMarker,
       TELEGRAM_API_ID: '123456', TELEGRAM_API_HASH: 'c'.repeat(32),
       ARVIO_RESOLVER_URL: 'https://resolver.example.invalid',
@@ -88,6 +89,7 @@ async function configuration(url) {
     const { values, script } = await configuration(configured.url);
     assert.equal(values.traktClientId, 'unraid-trakt-public-id');
     assert.equal(values.simklClientId, 'unraid-simkl-public-id');
+    assert.equal(values.simklV2ClientId, 'unraid-simkl-v2-public-id');
     assert.equal(values.telegramApiId, '');
     assert.equal(values.telegramApiHash, '');
     assert.equal(values.resolverUrl, 'https://resolver.example.invalid');

@@ -45,6 +45,10 @@ Unraid's Docker template editor. Do not install a template from an unknown sourc
 5. Optional Trakt and Simkl application credentials are advanced fields.
    Use applications you own. Restart after changing them; no image rebuild is
    required. A generic image never contains the ARVIO owner's API keys.
+   For new SIMKL sign-ins, register an AUTH V2 **Mobile, desktop & browser** app
+   and set `SIMKL_V2_CLIENT_ID`; no SIMKL client secret is needed. Legacy V1
+   fields only retain existing V1 connections. Custom-list contents require
+   SIMKL PRO/VIP, independently of ARVIO.
 
 ## Important browser and storage limitations
 

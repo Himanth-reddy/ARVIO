@@ -8,7 +8,8 @@ const { chromium, expect } = require('../web/node_modules/@playwright/test');
 
 const EXPECTED_PUBLIC_IDS = {
   traktClientId: 'unraid-trakt-public-id',
-  simklClientId: 'unraid-simkl-public-id'
+  simklClientId: 'unraid-simkl-public-id',
+  simklV2ClientId: 'unraid-simkl-v2-public-id'
 };
 const BOOTSTRAP_DELAY_MS = 1500;
 const EMPTY_METADATA = {
@@ -131,7 +132,7 @@ async function exerciseContext(browser, baseUrl, scenario, evidenceDir) {
 
     const runtimeIds = await page.evaluate(() => {
       const value = window.__ARVIO_SELFHOST_CONFIG__;
-      return value ? { traktClientId: value.traktClientId, simklClientId: value.simklClientId } : null;
+      return value ? { traktClientId: value.traktClientId, simklClientId: value.simklClientId, simklV2ClientId: value.simklV2ClientId } : null;
     });
     if (scenario === 'bootstrap-blocked') {
       assert.equal(runtimeIds, null, 'Blocked bootstrap does not invent or reuse runtime credentials.');

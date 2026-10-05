@@ -88,7 +88,7 @@ if ($RequireTemplateFeed) {
         Assert-Contract ($path -cin $allowedXml) "Unexpected XML in the template feed: $path"
     }
 }
-$allowed = @('3000','TMDB_API_KEY','ALLOW_PRIVATE_PROXY','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET','SIMKL_CLIENT_ID','SIMKL_CLIENT_SECRET','ARVIO_RESOLVER_URL')
+$allowed = @('3000','TMDB_API_KEY','ALLOW_PRIVATE_PROXY','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET','SIMKL_CLIENT_ID','SIMKL_V2_CLIENT_ID','SIMKL_CLIENT_SECRET','ARVIO_RESOLVER_URL')
 $configs = @($container.SelectNodes('Config'))
 $targets = @($configs | ForEach-Object { $_.GetAttribute('Target') })
 Assert-Contract ($targets.Count -eq $allowed.Count -and @($targets | Select-Object -Unique).Count -eq $targets.Count) 'Missing or duplicated configuration targets.'
