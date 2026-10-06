@@ -2316,7 +2316,7 @@ function CatalogsSection() {
             ? { ...c, enabled: e.target.checked } : c))} />
         {translateUi("Default")} {translateUi("Collection")}
       </label>}
-      {Array.from(new Map(catalogs.filter(c => c.packId?.startsWith("usercol_")).map(c => [c.packId!, c.packName || c.name])).entries()).map(([id, name]) =>
+      {Array.from(new Map(catalogs.filter(c => Boolean(c.packId)).map(c => [c.packId!, c.packName || c.name])).entries()).map(([id, name]) =>
         <div className="inline-form" key={id}><span>{name}</span>
           <button type="button" className="icon-button danger" aria-label={`${translateUi("Remove")} ${name}`}
             onClick={() => updateCatalogs(catalogs.filter(c => c.packId !== id))}><Trash2 size={18} /></button></div>)}
