@@ -131,6 +131,7 @@ internal fun TrailerPlayerSurface(
     youtubeKey: String,
     modifier: Modifier = Modifier,
     showControls: Boolean = true,
+    visible: Boolean = true,
     onViewReady: (YouTubePlayerView) -> Unit = {},
     onReady: (YouTubePlayer) -> Boolean = { true },
     onStateChange: (PlayerConstants.PlayerState) -> Unit = {},
@@ -160,6 +161,7 @@ internal fun TrailerPlayerSurface(
     AndroidView(
         factory = { ctx ->
             YouTubePlayerView(ctx).apply {
+                visibility = if (visible) View.VISIBLE else View.INVISIBLE
                 disposed = false
                 rendererGone = false
                 enableAutomaticInitialization = false
@@ -235,6 +237,7 @@ internal fun TrailerPlayerSurface(
         },
         modifier = modifier,
         update = {
+            it.visibility = if (visible) View.VISIBLE else View.INVISIBLE
             // Key changed while the WebView is alive (e.g. trailer metadata
             // resolving mid-modal): start the new video the same way init
             // would — no WebView reinit, no iframe JS re-parse, no teardown race.

@@ -807,18 +807,22 @@ fun FeaturedMediaCard(
         }
         // Focus and metadata stay below the embed, without covering its pixels.
         val focusColor = resolveAccentColor(ArvioSkin.colors.focusOutline)
-        Text(
-            text = item.title,
-            style = ArvioSkin.typography.cardTitle,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(22.dp)
-                .background(focusColor)
+                .height(24.dp)
+                .background(focusColor, RoundedCornerShape(bottomStart = ArvioSkin.radius.md, bottomEnd = ArvioSkin.radius.md))
                 .clickable(onClick = onClick)
-                .padding(horizontal = 10.dp, vertical = 2.dp),
-            color = if (focusColor.luminance() > 0.4f) Color.Black else Color.White
-        )
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Text(
+                text = item.title,
+                style = ArvioSkin.typography.cardTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (focusColor.luminance() > 0.4f) Color.Black else Color.White
+            )
+        }
     }
 }

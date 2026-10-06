@@ -1411,7 +1411,10 @@ fun HomeScreen(
         if (!uiState.trailerInCards && focusedHomeTrailerKey != null && heroVideoUrl == null) {
             val rowsHeight = if (configuration.screenHeightDp < 600) 238.dp else
                 (configuration.screenHeightDp.dp * 0.35f).coerceIn(260.dp, 340.dp)
-            val availableHeight = configuration.screenHeightDp.dp - rowsHeight - AppTopBarContentTopInset - 4.dp
+            // Leave room above the rail without landing exactly on the 200dp
+            // player minimum: rounding to physical pixels can make 200dp
+            // slightly smaller on 720p TVs (e.g. 266px at 213dpi).
+            val availableHeight = configuration.screenHeightDp.dp - rowsHeight - AppTopBarContentTopInset - 2.dp
             val previewWidth = minOf(380.dp, availableHeight * (16f / 9f), configuration.screenWidthDp.dp * 0.4f)
             if (previewWidth * (9f / 16f) >= 200.dp) {
                 HomeTrailerPreview(
@@ -1423,8 +1426,10 @@ fun HomeScreen(
                         .width(previewWidth).height(previewWidth * (9f / 16f))
                         .testTag("home_hero_trailer")
                 ) {
-                    AsyncImage(model = displayHeroItem?.backdrop, contentDescription = displayHeroItem?.title,
-                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    // The existing hero backdrop already supplies artwork while
+                    // preparing, or when an embed is unavailable. Keep it intact
+                    // instead of repeating it inside a floating thumbnail.
+                    Box(Modifier.fillMaxSize())
                 }
             }
         }

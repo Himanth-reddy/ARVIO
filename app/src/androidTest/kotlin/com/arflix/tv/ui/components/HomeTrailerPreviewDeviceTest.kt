@@ -34,6 +34,34 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HomeTrailerPreviewDeviceTest {
+    @Test fun endedTrailerRestoresArtworkWithoutLooping() {
+        val state = AtomicReference<PlayerState>()
+        val ended = java.util.concurrent.atomic.AtomicBoolean(false)
+        val videoDuration = AtomicReference(0f)
+        val player = AtomicReference<YouTubePlayer>()
+        val video = InstrumentationRegistry.getArguments().getString("trailerVideo") ?: "M7lc1UVf-VE"
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.setContent {
+                HomeTrailerPreview(video, Modifier.size(360.dp, 202.5.dp), onStateChange = {
+                    state.set(it)
+                    if (it == PlayerState.ENDED) ended.set(true)
+                }) { Box(Modifier.size(360.dp, 202.5.dp).background(Color.DarkGray)) }
+            } }
+            await("Preview did not mount") { count(scenario) == 1 }
+            scenario.onActivity { findPlayer(it.window.decorView)!!.addYouTubePlayerListener(object : AbstractYouTubePlayerListener() {
+                override fun onVideoDuration(youTubePlayer: YouTubePlayer, duration: Float) {
+                    player.set(youTubePlayer)
+                    videoDuration.set(duration)
+                }
+            }) }
+            await("Trailer did not start with its duration", 60_000) { state.get() == PlayerState.PLAYING && videoDuration.get() > 0f }
+            scenario.onActivity { player.get().seekTo(videoDuration.get() - 0.1f) }
+            await("Ended trailer did not return to artwork", 20_000) { ended.get() && count(scenario) == 0 }
+            Thread.sleep(1500)
+            assertEquals("Ended preview restarted itself", 0, count(scenario))
+        }
+    }
+
     @Test fun playingCardKeepsRemoteNavigationAndSinglePressSelection() {
         val focus = HomeFocusState().apply { userHasNavigated = true }
         val opened = AtomicInteger(-1)
@@ -54,12 +82,14 @@ class HomeTrailerPreviewDeviceTest {
             } }
             val first = observePlayer(scenario, state)
             await("Focused card did not play", 60_000) { state.get() == PlayerState.PLAYING }
+            scenario.onActivity { assertEquals(View.VISIBLE, first.visibility); assertEquals(1, webViews(it.window.decorView)) }
             val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
             device.pressDPadRight()
             await("Playing trailer stole D-pad navigation") { focus.currentItemIndex == 1 }
             state.set(null)
-            observePlayer(scenario, state, first)
+            val next = observePlayer(scenario, state, first)
             await("Next focused card did not play", 60_000) { state.get() == PlayerState.PLAYING }
+            scenario.onActivity { assertEquals(View.VISIBLE, next.visibility); assertEquals(1, webViews(it.window.decorView)) }
             device.pressDPadCenter()
             await("Select needed more than one press") { opened.get() == 2 }
         }
@@ -86,6 +116,7 @@ class HomeTrailerPreviewDeviceTest {
     @Test fun inlineAutoplayReleasesOnFocusLossAndBackground() {
         val state = AtomicReference<PlayerState>()
         val enabled = mutableStateOf(true)
+        val sawCue = java.util.concurrent.atomic.AtomicBoolean(false)
         val video = InstrumentationRegistry.getArguments().getString("trailerVideo") ?: "M7lc1UVf-VE"
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             lateinit var host: ComponentActivity
@@ -93,13 +124,14 @@ class HomeTrailerPreviewDeviceTest {
                 host = activity
                 activity.setContent {
                     HomeTrailerPreview(video, Modifier.size(360.dp, 202.5.dp), delayMs = 500,
-                        enabled = enabled.value, onStateChange = { android.util.Log.i("HomeTrailerDevice", "Inline state: $it"); state.set(it) }) {
+                        enabled = enabled.value, onStateChange = { android.util.Log.i("HomeTrailerDevice", "Inline state: $it"); if (it == PlayerState.VIDEO_CUED) sawCue.set(true); state.set(it) }) {
                         Box(Modifier.size(360.dp, 202.5.dp).background(Color.DarkGray))
                     }
                 }
             }
             await("Inline trailer did not play", 60_000) { state.get() == PlayerState.PLAYING }
-            scenario.onActivity { assertEquals(1, webViews(it.window.decorView)) }
+            assertTrue("Playback started without first preparing its thumbnail", sawCue.get())
+            scenario.onActivity { assertEquals(1, webViews(it.window.decorView)); assertEquals(View.VISIBLE, findPlayer(it.window.decorView)!!.visibility) }
             val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
             val output = File(host.getExternalFilesDir(null), "trailer-test").apply { mkdirs() }
             device.takeScreenshot(File(output, "home-inline-playing.png"))
@@ -126,7 +158,7 @@ class HomeTrailerPreviewDeviceTest {
         if (view is ViewGroup) (0 until view.childCount).firstNotNullOfOrNull { findWebView(view.getChildAt(it)) } else null
     private fun findPlayer(view: View): YouTubePlayerView? = if (view is YouTubePlayerView) view else
         if (view is ViewGroup) (0 until view.childCount).firstNotNullOfOrNull { findPlayer(view.getChildAt(it)) } else null
-    private fun observePlayer(scenario: ActivityScenario<ComponentActivity>, state: AtomicReference<PlayerState>, previous: YouTubePlayerView? = null): YouTubePlayerView {
+    private fun observePlayer(scenario: ActivityScenario<ComponentActivity>, playbackState: AtomicReference<PlayerState>, previous: YouTubePlayerView? = null): YouTubePlayerView {
         var result: YouTubePlayerView? = null
         await("Focused preview was not mounted") {
             scenario.onActivity { result = findPlayer(it.window.decorView) }
@@ -134,8 +166,8 @@ class HomeTrailerPreviewDeviceTest {
         }
         scenario.onActivity {
             result!!.addYouTubePlayerListener(object : AbstractYouTubePlayerListener() {
-                override fun onStateChange(youTubePlayer: YouTubePlayer, playerState: PlayerState) { state.set(playerState) }
-                override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) { if (second > 0f) state.set(PlayerState.PLAYING) }
+                override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerState) { playbackState.set(state) }
+                override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) { if (second > 0f) playbackState.set(PlayerState.PLAYING) }
             })
         }
         return result!!

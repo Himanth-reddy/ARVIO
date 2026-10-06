@@ -9,10 +9,11 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 import kotlinx.coroutines.delay
 
 /** Documented YouTube autoplay constraints, in CSS pixels (Android dp). */
@@ -57,9 +58,19 @@ internal fun HomeTrailerPreview(
             settled = true
         }
     }
-    val showPlayer = settled && enabled && foreground && visible && !finished && !youtubeKey.isNullOrBlank()
-    LaunchedEffect(showPlayer, youtubeKey) {
-        if (showPlayer) {
+    val preparePlayer = settled && enabled && foreground && visible && !finished && !youtubeKey.isNullOrBlank()
+    // Cue only while preparing. Artwork stays visible until YouTube has its
+    // own thumbnail ready; playback starts after the unobscured embed is shown.
+    var cued by remember(youtubeKey, preparePlayer) { mutableStateOf(false) }
+    var player by remember(youtubeKey, preparePlayer) { mutableStateOf<YouTubePlayer?>(null) }
+    LaunchedEffect(preparePlayer, cued, player) {
+        if (preparePlayer && cued) {
+            withFrameNanos { }
+            player?.play()
+        }
+    }
+    LaunchedEffect(preparePlayer, youtubeKey) {
+        if (preparePlayer) {
             started = false
             // An unavailable/blocked embed must not leave an empty preview forever.
             delay(20_000L)
@@ -76,20 +87,24 @@ internal fun HomeTrailerPreview(
             intersectionWidth * intersectionHeight / (density * density)
         )
     }) {
-        if (showPlayer) {
+        if (!preparePlayer || !cued) fallback()
+        if (preparePlayer) {
             key(youtubeKey) {
                 TrailerPlayerSurface(
                     youtubeKey = youtubeKey!!,
                     modifier = Modifier.fillMaxSize(),
                     showControls = false,
-                    onReady = { player ->
-                        if (volume <= 0f) player.mute() else {
-                            player.unMute()
-                            player.setVolume((volume * 100).toInt().coerceIn(0, 100))
+                    visible = cued,
+                    onReady = { readyPlayer ->
+                        player = readyPlayer
+                        if (volume <= 0f) readyPlayer.mute() else {
+                            readyPlayer.unMute()
+                            readyPlayer.setVolume((volume * 100).toInt().coerceIn(0, 100))
                         }
-                        true
+                        false
                     },
                     onStateChange = { state ->
+                        if (state == PlayerConstants.PlayerState.VIDEO_CUED) cued = true
                         if (state == PlayerConstants.PlayerState.PLAYING) started = true
                         if (state == PlayerConstants.PlayerState.ENDED) finished = true
                         latestStateCallback(state)
@@ -97,8 +112,6 @@ internal fun HomeTrailerPreview(
                     onError = { finished = true }
                 )
             }
-        } else {
-            fallback()
         }
     }
 }
