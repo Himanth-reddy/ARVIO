@@ -202,14 +202,19 @@ class RemoteSyncManager @Inject constructor(
         connected(store.readProviders(TrackingFeature.CONTINUE_WATCHING)).map { provider ->
             async {
                 try {
-                    provider.getContinueWatching(forceRefresh)
+                    Result.success(provider.getContinueWatching(forceRefresh))
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
-                    emptyList()
+                } catch (error: Exception) {
+                    Result.failure<List<ContinueWatchingItem>>(error)
                 }
             }
-        }.awaitAll().flatten()
+        }.awaitAll().let { results ->
+            if (results.isNotEmpty() && results.all { it.isFailure }) {
+                throw results.first().exceptionOrNull()!!
+            }
+            results.flatMap { it.getOrDefault(emptyList()) }
+        }
             .groupBy { it.mediaType to it.id }
             .map { (_, matches) ->
                 matches.maxWithOrNull(

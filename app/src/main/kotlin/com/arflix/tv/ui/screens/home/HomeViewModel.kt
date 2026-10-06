@@ -2579,9 +2579,9 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "instant"
                     )
                 )
-                emptyList()
+                null
             }
-            if (instant.isNotEmpty() && continueWatchingUpdates.revision == localUpdateRevision) {
+            if (instant != null && continueWatchingUpdates.revision == localUpdateRevision) {
                 publishContinueWatching(instant)
             }
 
@@ -2600,16 +2600,14 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "fresh"
                     )
                 )
-                emptyList()
+                null
             }
             if (
-                fresh.isNotEmpty() &&
+                fresh != null &&
                 fresh != instant &&
                 continueWatchingUpdates.revision == localUpdateRevision
             ) {
                 publishContinueWatching(fresh)
-            } else if (cached.isEmpty() && instant.isEmpty() && fresh.isEmpty()) {
-                publishContinueWatching(emptyList())
             }
             val traktConnected = try {
             traktRepository.hasTrakt()
@@ -2618,7 +2616,7 @@ class HomeViewModel @Inject constructor(
         } catch (e: Exception) {
             false
         }
-            if (traktConnected && cached.isEmpty() && instant.isEmpty() && fresh.isEmpty()) {
+            if (traktConnected && cached.isEmpty() && instant?.isEmpty() == true && fresh?.isEmpty() == true) {
                 AppLogger.breadcrumb(
                     tag = "ContinueWatching",
                     message = "trakt_connected_empty_all_paths",
@@ -3367,7 +3365,14 @@ class HomeViewModel @Inject constructor(
                     delay(if (isLowRamDevice) 2_200L else 1_200L)
                     if (requestId != loadHomeRequestId) return@cw
                     val localUpdateRevision = continueWatchingUpdates.revision
-                    val freshContinueWatching = resolveContinueWatchingItemsStable(forceFresh = true)
+                    val freshContinueWatching = try {
+                        resolveContinueWatchingItemsStable(forceFresh = true)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (error: Exception) {
+                        AppLogger.e("HomeVM", "Background Continue Watching refresh failed", error)
+                        return@cw
+                    }
                     if (requestId != loadHomeRequestId) return@cw
                     if (continueWatchingUpdates.revision != localUpdateRevision) return@cw
 
@@ -3392,6 +3397,8 @@ class HomeViewModel @Inject constructor(
                             updated.add(0, continueWatchingCategory)
                         }
                         _uiState.value = _uiState.value.copy(categories = updated)
+                    } else {
+                        publishContinueWatching(emptyList())
                     }
                 }
               } catch (e: Exception) {
@@ -4384,10 +4391,9 @@ class HomeViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(categories = latestCategories)
                     refreshWatchedBadges()
                 } else {
-                    if (force) {
-                        // A forced refresh follows a user-visible state change (playback or a
-                        // watched action). Its empty result is authoritative; retaining the old
-                        // row here is what caused completed shows to hover indefinitely.
+                    if (force || remoteSyncManager.isRemoteConnected(TrackingFeature.CONTINUE_WATCHING)) {
+                        // A successful connected tracker read is authoritative, including empty.
+                        // Failed reads throw above and preserve the last good row instead.
                         publishContinueWatching(emptyList())
                         return@launch
                     }
@@ -4531,7 +4537,7 @@ class HomeViewModel @Inject constructor(
                             "force_fresh" to forceFresh.toString()
                         )
                     )
-                    emptyList()
+                    throw error
                 }
             } else {
                 try {
@@ -4546,13 +4552,13 @@ class HomeViewModel @Inject constructor(
                             "cw_phase" to "remote_cached_miss"
                         )
                     )
-                    emptyList()
+                    throw error
                 }
             }
             val historyItems = loadContinueWatchingFromHistoryStable()
             val localItems = loadSavedContinueWatchingSnapshot()
             mergeTraktAndRecentLocalContinueWatching(
-                traktItems = remoteItems.ifEmpty { historyItems },
+                traktItems = remoteItems,
                 localItems = localItems,
                 historyItems = historyItems
             )

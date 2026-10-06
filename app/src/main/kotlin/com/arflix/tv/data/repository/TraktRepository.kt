@@ -2917,6 +2917,11 @@ class TraktRepository @Inject constructor(
         return movies to episodes
     }
 
+    internal suspend fun getLocalWatchedSnapshot(): Pair<Set<Int>, Set<String>> {
+        ensureProfileCacheScope()
+        return loadLocalWatchedSnapshotForCurrentProfile()
+    }
+
     private fun decodeContinueWatchingList(json: String): List<ContinueWatchingItem> {
         return decodeContinueWatchingCache(json, gson)
     }

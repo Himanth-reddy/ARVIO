@@ -1,7 +1,7 @@
 import { SyncClient, SyncMediaRef } from "./sync";
 import { loadStored, removeStored, saveStored } from "./storage";
 import { HttpError, jsonRequest } from "./http";
-import { resolveTmdbId } from "./tmdb";
+import { resolveTmdbId, tmdb } from "./tmdb";
 import { config } from "./config";
 
 const LEGACY_SIMKL_TOKEN_KEY = "arvio.web.simkl.token";
@@ -73,6 +73,37 @@ type SimklSnapshot = {
   shows: SimklShowRow[];
   anime: SimklShowRow[];
 };
+
+type SimklTmdbEpisode = { episode_number: number; name?: string; air_date?: string };
+type SeasonEpisodes = { episodes?: SimklTmdbEpisode[] };
+const episodeCache = new Map<string, { at: number; value: Promise<SeasonEpisodes> }>();
+async function realEpisodes(id: number, season: number): Promise<SimklTmdbEpisode[]> {
+  const path = `tv/${id}/season/${season}`;
+  let cached = episodeCache.get(path);
+  if (!cached || Date.now() - cached.at > SNAPSHOT_TTL_MS) {
+    const value = tmdb<SeasonEpisodes>(path).catch(error => {
+      episodeCache.delete(path);
+      if ((error as { status?: number }).status === 404) return { episodes: [] };
+      throw error;
+    });
+    cached = { at: Date.now(), value };
+    episodeCache.set(path, cached);
+  }
+  return ((await cached.value).episodes ?? []).slice().sort((a, b) => a.episode_number - b.episode_number);
+}
+
+function watchedSeasons(row: SimklShowRow) {
+  const seasons = new Map<number, Array<{ number: number; last_watched_at?: string }>>();
+  for (const season of row.seasons ?? []) for (const episode of season.episodes ?? []) {
+    const s = episode.tvdb?.season ?? season.number;
+    const e = episode.tvdb?.episode ?? episode.number;
+    if (s == null || e == null || s < 0 || e < 1) continue;
+    const list = seasons.get(s) ?? [];
+    list.push({ number: e, last_watched_at: episode.watched_at });
+    seasons.set(s, list);
+  }
+  return Array.from(seasons, ([number, episodes]) => ({ number, episodes }));
+}
 
 function toTmdbNumber(id?: number | string | null): number | null {
   if (id == null) return null;
@@ -173,6 +204,7 @@ export class SimklClient implements SyncClient {
     return this.profileId;
   }
   private snapshot: SimklSnapshot | null = null;
+  private recentCompletions = new Map<string, number>();
   private snapshotPromise: Promise<SimklSnapshot> | null = null;
   private lastSnapshotFailureAt = 0;
   private lastScrobbleWriteAt = 0;
@@ -247,6 +279,7 @@ export class SimklClient implements SyncClient {
     const normalized = profileId?.trim() || null;
     if (normalized === this.profileId) return;
     this.resetScrobbleQueue();
+    this.recentCompletions.clear();
     this.deviceSession = null;
     this.profileId = normalized;
     this.snapshot = null;
@@ -280,6 +313,7 @@ export class SimklClient implements SyncClient {
     const tokenChanged = next?.access_token !== this.token?.access_token;
     if (tokenChanged) {
       this.resetScrobbleQueue();
+      this.recentCompletions.clear();
       if (this.profileId) removeStored(this.snapshotKey(this.profileId));
       this.snapshot = null;
       this.snapshotPromise = null;
@@ -552,13 +586,38 @@ export class SimklClient implements SyncClient {
     return rows;
   }
 
-  async playback(): Promise<unknown[]> {
-    return this.continueWatching();
+  async playback(localWatchedKeys = new Set<string>()): Promise<unknown[]> {
+    return this.continueWatching(localWatchedKeys);
   }
 
-  async continueWatching(): Promise<unknown[]> {
+  async continueWatching(localWatchedKeys = new Set<string>()): Promise<unknown[]> {
+    const scope = this.scope();
     const snapshot = await this.loadSnapshot();
-    const playback = await this.simkl<SimklPlaybackRow[]>("/sync/playback").catch(() => []);
+    if (!snapshot.complete) throw new Error("SIMKL Continue Watching is unavailable");
+    let playbackFailure: unknown;
+    const playback = await this.simkl<SimklPlaybackRow[]>("/sync/playback").catch(error => { playbackFailure = error; return []; });
+    const shows = await Promise.all([...snapshot.shows, ...snapshot.anime].map(async row => ({ ...row, show: await this.resolveMedia(row.show, "tv") })));
+    const watched = new Map<string, number>();
+    const completedShows = new Map<number, number>();
+    for (const row of snapshot.movies) if (row.status === "completed") {
+      const movie = await this.resolveMedia(row.movie, "movie");
+      if (movie?.ids?.tmdb) watched.set(`movie:${movie.ids.tmdb}`, Date.parse(row.last_watched_at ?? "") || 0);
+    }
+    for (const row of shows) {
+      const id = toTmdbNumber(row.show?.ids?.tmdb);
+      if (!id) continue;
+      if (row.status === "completed") completedShows.set(id, Date.parse(row.last_watched_at ?? "") || 0);
+      for (const season of watchedSeasons(row)) for (const episode of season.episodes) {
+        watched.set(`tv:${id}:${season.number}:${episode.number}`, Date.parse(episode.last_watched_at ?? "") || 0);
+      }
+    }
+    for (const [key, at] of this.recentCompletions) {
+      if (Date.now() - at > SNAPSHOT_TTL_MS) this.recentCompletions.delete(key);
+      else {
+        watched.set(key, Math.max(watched.get(key) ?? 0, at));
+        if (/^tv:\d+$/.test(key)) completedShows.set(Number(key.split(":")[1]), at);
+      }
+    }
     const normalized = (await Promise.all(playback.map(async (row) => ({
       ...row,
       movie: await this.resolveMedia(row.movie, "movie"),
@@ -566,25 +625,66 @@ export class SimklClient implements SyncClient {
       episode: row.episode
         ? { ...row.episode, number: row.episode.number ?? row.episode.episode }
         : undefined
-    })))).filter((row) => row.movie?.ids?.tmdb != null || row.show?.ids?.tmdb != null);
-    const pausedShows = new Set(normalized.map((row) => toTmdbNumber(row.show?.ids?.tmdb)).filter(Boolean));
-    const upNext = (await Promise.all([...snapshot.shows, ...snapshot.anime].map(async (row) => {
+    })))).filter((row) => {
+      const id = toTmdbNumber(row.show?.ids?.tmdb ?? row.movie?.ids?.tmdb);
+      if (!id || !(Number(row.progress) > 0 && Number(row.progress) < 95)) return false;
+      const key = row.show ? `tv:${id}:${row.episode?.season}:${row.episode?.number}` : `movie:${id}`;
+      const complete = watched.has(key) || (Boolean(row.show) && completedShows.has(id));
+      if (!complete) return !localWatchedKeys.has(key);
+      const at = Math.max(watched.get(key) ?? 0, row.show ? completedShows.get(id) ?? 0 : 0);
+      // Unknown SIMKL history timestamps cannot establish that this pause is a rewatch.
+      return at > 1000 && (Date.parse(row.paused_at ?? "") || 0) > at;
+    });
+    const validPauses = [];
+    for (const row of normalized) {
+      const id = toTmdbNumber(row.show?.ids?.tmdb);
+      if (!id) { validPauses.push(row); continue; }
+      const season = row.episode?.season, episode = row.episode?.number;
+      if (season == null || season < 0 || !episode || episode < 1) continue;
+      if ((await realEpisodes(id, season)).some(e => e.episode_number === episode)) validPauses.push(row);
+    }
+    const pausedShows = new Set(validPauses.map(row => toTmdbNumber(row.show?.ids?.tmdb)).filter(Boolean));
+    const upNext = [];
+    // Bound metadata requests; season responses are shared across consecutive refreshes.
+    for (let i = 0; i < shows.length; i += 4) upNext.push(...(await Promise.all(shows.slice(i, i + 4).map(async (row) => {
       if (row.status !== "watching") return null;
-      const show = await this.resolveMedia(row.show, "tv");
-      const episode = row.next_to_watch_info ?? parseNextToWatch(row.next_to_watch);
-      const number = episode?.episode;
-      const season = episode?.season ?? 1;
+      const show = row.show;
+      const pointer = parseNextToWatch(row.next_to_watch);
+      const mapped = Array.isArray(row.mapped_tvdb_seasons) ? row.mapped_tvdb_seasons.filter(Number.isInteger) as number[] : [];
+      const season = /^S/i.test(row.next_to_watch ?? "") ? pointer?.season
+        : row.next_to_watch_info?.season ?? (mapped.length === 1 ? mapped[0] : pointer?.season);
+      const number = pointer?.episode;
       const showTmdb = toTmdbNumber(show?.ids?.tmdb);
       if (!showTmdb || !number || pausedShows.has(showTmdb)) return null;
+      if (completedShows.has(showTmdb)) return null;
+      if (season == null || season < 0) return null;
+      let rows = await realEpisodes(showTmdb, season);
+      if (!rows.some(e => e.episode_number === number)) return null;
+      const isWatched = (s: number, e: number) => watched.has(`tv:${showTmdb}:${s}:${e}`) || localWatchedKeys.has(`tv:${showTmdb}:${s}:${e}`);
+      let selectedSeason = season;
+      let selected = rows.find(e => e.episode_number >= number && !isWatched(season, e.episode_number));
+      if (!selected) {
+        const details = await tmdb<{ seasons?: Array<{ season_number: number }> }>(`tv/${showTmdb}`);
+        for (const s of (details.seasons ?? []).map(s => s.season_number).filter(s => s > season).sort((a, b) => a - b)) {
+          rows = await realEpisodes(showTmdb, s);
+          selected = rows.find(e => !isWatched(s, e.episode_number));
+          if (selected) { selectedSeason = s; break; }
+        }
+      }
+      if (!selected?.air_date || selected.air_date > new Date().toISOString().slice(0, 10)) return null;
       return {
         progress: 0,
         paused_at: row.last_watched_at,
         show,
-        episode: { ...episode, season, number },
+        episode: { season: selectedSeason, number: selected.episode_number, title: selected.name },
         is_up_next: true
       };
-    }))).filter(Boolean);
-    return [...normalized, ...upNext];
+    }))).filter(Boolean));
+    const result = [...validPauses, ...upNext];
+    if (scope !== this.scope()) throw new Error("SIMKL profile changed");
+    // A failed pause read may still yield verified Up Next, but cannot prove an empty rail.
+    if (playbackFailure && !result.length) throw playbackFailure;
+    return result;
   }
 
   async watched(type: "movies" | "shows"): Promise<unknown[]> {
@@ -596,7 +696,7 @@ export class SimklClient implements SyncClient {
         .filter((item) => item.movie?.ids?.tmdb != null);
     }
     return (await Promise.all([...snapshot.shows, ...snapshot.anime]
-      .map(async (item) => ({ ...item, show: await this.resolveMedia(item.show, "tv") }))))
+      .map(async (item) => ({ ...item, seasons: watchedSeasons(item), show: await this.resolveMedia(item.show, "tv") }))))
       .filter((item) => item.show?.ids?.tmdb != null);
   }
 
@@ -643,6 +743,7 @@ export class SimklClient implements SyncClient {
       ? { movies: [{ ids: { tmdb: item.tmdbId } }] }
       : { shows: [series] };
     await this.simkl("/sync/history", { method: "POST", body: JSON.stringify(body) });
+    this.recentCompletions.set(item.mediaType === "movie" ? `movie:${item.tmdbId}` : hasEpisode ? `tv:${item.tmdbId}:${item.season}:${item.episode}` : `tv:${item.tmdbId}`, Date.now());
     this.invalidateSnapshot();
   }
 
@@ -662,6 +763,8 @@ export class SimklClient implements SyncClient {
       const body = { shows: [series] };
       await this.simkl("/sync/history/remove", { method: "POST", body: JSON.stringify(body) });
     }
+    this.recentCompletions.delete(item.mediaType === "movie" ? `movie:${item.tmdbId}` : `tv:${item.tmdbId}:${item.season}:${item.episode}`);
+    if (item.mediaType !== "movie") this.recentCompletions.delete(`tv:${item.tmdbId}`);
     this.invalidateSnapshot();
   }
 

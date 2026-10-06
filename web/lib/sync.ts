@@ -27,7 +27,7 @@ export interface SyncClient {
   readonly isConnected: boolean;
   readonly currentProfileId?: string | null;
   watchlist(): Promise<unknown[]>;
-  playback(): Promise<unknown[]>;
+  playback(localWatchedKeys?: Set<string>): Promise<unknown[]>;
   watched(type: "movies" | "shows", feature?: "watched" | "continueWatching"): Promise<unknown[]>;
   addToWatchlist(item: SyncMediaRef): Promise<void>;
   removeFromWatchlist(item: SyncMediaRef): Promise<void>;
@@ -151,8 +151,8 @@ class TrackingRouter implements SyncClient {
   constructor(private readonly profileId?: string | null) {}
   get isConnected() { return readClients("watchlist").length > 0 || readClients("continueWatching").length > 0 || readClients("watched").length > 0 || writeClients().length > 0; }
   watchlist() { return readAll("watchlist", (client) => client.watchlist()); }
-  async playback() {
-    return readAll("continueWatching", (client) => client.playback());
+  async playback(localWatchedKeys?: Set<string>) {
+    return readAll("continueWatching", (client) => client.playback(localWatchedKeys));
   }
   async watched(type: "movies" | "shows", feature: "watched" | "continueWatching" = "watched") {
     return readAll(feature, (client) => client.watched(type));

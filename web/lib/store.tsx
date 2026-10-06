@@ -1035,14 +1035,15 @@ export function AppProvider({
         : cwOnlyTrakt ? cwShowsRead
         : traktClient.watched("shows").catch(() => failedRead("cw-watched"));
       const watchlistReady = ["trakt", "simkl", "mdblist"].some((provider) => readsFrom("watchlist", provider as "trakt" | "simkl" | "mdblist"));
+      const cloudWatchedRead = authClient.session ? pullCloudWatchedKeys(authClient, profileId).catch(() => new Set<string>()) : Promise.resolve(new Set<string>());
       const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, cloudWatchedKeys, cloudDismissals, hiddenShowIds, cwMovies, cwShows] = await Promise.all([
         authClient.session ? getContinueWatching(authClient, profileId, addonState).catch(() => []) : Promise.resolve([]),
         traktReady ? client.watchlist().catch(() => failedRead("watchlist")) : Promise.resolve([]),
-        traktReady ? client.playback().catch(() => failedRead("playback")) : Promise.resolve([]),
+        traktReady ? cloudWatchedRead.then(keys => client.playback(keys)).catch(() => failedRead("playback")) : Promise.resolve([]),
         watchedMoviesRead,
         watchedShowsRead,
         authClient.session ? pullCloudWatchlist(authClient, profileId).catch(() => []) : Promise.resolve([]),
-        authClient.session ? pullCloudWatchedKeys(authClient, profileId).catch(() => new Set<string>()) : Promise.resolve(new Set<string>()),
+        cloudWatchedRead,
         authClient.session ? pullCloudContinueWatchingDismissals(authClient, profileId).catch(() => new Map<string, number>()) : Promise.resolve(new Map<string, number>()),
         // Only Trakt has a hidden-from-progress concept; MDBList reads return an
         // empty set so the filters below are no-ops for it.
