@@ -184,13 +184,13 @@
     <string name="auto_play_desc">Comenzar el siguiente episodio automáticamente</string>
     <string name="autoplay_desc">Si está desactivado, abre el selector de fuentes al pulsar Reproducir</string>
     <string name="auto_play_quality_desc">Calidad mínima para la reproducción automática</string>
-    <string name="trailer_desc">TV: reproducir tráilers en el fondo de la pantalla de inicio</string>
+    <string name="trailer_desc">TV: previsualizar tráilers automáticamente en Inicio</string>
     <string name="trailer_sound">Sonido del tráiler</string>
-    <string name="trailer_sound_desc">TV: reproducir el audio del tráiler en el fondo de la pantalla de inicio</string>
+    <string name="trailer_sound_desc">TV: activar el audio de las vistas previas de tráilers</string>
     <string name="trailer_delay">Retraso del tráiler</string>
     <string name="trailer_delay_desc">Segundos antes de que el tráiler comience a reproducirse</string>
     <string name="trailer_in_cards">Tráilers en tarjetas</string>
-    <string name="trailer_in_cards_desc">TV: reproducir tráilers dentro de la tarjeta enfocada en lugar de a pantalla completa</string>
+    <string name="trailer_in_cards_desc">TV: previsualizar tráilers en la tarjeta ampliada en lugar del encabezado</string>
     <string name="frame_rate_desc">Desactivado, Fluido (Seamless) o Siempre</string>
     <string name="quality_filters_desc">Excluir niveles de calidad en este dispositivo</string>
     <string name="card_layout_desc">Tarjetas en formato horizontal o póster</string>

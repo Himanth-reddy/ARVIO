@@ -1475,6 +1475,10 @@ class HomeViewModel @Inject constructor(
     // Debounce job for hero updates (Phase 6.1)
     private var heroUpdateJob: Job? = null
     private var heroDetailsJob: Job? = null
+    private var heroTrailerJob: Job? = null
+    private var heroTrailerRequestKey: String? = null
+    private data class CachedHomeTrailer(val key: String?, val cachedAt: Long = SystemClock.elapsedRealtime())
+    private val heroTrailerCache = android.util.LruCache<String, CachedHomeTrailer>(64)
     private var prefetchJob: Job? = null
     private var preloadCategoryPriorityJob: Job? = null
     private val preloadCategoryJobs = ConcurrentHashMap<Int, Job>()
@@ -1954,6 +1958,11 @@ class HomeViewModel @Inject constructor(
                         smoothScrolling = preferences.smoothScrolling
                     )
 
+                    if (!preferences.trailerAutoPlay) {
+                        heroTrailerJob?.cancel()
+                        heroTrailerRequestKey = null
+                        _uiState.value = _uiState.value.copy(heroTrailerKey = null)
+                    }
                     if (langChanged) {
                         invalidateContentLanguageCaches()
                         loadHomeData()
@@ -4881,6 +4890,10 @@ class HomeViewModel @Inject constructor(
             return
         }
 
+        if (!currentHero.isSameHomeHero(item)) {
+            heroTrailerJob?.cancel()
+            heroTrailerRequestKey = null
+        }
         // Save previous hero for crossfade animation, clear trailer for new hero
         _uiState.value = currentState.copy(
             previousHeroItem = currentState.heroItem,
@@ -4888,9 +4901,43 @@ class HomeViewModel @Inject constructor(
             heroItem = heroItem,
             heroLogoUrl = logoUrl,
             heroOverviewOverride = cachedDetails?.overview?.ifBlank { heroItem.overview },
-            heroTrailerKey = null,
+            heroTrailerKey = if (currentHero.isSameHomeHero(item)) currentState.heroTrailerKey else null,
             isHeroTransitioning = true
         )
+    }
+
+    private fun requestHeroTrailer(item: MediaItem) {
+        val state = _uiState.value
+        if (!state.trailerAutoPlay || !state.heroItem.isSameHomeHero(item) ||
+            !isActionableMediaItem(item) || isIptvItem(item) || isCollectionItem(item)
+        ) return
+        if (state.heroTrailerKey != null) return
+        val language = mediaRepository.contentLanguage
+        val requestKey = "$language:${item.mediaType}:${item.id}"
+        heroTrailerCache.get(requestKey)?.let { cached ->
+            // A transient metadata failure must not disable this title's preview
+            // for the rest of the app session. Successful keys stay in the LRU.
+            if (cached.key != null || SystemClock.elapsedRealtime() - cached.cachedAt < 60_000L) {
+                _uiState.value = _uiState.value.copy(heroTrailerKey = cached.key)
+                return
+            }
+        }
+        if (heroTrailerRequestKey == requestKey && heroTrailerJob?.isActive == true) return
+        heroTrailerJob?.cancel()
+        heroTrailerRequestKey = requestKey
+        heroTrailerJob = viewModelScope.launch {
+            delay(220L)
+            val trailerKey = withContext(networkDispatcher) {
+                mediaRepository.getTrailerKey(item.mediaType, item.id)
+            }
+            heroTrailerCache.put(requestKey, CachedHomeTrailer(trailerKey))
+            val current = _uiState.value
+            if (current.trailerAutoPlay && current.heroItem.isSameHomeHero(item) &&
+                mediaRepository.contentLanguage == language && heroTrailerRequestKey == requestKey
+            ) {
+                _uiState.value = current.copy(heroTrailerKey = trailerKey)
+            }
+        }
     }
 
     private fun hydrateHeroDetailsIfNeeded(item: MediaItem) {
@@ -4899,22 +4946,7 @@ class HomeViewModel @Inject constructor(
             return
         }
 
-        // Fetch trailer for new hero item; skip if already loaded for this item (prevents restart mid-play)
-        if (_uiState.value.trailerAutoPlay &&
-            !(_uiState.value.heroItem?.id == item.id && _uiState.value.heroTrailerKey != null)
-        ) {
-            _uiState.value = _uiState.value.copy(heroTrailerKey = null)
-            viewModelScope.launch(networkDispatcher) {
-                try {
-                    val trailerKey = mediaRepository.getTrailerKey(item.mediaType, item.id)
-                    if (trailerKey != null && _uiState.value.heroItem?.id == item.id) {
-                        _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
-                    }
-                        } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
-            }
-        }
+        requestHeroTrailer(item)
 
         val normalizedOverview = item.overview.trim()
         val looksTruncated = normalizedOverview.endsWith("...") || normalizedOverview.length < 120
@@ -4946,22 +4978,7 @@ class HomeViewModel @Inject constructor(
     private fun scheduleHeroDetailsFetch(item: MediaItem, fastScrolling: Boolean) {
         heroDetailsJob?.cancel()
 
-        // Fetch trailer for new hero item; skip if already loaded for this item (prevents restart mid-play)
-        if (_uiState.value.trailerAutoPlay &&
-            !(_uiState.value.heroItem?.id == item.id && _uiState.value.heroTrailerKey != null)
-        ) {
-            _uiState.value = _uiState.value.copy(heroTrailerKey = null)
-            viewModelScope.launch(networkDispatcher) {
-                try {
-                    val trailerKey = mediaRepository.getTrailerKey(item.mediaType, item.id)
-                    if (trailerKey != null && _uiState.value.heroItem?.id == item.id) {
-                        _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
-                    }
-                        } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
-            }
-        }
+        requestHeroTrailer(item)
 
         heroDetailsJob = viewModelScope.launch(networkDispatcher) {
             val detailsKey = heroDetailsKey(item)

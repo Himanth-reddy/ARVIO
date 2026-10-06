@@ -169,13 +169,13 @@
     <string name="auto_play_desc">Démarre automatiquement l’épisode suivant</string>
     <string name="autoplay_desc">Désactivé, le sélecteur de source s’ouvre à la lecture</string>
     <string name="auto_play_quality_desc">Qualité minimale pour la lecture auto.</string>
-    <string name="trailer_desc">TV : lire les bandes-annonces en arrière-plan de l’accueil</string>
+    <string name="trailer_desc">TV : lancer automatiquement les aperçus de bandes-annonces sur l’accueil</string>
     <string name="trailer_sound">Son des bandes-annonces</string>
-    <string name="trailer_sound_desc">TV : lire l’audio des bandes-annonces en arrière-plan de l’accueil</string>
+    <string name="trailer_sound_desc">TV : activer le son des aperçus de bandes-annonces</string>
     <string name="trailer_delay">Délai des bandes-annonces</string>
     <string name="trailer_delay_desc">Secondes avant le démarrage de la bande-annonce</string>
     <string name="trailer_in_cards">Bandes-annonces dans les cartes</string>
-    <string name="trailer_in_cards_desc">TV : lit les bandes-annonces dans la carte sélectionnée au lieu du plein écran</string>
+    <string name="trailer_in_cards_desc">TV : lire les bandes-annonces dans la carte agrandie plutôt que dans l’en-tête</string>
     <string name="frame_rate_desc">Désactivé, fluide ou toujours</string>
     <string name="quality_filters_desc">Exclure des niveaux de qualité sur cet appareil</string>
     <string name="card_layout_desc">Cartes paysage ou affiche</string>

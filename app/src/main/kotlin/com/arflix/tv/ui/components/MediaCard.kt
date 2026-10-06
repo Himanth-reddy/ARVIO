@@ -2,6 +2,7 @@ package com.arflix.tv.ui.components
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -46,12 +48,14 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
+import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.TmdbImageSizing
 import com.arflix.tv.util.Constants
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.testTag
 
 /**
  * Media card component for rows/grids.
@@ -769,61 +773,52 @@ fun FeaturedMediaCard(
     // The expanded size, so the artwork size does not change while [width] animates.
     artworkWidth: Dp = width,
 ) {
-    val shape = rememberArvioCardShape(ArvioSkin.radius.md)
     val density = LocalDensity.current
-    val imageUrl = remember(item.backdrop, item.image, artworkWidth, height, density) {
+    val imageUrl = remember(item.backdrop, item.image, artworkWidth, density) {
         (item.backdrop ?: item.image).takeIf { it.isNotBlank() }?.let { url ->
             TmdbImageSizing.forSlot(
                 url,
                 with(density) { artworkWidth.roundToPx() },
-                with(density) { height.roundToPx() },
+                with(density) { (artworkWidth * (9f / 16f)).roundToPx() },
                 TmdbImageSizing.Kind.BACKDROP
             )
         }
     }
 
-    ArvioFocusableSurface(
-        modifier = Modifier.size(width, height),
-        shape = shape,
-        backgroundColor = Color(0xFF1A1A1A),
-        outlineColor = ArvioSkin.colors.focusOutline,
-        outlineWidth = 2.5.dp,
-        focusedScale = 1f,
-        pressedScale = 0.97f,
-        animateFocus = false,
-        enableSystemFocus = false,
-        isFocusedOverride = true,
-        onClick = onClick,
-    ) { _ ->
-        if (imageUrl != null) {
-            AsyncImage(
-                model = imageUrl,
-                contentDescription = item.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        // Bottom gradient so title text is readable over the backdrop/trailer
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.55f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.85f)
-                    )
+    Column(Modifier.width(width).testTag("home_trailer_card_${item.mediaType}_${item.id}")) {
+        HomeTrailerPreview(
+            youtubeKey = trailerKey,
+            // A spring can briefly cross its target before overshooting. Wait
+            // for a stable size so that crossing cannot create/release WebViews.
+            delayMs = trailerDelayMs.coerceAtLeast(150L),
+            volume = trailerVolume,
+            // The player is mounted only once expansion has reached its final size.
+            enabled = kotlin.math.abs(width.value - artworkWidth.value) < 0.5f,
+            modifier = Modifier.fillMaxWidth().height(height).background(Color.Black)
+        ) {
+            if (imageUrl != null) {
+                AsyncImage(
+                    model = imageUrl,
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().clickable(onClick = onClick)
                 )
-        )
+            }
+        }
+        // Focus and metadata stay below the embed, without covering its pixels.
+        val focusColor = resolveAccentColor(ArvioSkin.colors.focusOutline)
         Text(
             text = item.title,
             style = ArvioSkin.typography.cardTitle,
-            color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .fillMaxWidth()
+                .height(22.dp)
+                .background(focusColor)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 10.dp, vertical = 2.dp),
+            color = if (focusColor.luminance() > 0.4f) Color.Black else Color.White
         )
     }
 }

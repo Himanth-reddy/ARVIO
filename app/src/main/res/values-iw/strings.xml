@@ -111,13 +111,13 @@
     <string name="auto_play_desc">הפעל את הפרק הבא אוטומטית</string>
     <string name="autoplay_desc">כיבוי פותח את בורר המקורות בעת הפעלה</string>
     <string name="auto_play_quality_desc">איכות מינימום להפעלה אוטומטית</string>
-    <string name="trailer_desc">הפעל טריילרים ברקע מסך הבית</string>
+    <string name="trailer_desc">טלוויזיה: ניגון אוטומטי של קדימונים במסך הבית</string>
     <string name="trailer_sound">צליל טריילר</string>
-    <string name="trailer_sound_desc">הפעל שמע טריילר ברקע מסך הבית</string>
+    <string name="trailer_sound_desc">טלוויזיה: הפעלת שמע בתצוגה המקדימה של הקדימונים</string>
     <string name="trailer_delay">השהיית טריילר</string>
     <string name="trailer_delay_desc">שניות לפני שהטריילר מתחיל לנגן</string>
     <string name="trailer_in_cards">טריילרים בכרטיסים</string>
-    <string name="trailer_in_cards_desc">הפעל טריילרים בתוך הכרטיס הממוקד במקום במסך מלא</string>
+    <string name="trailer_in_cards_desc">טלוויזיה: הצגת קדימונים בכרטיס המוגדל במקום באזור הראשי</string>
     <string name="frame_rate_desc">כבוי, חלק, או תמיד</string>
     <string name="quality_filters_desc">הוצא רמות איכות במכשיר זה</string>
     <string name="card_layout_desc">כרטיסים לרוחב או לגובה</string>

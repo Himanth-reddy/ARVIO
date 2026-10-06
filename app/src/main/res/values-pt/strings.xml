@@ -171,13 +171,13 @@
     <string name="auto_play_desc">Iniciar próximo episódio automaticamente</string>
     <string name="autoplay_desc">Quando desligado, abre o seletor de fontes ao clicar em Reproduzir</string>
     <string name="auto_play_quality_desc">Qualidade mínima para reprodução automática</string>
-    <string name="trailer_desc">TV: reproduzir trailers no fundo da tela inicial</string>
+    <string name="trailer_desc">TV: reproduzir prévias de trailers automaticamente na página inicial</string>
     <string name="trailer_sound">Som do trailer</string>
-    <string name="trailer_sound_desc">TV: reproduzir áudio do trailer no fundo da tela inicial</string>
+    <string name="trailer_sound_desc">TV: ativar o áudio das prévias de trailers</string>
     <string name="trailer_delay">Atraso do trailer</string>
     <string name="trailer_delay_desc">Segundos antes do trailer começar a ser reproduzido</string>
     <string name="trailer_in_cards">Trailers nos cards</string>
-    <string name="trailer_in_cards_desc">TV: reproduzir trailers dentro do card em foco em vez de tela cheia</string>
+    <string name="trailer_in_cards_desc">TV: reproduzir trailers no cartão ampliado em vez do destaque</string>
     <string name="frame_rate_desc">Desligado, Suave ou Sempre</string>
     <string name="quality_filters_desc">Excluir faixas de qualidade neste dispositivo</string>
     <string name="card_layout_desc">Cards em formato horizontal ou pôster</string>
