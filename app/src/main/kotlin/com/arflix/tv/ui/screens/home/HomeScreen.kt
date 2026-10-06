@@ -70,6 +70,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -1044,12 +1045,18 @@ fun HomeScreen(
     // moving elsewhere replays it.
     var collectionVideoFinishedId by remember { mutableStateOf<Int?>(null) }
     val heroVideoAllowed = true
+    // Leaving the app (Home button / minimize) stops the activity but keeps this
+    // composition alive, so the hero preview has to follow the lifecycle or its
+    // audio keeps playing in the background.
+    val homeLifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    val isHomeStarted = homeLifecycleState.isAtLeast(Lifecycle.State.STARTED)
     val serviceHeroVideoUrl = displayHeroItem
         ?.takeIf { heroVideoAllowed && isHeroCollection && collectionVideoFinishedId != it.id }
         ?.let { viewModel.getCollectionHeroVideoUrl(it) }
     val heroVideoUrl = when {
         !isMobile && !focusState.userHasNavigated -> null
         !heroVideoAllowed -> null
+        !isHomeStarted -> null
         // Service collection MP4s should start as soon as the card becomes the hero.
         // Keep the idle gate for heavier IPTV/live playback, but do not delay MP4 previews.
         serviceHeroVideoUrl != null -> serviceHeroVideoUrl
@@ -1072,6 +1079,19 @@ fun HomeScreen(
         onDispose {
             heroPlaybackHandles?.player?.release()
             heroPlaybackHandles = null
+            preparedHeroVideoUrl = null
+        }
+    }
+
+    // Fully release the stream while backgrounded: a paused live channel would be
+    // behind the live window on return, so it gets re-prepared fresh instead.
+    LaunchedEffect(isHomeStarted) {
+        if (!isHomeStarted) {
+            heroPlaybackHandles?.player?.let { player ->
+                player.playWhenReady = false
+                player.stop()
+                player.clearMediaItems()
+            }
             preparedHeroVideoUrl = null
         }
     }
