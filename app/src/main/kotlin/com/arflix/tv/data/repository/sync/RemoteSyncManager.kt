@@ -210,10 +210,12 @@ class RemoteSyncManager @Inject constructor(
                 }
             }
         }.awaitAll().let { results ->
-            if (results.isNotEmpty() && results.all { it.isFailure }) {
-                throw results.first().exceptionOrNull()!!
+            val items = results.flatMap { it.getOrDefault(emptyList()) }
+            if (items.isEmpty() && results.any { it.isFailure }) {
+                // An empty response from another provider cannot prove the failed one is empty.
+                throw results.first { it.isFailure }.exceptionOrNull()!!
             }
-            results.flatMap { it.getOrDefault(emptyList()) }
+            items
         }
             .groupBy { it.mediaType to it.id }
             .map { (_, matches) ->

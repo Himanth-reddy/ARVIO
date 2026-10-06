@@ -92,6 +92,14 @@ class RemoteSyncManagerTest {
         assertTrue(manager.getContinueWatching().isEmpty())
     }
 
+    @Test(expected = IllegalStateException::class)
+    fun emptyPartialSnapshotCannotClearProgressFromAFailedProvider(): Unit = runBlocking {
+        coEvery { store.readProviders(TrackingFeature.CONTINUE_WATCHING) } returns setOf(SyncProvider.SIMKL, SyncProvider.TRAKT)
+        coEvery { simkl.getContinueWatching(false) } throws IllegalStateException("offline")
+        coEvery { trakt.getContinueWatching(false) } returns emptyList()
+        manager.getContinueWatching()
+    }
+
     @Test fun healthyProviderStillReturnsResultsWhenAnotherFails() = runBlocking {
         coEvery { store.readProviders(TrackingFeature.CONTINUE_WATCHING) } returns setOf(SyncProvider.SIMKL, SyncProvider.TRAKT)
         coEvery { simkl.getContinueWatching(false) } throws IllegalStateException("offline")
