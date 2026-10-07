@@ -1,3 +1,4 @@
+import { addonServesOwnMeta, getNativeDetails, getNativeSeasonEpisodes, isAddonNative, registerNativeItem } from "./addonNative";
 import { config } from "./config";
 import { apiProxiedUrl, jsonRequest, proxiedUrl } from "./http";
 import { fetchAniZipMappingByTmdbId } from "./metadata/anizip";
@@ -692,13 +693,18 @@ async function loadAddonCatalog(catalog: CatalogConfig, addons: InstalledAddon[]
   const url = proxiedUrl(`${base}/catalog/${encodeURIComponent(catalogType)}/${encodeURIComponent(catalogId)}${extra}.json`);
   const payload = await jsonRequest<{ metas?: StremioMeta[] }>(url);
   const metas = payload.metas ?? [];
-  const hydrated = await Promise.all(metas.map((meta) => hydrateAddonMeta(meta, catalog.mediaType, language).catch(() => null)));
+  const hydrated = await Promise.all(metas.map((meta) => hydrateAddonMeta(meta, catalog.mediaType, language, addon).catch(() => null)));
   return hydrated.filter((item): item is MediaItem => Boolean(item));
 }
 
-async function hydrateAddonMeta(meta: StremioMeta, preferred: CatalogConfig["mediaType"], language: string): Promise<MediaItem | null> {
+async function hydrateAddonMeta(meta: StremioMeta, preferred: CatalogConfig["mediaType"], language: string, addon?: InstalledAddon): Promise<MediaItem | null> {
   const tmdbId = numberValue(meta.tmdb_id);
   const mediaType: MediaType = String(meta.type ?? preferred ?? "").toLowerCase().includes("series") || preferred === "tv" ? "tv" : "movie";
+  // Items the addon describes itself open from its own /meta instead of a TMDB guess.
+  if (addon && !tmdbId && !meta.imdb_id && meta.id && addonServesOwnMeta(addon, mediaType === "tv" ? "series" : "movie", meta.id)) {
+    const native = registerNativeItem(addon, meta, mediaType);
+    if (native) return native;
+  }
   if (tmdbId) {
     const detailed = await getBasicItem(mediaType, tmdbId, language).catch(() => null);
     if (detailed) return detailed;
@@ -924,6 +930,8 @@ function persistLogoCache() {
 
 /** Title-treatment (clearlogo) URL for a movie/show — mirrors MediaRepository.getImages logo pick. */
 export async function getLogoUrl(item: { mediaType: MediaType; id: number }): Promise<string | null> {
+  // Ids below 1 are never TMDB titles (native addon items, unmatched entries).
+  if (item.id <= 0) return null;
   const key = `${item.mediaType}:${item.id}`;
   restoreLogoCache();
   if (logoCache.has(key)) return logoCache.get(key) ?? null;
@@ -998,6 +1006,7 @@ function persistCardMetaCache() {
 }
 
 export async function getCardMeta(item: { mediaType: MediaType; id: number }): Promise<{ runtime: number; image: string; backdrop: string | null; imdbId: string | null }> {
+  if (item.id <= 0) return { runtime: 0, image: "", backdrop: null, imdbId: null };
   const key = `${item.mediaType}:${item.id}`;
   restoreCardMetaCache();
   const cached = cardMetaCache.get(key);
@@ -1031,6 +1040,7 @@ export async function getCardMeta(item: { mediaType: MediaType; id: number }): P
 }
 
 export async function getCardProviders(item: { mediaType: MediaType; id: number }): Promise<string[]> {
+  if (item.id <= 0) return [];
   const key = `${item.mediaType}:${item.id}`;
   restoreProviderCache();
   const cached = providerCache.get(key);
@@ -1110,6 +1120,7 @@ export async function getSeasonEpisodes(
   priorityConfig?: ProviderPriorityConfig,
   metadataContext?: SeasonMetadataContext
 ): Promise<EpisodeInfo[]> {
+  if (isAddonNative({ id: tvId })) return getNativeSeasonEpisodes(tvId, seasonNumber).catch(() => []);
   const metadataType: MetadataMediaType = metadataContext?.isAnime ? "anime" : "tv";
   const externalConfig = providersBeforeTmdb(metadataType, priorityConfig);
   const lookup: MetadataLookupIds = {
@@ -1218,6 +1229,7 @@ function writeSeasonEpisodesCache(key: string, episodes: EpisodeInfo[]) {
 }
 
 export async function getReviews(item: { mediaType: MediaType; id: number }): Promise<ReviewInfo[]> {
+  if (item.id <= 0) return [];
   try {
     const response = await tmdb<{ results?: Array<{ id: string; author?: string; content?: string; created_at?: string; author_details?: { rating?: number | null; avatar_path?: string | null } }> }>(
       `${item.mediaType}/${item.id}/reviews`
@@ -1362,6 +1374,7 @@ const basicItemCache = new Map<string, MediaItem | null>();
 
 /** Lightweight details fetch (no append_to_response) with an in-memory cache — used to hydrate catalog rows. */
 export async function getCollectionPreview(item: MediaItem, language: string): Promise<MediaItem> {
+  if (isAddonNative(item)) return (await getNativeDetails(item)) ?? item;
   const details = await tmdb<TmdbItem>(`${item.mediaType}/${item.id}`, { language, append_to_response: "external_ids" });
   return { ...item, ...mapTmdbItem(details, item.mediaType), budget: details.budget,
     imdbId: details.external_ids?.imdb_id ?? item.imdbId, genres: details.genres?.map(genre => genre.name) };
@@ -1446,6 +1459,7 @@ export async function getTitlesForSearch(
 }
 
 export async function getDetails(item: MediaItem, priorityConfig?: ProviderPriorityConfig) {
+  if (isAddonNative(item)) return (await getNativeDetails(item).catch(() => null)) ?? item;
   try {
     const details = await fetchDetailsPayload(item, priorityConfig?.customTmdbApiKey);
     const mapped = mapTmdbItem({ ...details, media_type: item.mediaType }, item.mediaType);

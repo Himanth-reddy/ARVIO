@@ -9,6 +9,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { LanguageProvider } from "./i18n";
 import { shouldRefreshAutomatically } from "./automaticRefresh";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
+import { isAddonNative } from "./addonNative";
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { config, getAuthPortalUrl, isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
@@ -1689,7 +1690,8 @@ export function AppProvider({
     setBusy("Opening details");
     setStreams([]);
     const priorityConfig = getPriorityConfig(settingsRef.current);
-    const resolvedId = item.id > 0 ? item.id : await resolveTmdbId(item).catch(() => null);
+    // Native addon items keep their own (negative) id; their details come from the addon.
+    const resolvedId = item.id > 0 || isAddonNative(item) ? item.id : await resolveTmdbId(item).catch(() => null);
     if (sourceGeneration.current !== generation) return;
     if (!resolvedId && !item.isHomeServer) { setBusy(""); setToast("Metadata could not be matched for this title."); return; }
     const detailsTarget = item.isHomeServer && item.tmdbId ? { ...item, id: item.tmdbId } : { ...item, id: resolvedId ?? item.id };
