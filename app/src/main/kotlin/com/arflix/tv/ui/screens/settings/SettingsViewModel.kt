@@ -231,7 +231,7 @@ data class SettingsUiState(
     val secondarySubtitle: String = "Off",
     val trailerAutoPlay: Boolean = true,
     val trailerSoundEnabled: Boolean = false,
-    val trailerDelaySeconds: Int = 2,
+    val trailerDelaySeconds: Int = 1,
     /** 0 keeps the fixed row height; 6..10 divides the TV guide into that many rows. */
     val guideRowCount: Int = 0,
     val trailerInCards: Boolean = true,
@@ -708,7 +708,7 @@ class SettingsViewModel @Inject constructor(
             val autoPlayMaxSizeGb = AutoplayLimits.normalizeSizeGb(prefs[profileManager.profileIntKey("auto_play_max_size_gb")] ?: 0)
             val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: true
             val trailerSoundEnabled = prefs[trailerSoundEnabledKey()] ?: false
-            val trailerDelaySeconds = prefs[trailerDelayKey()]?.toIntOrNull() ?: 2
+            val trailerDelaySeconds = prefs[trailerDelayKey()]?.toIntOrNull() ?: 1
             val guideRowCount = prefs[guideRowCountKey()]?.toIntOrNull()
                 ?.takeIf { it in 6..10 } ?: 0
             val trailerInCards = prefs[trailerInCardsKey()] ?: true

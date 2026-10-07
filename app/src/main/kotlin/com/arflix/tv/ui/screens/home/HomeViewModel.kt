@@ -99,7 +99,7 @@ data class HomeUiState(
     val heroTrailerKey: String? = null,
     val trailerAutoPlay: Boolean = true,
     val trailerSoundEnabled: Boolean = false,
-    val trailerDelaySeconds: Int = 2,
+    val trailerDelaySeconds: Int = 1,
     val trailerInCards: Boolean = true,
     // Home hero metadata visibility toggles (issue #72)
     val showBudget: Boolean = true,

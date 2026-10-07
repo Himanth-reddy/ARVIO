@@ -770,6 +770,7 @@ fun FeaturedMediaCard(
     onClick: () -> Unit,
     // The expanded size, so the artwork size does not change while [width] animates.
     artworkWidth: Dp = width,
+    autoplayNotBeforeMs: Long? = null,
 ) {
     val density = LocalDensity.current
     val imageUrl = remember(item.backdrop, item.image, artworkWidth, density) {
@@ -788,7 +789,8 @@ fun FeaturedMediaCard(
             youtubeKey = trailerKey,
             // A spring can briefly cross its target before overshooting. Wait
             // for a stable size so that crossing cannot create/release WebViews.
-            delayMs = trailerDelayMs.coerceAtLeast(150L),
+            delayMs = trailerDelayMs,
+            autoplayNotBeforeMs = autoplayNotBeforeMs,
             volume = trailerVolume,
             // The player is mounted only once expansion has reached its final size.
             enabled = kotlin.math.abs(width.value - artworkWidth.value) < 0.5f,

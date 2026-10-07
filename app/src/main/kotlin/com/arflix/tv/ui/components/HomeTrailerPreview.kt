@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.components
 
 import android.graphics.Rect
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
@@ -30,6 +31,7 @@ internal fun HomeTrailerPreview(
     youtubeKey: String?,
     modifier: Modifier = Modifier,
     delayMs: Long = 0L,
+    autoplayNotBeforeMs: Long? = null,
     volume: Float = 0f,
     enabled: Boolean = true,
     onStateChange: (PlayerConstants.PlayerState) -> Unit = {},
@@ -54,8 +56,19 @@ internal fun HomeTrailerPreview(
     LaunchedEffect(youtubeKey, enabled, foreground, visible) {
         settled = false
         if (!youtubeKey.isNullOrBlank() && enabled && foreground && visible) {
-            delay(delayMs.coerceAtLeast(0L))
+            // Stabilize the slot, then cue without playing while the focus
+            // delay is still running. Network preparation need not wait for it.
+            delay(150L)
             settled = true
+        }
+    }
+    var playbackAllowed by remember(youtubeKey, enabled) { mutableStateOf(false) }
+    LaunchedEffect(youtubeKey, enabled, foreground, visible, delayMs, autoplayNotBeforeMs) {
+        playbackAllowed = false
+        if (!youtubeKey.isNullOrBlank() && enabled && foreground && visible) {
+            val remainingDelay = autoplayNotBeforeMs?.let { it - SystemClock.elapsedRealtime() } ?: delayMs
+            delay(remainingDelay.coerceAtLeast(0L))
+            playbackAllowed = true
         }
     }
     val preparePlayer = settled && enabled && foreground && visible && !finished && !youtubeKey.isNullOrBlank()
@@ -63,14 +76,15 @@ internal fun HomeTrailerPreview(
     // own thumbnail ready; playback starts after the unobscured embed is shown.
     var cued by remember(youtubeKey, preparePlayer) { mutableStateOf(false) }
     var player by remember(youtubeKey, preparePlayer) { mutableStateOf<YouTubePlayer?>(null) }
-    LaunchedEffect(preparePlayer, cued, player) {
-        if (preparePlayer && cued) {
+    val revealPlayer = preparePlayer && cued && playbackAllowed
+    LaunchedEffect(revealPlayer, player) {
+        if (revealPlayer) {
             withFrameNanos { }
             player?.play()
         }
     }
-    LaunchedEffect(preparePlayer, youtubeKey) {
-        if (preparePlayer) {
+    LaunchedEffect(preparePlayer, playbackAllowed, youtubeKey) {
+        if (preparePlayer && playbackAllowed) {
             started = false
             // An unavailable/blocked embed must not leave an empty preview forever.
             delay(20_000L)
@@ -87,14 +101,14 @@ internal fun HomeTrailerPreview(
             intersectionWidth * intersectionHeight / (density * density)
         )
     }) {
-        if (!preparePlayer || !cued) fallback()
+        if (!revealPlayer) fallback()
         if (preparePlayer) {
             key(youtubeKey) {
                 TrailerPlayerSurface(
                     youtubeKey = youtubeKey!!,
                     modifier = Modifier.fillMaxSize(),
                     showControls = false,
-                    visible = cued,
+                    visible = revealPlayer,
                     onReady = { readyPlayer ->
                         player = readyPlayer
                         if (volume <= 0f) readyPlayer.mute() else {

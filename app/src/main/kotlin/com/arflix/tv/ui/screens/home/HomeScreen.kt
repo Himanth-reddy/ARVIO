@@ -915,6 +915,9 @@ fun HomeScreen(
 
     val focusedCategory = displayCategories.getOrNull(focusState.currentRowIndex)
     val focusedHomeItem = focusedCategory?.items?.getOrNull(focusState.currentItemIndex)
+    val focusedTrailerAtMs = remember(focusedCategory?.id, focusedHomeItem?.let { homeRowItemKey(it) }, focusState.isSidebarFocused, showContextMenu) {
+        SystemClock.elapsedRealtime()
+    }
     // Reserve space before metadata arrives, keeping the rail still while a trailer loads.
     val reserveTrailerSpace = !isMobile && uiState.trailerAutoPlay && uiState.trailerInCards &&
         focusedCategory?.id != "continue_watching" && focusedHomeItem != null &&
@@ -1420,6 +1423,7 @@ fun HomeScreen(
                 HomeTrailerPreview(
                     youtubeKey = focusedHomeTrailerKey,
                     delayMs = uiState.trailerDelaySeconds * 1000L,
+                    autoplayNotBeforeMs = focusedTrailerAtMs + uiState.trailerDelaySeconds * 1000L,
                     volume = if (uiState.trailerSoundEnabled) 1f else 0f,
                     modifier = Modifier.align(Alignment.TopEnd)
                         .padding(top = AppTopBarContentTopInset, end = contentStartPadding)
@@ -3801,6 +3805,10 @@ private fun ContentRow(
     // Include the title identity and trailer key: a refresh can replace the
     // item at the same index without changing the row's focus coordinates.
     val previewItem = itemsToRender.getOrNull(focusedItemIndex)
+    val previewFocusedAtMs = remember(category.id, previewItem?.let { homeRowItemKey(it) }, isCurrentRow, focusedItemIndex) {
+        SystemClock.elapsedRealtime()
+    }
+    val autoplayNotBeforeMs = previewFocusedAtMs + featuredTrailerDelayMs.coerceAtLeast(500L)
     val previewToken = "${category.id}:${previewItem?.mediaType}:${previewItem?.id}:$featuredTrailerKey"
     var featuredExpandedToken by remember { mutableStateOf<String?>(null) }
     val featuredExpanded = hasFeaturedCard && isCurrentRow &&
@@ -3809,7 +3817,10 @@ private fun ContentRow(
     LaunchedEffect(previewToken, focusedItemIndex, isCurrentRow, featuredTrailerDelayMs) {
         featuredExpandedToken = null
         if (hasFeaturedCard && isCurrentRow && focusedItemIndex >= 0) {
-            delay(featuredTrailerDelayMs.coerceAtLeast(500L))
+            // Expand after a short stable focus, so the official player can
+            // prepare during the remaining autoplay delay. Metadata arriving
+            // later must not restart the full focus delay.
+            delay((previewFocusedAtMs + 500L - SystemClock.elapsedRealtime()).coerceAtLeast(0L))
             featuredExpandedToken = previewToken
         }
     }
@@ -4005,6 +4016,7 @@ private fun ContentRow(
                                 trailerKey = featuredTrailerKey,
                                 trailerDelayMs = 0L,
                                 trailerVolume = featuredTrailerVolume,
+                                autoplayNotBeforeMs = autoplayNotBeforeMs,
                                 onClick = onCardClick,
                             )
 
@@ -4062,6 +4074,7 @@ private fun ContentRow(
                             trailerKey = featuredTrailerKey,
                             trailerDelayMs = 0L,
                             trailerVolume = featuredTrailerVolume,
+                            autoplayNotBeforeMs = autoplayNotBeforeMs,
                             onClick = onCardClick,
                         )
                     } else {

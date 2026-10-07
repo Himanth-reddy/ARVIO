@@ -70,7 +70,10 @@ class HomeTrailerFocusDeviceTest {
         compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
         compose.mainClock.advanceTimeBy(32)
         card.assertDoesNotExist()
-        compose.onNodeWithTag("home_trailer_card_MOVIE_2", useUnmergedTree = true).assertDoesNotExist()
+        // Expansion now uses a shorter focus delay and its deadline follows
+        // elapsed real time. Waiting for test idleness can already pass it;
+        // assert the selected identity instead of assuming virtual time alone.
+        compose.runOnIdle { assertEquals(1, focus.currentItemIndex) }
         compose.mainClock.advanceTimeBy(2300)
         compose.onNodeWithTag("home_trailer_card_MOVIE_2", useUnmergedTree = true).assertExists()
         compose.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }

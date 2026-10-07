@@ -34,6 +34,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HomeTrailerPreviewDeviceTest {
+    @Test fun playerPreparesBeforeTheFocusDeadlineWithoutStartingEarly() {
+        val cuedAt = java.util.concurrent.atomic.AtomicLong(0L)
+        val playedAt = java.util.concurrent.atomic.AtomicLong(0L)
+        val video = InstrumentationRegistry.getArguments().getString("trailerVideo") ?: "M7lc1UVf-VE"
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            val deadline = android.os.SystemClock.elapsedRealtime() + 15_000L
+            scenario.onActivity { activity -> activity.setContent {
+                HomeTrailerPreview(video, Modifier.size(360.dp, 202.5.dp), autoplayNotBeforeMs = deadline,
+                    onStateChange = {
+                        if (it == PlayerState.VIDEO_CUED) cuedAt.compareAndSet(0L, android.os.SystemClock.elapsedRealtime())
+                        if (it == PlayerState.PLAYING) playedAt.compareAndSet(0L, android.os.SystemClock.elapsedRealtime())
+                    }) { Box(Modifier.size(360.dp, 202.5.dp).background(Color.DarkGray)) }
+            } }
+            await("Player did not prepare during the focus delay", 12_000) { cuedAt.get() > 0L }
+            assertTrue("Preparation waited for the autoplay deadline", cuedAt.get() < deadline)
+            assertEquals("Prepared trailer played too early", 0L, playedAt.get())
+            var preparedView: YouTubePlayerView? = null
+            scenario.onActivity {
+                preparedView = findPlayer(it.window.decorView)
+                assertEquals(View.INVISIBLE, preparedView!!.visibility)
+            }
+            await("Prepared trailer did not autoplay", 40_000) { playedAt.get() > 0L }
+            assertTrue("Autoplay ignored the focus deadline", playedAt.get() >= deadline)
+            scenario.onActivity {
+                assertSame("Autoplay recreated the prepared player", preparedView, findPlayer(it.window.decorView))
+                assertEquals(View.VISIBLE, preparedView!!.visibility)
+                assertEquals(1, webViews(it.window.decorView))
+            }
+        }
+    }
+
     @Test fun endedTrailerRestoresArtworkWithoutLooping() {
         val state = AtomicReference<PlayerState>()
         val ended = java.util.concurrent.atomic.AtomicBoolean(false)
