@@ -4797,10 +4797,13 @@ fun LiveTvScreen(
                 },
                 onDismiss = { searchOpen = false },
                 onPick = { channel ->
+                    retainedPlayingChannel = channel
                     selectedCategoryId = bestCategoryIdForChannel(channel, visibleEnrichedState.value.tree)
                     playingChannelId = channel.id
                     focusedChannelId = channel.id
                     epgPrefetchAnchorId = channel.id
+                    playingCatchupProgram = null
+                    catchupPlaybackOffsetMs = 0L
                     searchOpen = false
                     if (isTouchDevice) {
                         sportsSelected = false
