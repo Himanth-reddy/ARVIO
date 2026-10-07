@@ -120,7 +120,7 @@ export class MdbListClient {
   }
 
   async externalRatings(mediaType: "movie" | "tv", tmdbId: number): Promise<MdbExternalRating[]> {
-    if (!this.isConnected || !tmdbId) return [];
+    if (!this.isConnected || !(tmdbId > 0)) return [];
     const cacheKey = `arvio.web.mdblist.ratings.v1:${mediaType}:${tmdbId}`;
     const cached = loadStored<{ at: number; ratings: MdbExternalRating[] } | null>(cacheKey, null);
     if (cached && Date.now() - cached.at < 12 * 60 * 60 * 1000) return cached.ratings;

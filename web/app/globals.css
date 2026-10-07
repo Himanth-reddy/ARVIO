@@ -2483,6 +2483,15 @@ a.login-submit {
   background: rgba(255, 255, 255, 0.92);
 }
 
+/* Favorite TV row: channel logos sit whole on the card instead of filling it */
+.favorite-tv-poster img {
+  object-fit: contain;
+  padding: 12% 18%;
+}
+.favorite-tv-live {
+  letter-spacing: 0.06em;
+}
+
 /* Lazy rail skeletons (rows load as they scroll into view) */
 .rail-skeleton {
   min-height: clamp(220px, 28vh, 320px);

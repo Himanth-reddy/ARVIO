@@ -417,6 +417,7 @@ function androidProfileSettings(settings: AppSettings) {
     trailerInCards: settings.trailerInCards,
     clockFormat: settings.clockFormat,
     showBudget: settings.showBudget,
+    iptvFavoritesOnHome: settings.iptvFavoritesOnHome,
     showLoadingStats: settings.showLoadingStats,
     spoilerBlurEnabled: settings.spoilerBlur,
     volumeBoostDb: Math.max(0, Math.min(15, Number(settings.volumeBoostDb) || 0)),
@@ -455,6 +456,7 @@ function settingsFromAndroidProfile(value: unknown): Partial<AppSettings> {
   if ("trailerInCards" in state) partial.trailerInCards = Boolean(state.trailerInCards);
   if ("clockFormat" in state) partial.clockFormat = String(state.clockFormat) === "12h" ? "12h" : "24h";
   if ("showBudget" in state) partial.showBudget = Boolean(state.showBudget);
+  if ("iptvFavoritesOnHome" in state) partial.iptvFavoritesOnHome = state.iptvFavoritesOnHome !== false;
   if ("showLoadingStats" in state) partial.showLoadingStats = Boolean(state.showLoadingStats);
   if ("spoilerBlurEnabled" in state) partial.spoilerBlur = Boolean(state.spoilerBlurEnabled);
   if ("volumeBoostDb" in state) partial.volumeBoostDb = Math.max(0, Math.min(15, Number(state.volumeBoostDb) || 0));

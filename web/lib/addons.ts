@@ -1,3 +1,4 @@
+import { addonServesOwnMeta, nativeStreamTarget } from "./addonNative";
 import { jsonRequest, proxiedUrl } from "./http";
 import { hasResolverConfig } from "./config";
 import { getResolverStreamsProgressive } from "./resolver";
@@ -109,6 +110,10 @@ function normalizeResources(resources: unknown) {
   });
 }
 
+function stringList(values: unknown) {
+  return Array.isArray(values) ? values.filter((value): value is string => typeof value === "string") : undefined;
+}
+
 function normalizeCatalogs(catalogs: unknown) {
   return Array.isArray(catalogs) ? catalogs.filter((catalog): catalog is AddonCatalog => Boolean(catalog && typeof catalog === "object")) : [];
 }
@@ -122,11 +127,18 @@ export function normalizeAddon(addon: unknown): InstalledAddon | null {
     logo?: string | null;
     background?: string | null;
     isEnabled?: boolean;
+    manifest?: RawManifest | null;
   };
   const manifestUrl = manifestUrlFor(raw as InstalledAddon);
   if (!manifestUrl) return null;
   const id = typeof raw.id === "string" && raw.id ? raw.id : manifestUrl;
   const enabled = raw.enabled !== false && raw.isEnabled !== false;
+  // Android-installed entries carry catalogs/resources/types/idPrefixes only
+  // inside `manifest`; without this fallback their collections and catalog
+  // rows cannot find the addon on web.
+  const manifest = raw.manifest && typeof raw.manifest === "object" ? raw.manifest : undefined;
+  const pick = <T,>(own: T[] | undefined, fallback: unknown) =>
+    Array.isArray(own) && own.length ? own : Array.isArray(fallback) ? fallback : own;
   return {
     // CRITICAL: preserve every field we don't understand. The Android app's
     // addon entries carry `type`/`url`/`transportUrl`/`isInstalled`/`manifest`
@@ -140,10 +152,10 @@ export function normalizeAddon(addon: unknown): InstalledAddon | null {
     version: typeof raw.version === "string" && raw.version ? raw.version : "1.0.0",
     manifestUrl,
     description: raw.description ?? null,
-    catalogs: normalizeCatalogs(raw.catalogs),
-    resources: normalizeResources(raw.resources),
-    types: Array.isArray(raw.types) ? raw.types.filter((type): type is string => typeof type === "string") : undefined,
-    idPrefixes: Array.isArray(raw.idPrefixes) ? raw.idPrefixes.filter((prefix): prefix is string => typeof prefix === "string") : undefined,
+    catalogs: normalizeCatalogs(pick(raw.catalogs, manifest?.catalogs)),
+    resources: normalizeResources(pick(raw.resources, manifest?.resources)),
+    types: stringList(pick(raw.types, manifest?.types)),
+    idPrefixes: stringList(pick(raw.idPrefixes, manifest?.idPrefixes)),
     logo: raw.logo ?? null,
     background: raw.background ?? null,
     enabled,
@@ -248,6 +260,13 @@ export async function getStreamsProgressive(
 ) {
   const update = onUpdate ? (streams: StreamSource[], batch: StreamSource[]) =>
     onUpdate(streams.filter(stream => !isInformationalAddonStream(stream)), batch.filter(stream => !isInformationalAddonStream(stream))) : undefined;
+  // Native addon items are only known to the addon that serves them, by its own ids.
+  const native = await nativeStreamTarget(item, season, episode);
+  if (native) {
+    if (!native.ids.length) return [];
+    const owners = addons.filter((addon) => addonServesOwnMeta(addon, native.type, native.metaId));
+    return getBrowserStreamsProgressive(owners, item, season, episode, onUpdate, native.ids);
+  }
   if (hasResolverConfig()) {
     const browserPromise = getBrowserStreamsProgressive(addons, item, season, episode, update)
       .catch((error) => {
@@ -274,17 +293,19 @@ async function getBrowserStreamsProgressive(
   item: MediaItem,
   season?: number,
   episode?: number,
-  onUpdate?: (streams: StreamSource[], batch: StreamSource[]) => void
+  onUpdate?: (streams: StreamSource[], batch: StreamSource[]) => void,
+  nativeIds?: string[]
 ) {
   const type = item.mediaType === "tv" ? "series" : "movie";
-  const ids = streamIds(item, season, episode);
+  const ids = nativeIds ?? streamIds(item, season, episode);
   const enabled = addons.filter((addon) => addon.enabled !== false && manifestUrlFor(addon) && supportsResource(addon, "stream"));
   const subtitleAddons = addons.filter((addon) => addon.enabled !== false && manifestUrlFor(addon) && supportsResource(addon, "subtitles"));
   // OpenSubtitles is always available as a built-in subtitle source (like the
   // Android app) — most stream addons don't provide subtitles at all. Exact
   // manifest match only: some users carry an OpenSubtitles entry with a broken
-  // base path (…/subtitles/manifest.json) that returns empty results.
-  if (!subtitleAddons.some((addon) => manifestUrlFor(addon) === BUILTIN_OPENSUBTITLES.manifestUrl)) {
+  // base path (…/subtitles/manifest.json) that returns empty results. It only
+  // knows IMDb/TMDB ids, so native addon items skip it.
+  if (!nativeIds && !subtitleAddons.some((addon) => manifestUrlFor(addon) === BUILTIN_OPENSUBTITLES.manifestUrl)) {
     subtitleAddons.push(BUILTIN_OPENSUBTITLES);
   }
   let aggregate: StreamSource[] = [];

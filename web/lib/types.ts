@@ -55,6 +55,9 @@ export interface MediaItem {
   homeServerId?: string | null;
   homeServerType?: "plex" | "jellyfin" | "emby" | null;
   tmdbId?: number | null;
+  // Native addon items (no TMDB identity, see addonNative.ts): the addon's own id.
+  addonNativeId?: string | null;
+  addonNativeAddonId?: string | null;
   // External metadata IDs & classification
   isAnime?: boolean;
   anilistId?: number | null;
@@ -496,6 +499,8 @@ export interface AppSettings {
   oledBlack: boolean;
   clockFormat: "12h" | "24h";
   showBudget: boolean;
+  /** Settings > IPTV "Favorite channels on Home" (Android `iptvFavoritesOnHome`). */
+  iptvFavoritesOnHome: boolean;
   smoothScrolling: boolean;
   spoilerBlur: boolean;
   accentColor: string;
