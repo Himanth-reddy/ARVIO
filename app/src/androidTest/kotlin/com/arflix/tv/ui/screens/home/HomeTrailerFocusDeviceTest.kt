@@ -62,9 +62,9 @@ class HomeTrailerFocusDeviceTest {
         compose.mainClock.advanceTimeBy(2300)
         val card = compose.onNodeWithTag("home_trailer_card_MOVIE_1", useUnmergedTree = true)
         card.assertWidthIsEqualTo(360.dp)
-        card.assertHeightIsEqualTo(226.5.dp)
+        card.assertHeightIsEqualTo(202.5.dp)
         val rowBounds = compose.onNodeWithTag("home_row_trending_movies", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        assertTrue("Expanded player/title clipped by the row", card.fetchSemanticsNode().boundsInRoot.bottom <= rowBounds.bottom)
+        assertTrue("Expanded preview clipped by the row", card.fetchSemanticsNode().boundsInRoot.bottom <= rowBounds.bottom)
         val output = File(context.getExternalFilesDir(null), "trailer-test").apply { mkdirs() }
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).takeScreenshot(File(output, if (poster) "home-poster-expanded.png" else "home-landscape-expanded.png"))
         compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
@@ -84,7 +84,7 @@ class HomeTrailerFocusDeviceTest {
         compose.mainClock.advanceTimeBy(2300)
         compose.runOnIdle { assertEquals(9, focus.currentItemIndex) }
         val last = compose.onNodeWithTag("home_trailer_card_MOVIE_10", useUnmergedTree = true)
-        last.assertWidthIsEqualTo(360.dp).assertHeightIsEqualTo(226.5.dp)
+        last.assertWidthIsEqualTo(360.dp).assertHeightIsEqualTo(202.5.dp)
         val lastBounds = last.fetchSemanticsNode().boundsInRoot
         assertTrue("Last card clipped horizontally", lastBounds.left >= rowBounds.left && lastBounds.right <= rowBounds.right)
         assertTrue("Last card clipped vertically", lastBounds.bottom <= rowBounds.bottom)

@@ -26,7 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -48,7 +47,6 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
-import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.TmdbImageSizing
 import com.arflix.tv.util.Constants
@@ -804,25 +802,6 @@ fun FeaturedMediaCard(
                     modifier = Modifier.fillMaxSize().clickable(onClick = onClick)
                 )
             }
-        }
-        // Focus and metadata stay below the embed, without covering its pixels.
-        val focusColor = resolveAccentColor(ArvioSkin.colors.focusOutline)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(24.dp)
-                .background(focusColor, RoundedCornerShape(bottomStart = ArvioSkin.radius.md, bottomEnd = ArvioSkin.radius.md))
-                .clickable(onClick = onClick)
-                .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            Text(
-                text = item.title,
-                style = ArvioSkin.typography.cardTitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = if (focusColor.luminance() > 0.4f) Color.Black else Color.White
-            )
         }
     }
 }
