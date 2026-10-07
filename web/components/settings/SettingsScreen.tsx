@@ -2108,6 +2108,12 @@ function TvSettingsSection() {
           ]}
         />
       </Row>
+      <Row label="Favorite channels on Home" hint="Pin your starred IPTV channels to the top of the Home screen">
+        <Toggle
+          value={settings.iptvFavoritesOnHome !== false}
+          onChange={(v) => updateSettings({ iptvFavoritesOnHome: v })}
+        />
+      </Row>
       <p className="empty">
         {playlists.length} {translateUi(" playlist(s) configured. These are cloud-saved and used by the TV page.")}</p>
       <div className="inline-form wide">

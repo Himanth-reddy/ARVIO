@@ -1,6 +1,8 @@
 import type { CatalogConfig } from "./types";
 
 export const defaultCatalogs: CatalogConfig[] = [
+  // The profile's favorite IPTV channels (see favoriteTv.ts), not a TMDB list.
+  { id: "favorite_tv", name: "Favorite TV", sourceType: "preinstalled", mediaType: "tv", enabled: true, isPreinstalled: true },
   { id: "trending_movies", name: "Trending in Movies", sourceType: "mdblist", mediaType: "movie", sourceUrl: "https://mdblist.com/lists/snoak/trending-movies", enabled: true, isPreinstalled: true },
   { id: "trending_tv", name: "Trending in Shows", sourceType: "mdblist", mediaType: "tv", sourceUrl: "https://mdblist.com/lists/snoak/trakt-s-trending-shows", enabled: true, isPreinstalled: true },
   { id: "trending_anime", name: "Trending in Anime", sourceType: "mdblist", mediaType: "tv", sourceUrl: "https://mdblist.com/lists/snoak/trending-anime-shows", enabled: true, isPreinstalled: true },
@@ -84,7 +86,6 @@ export function mergeCatalogs(saved: CatalogConfig[] | undefined, hiddenIds: str
   const cleaned = (saved ?? defaultCatalogs)
     .filter(isValidCatalog)
     .map(normalizedCatalog)
-    .filter((catalog) => catalog.id !== "favorite_tv")
     .filter((catalog) => !(
       ["sports", "popular_live_tv"].includes(catalog.id) &&
       catalog.sourceType === "preinstalled" &&

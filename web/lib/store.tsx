@@ -25,7 +25,8 @@ import { playbackPlan } from "./streamCompatibility";
 import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
 import { loadHomeServerRows } from "./homeserver";
-import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { accessibleChannels, buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { cachedFavoriteChannels, favoriteCopyIsStale, resolveFavoriteChannels, saveFavoriteChannels } from "./favoriteTv";
 import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
@@ -222,6 +223,7 @@ export const defaultSettings: AppSettings = {
   oledBlack: false,
   clockFormat: "24h",
   showBudget: true,
+  iptvFavoritesOnHome: true,
   smoothScrolling: true,
   spoilerBlur: false,
   accentColor: "arctic",
@@ -544,8 +546,10 @@ export interface AppStore {
   setToast: (value: string | null) => void;
 
   refreshData: (profileIdOverride?: string | null) => Promise<void>;
-  refreshIptv: () => Promise<void>;
+  refreshIptv: (options?: { quiet?: boolean }) => Promise<void>;
   loadIptvGuide: (channels: IptvChannel[]) => Promise<void>;
+  /** The Home "Favorite TV" row's channels, in the user's favorite order. */
+  favoriteTvChannels: IptvChannel[];
   openDetails: (item: MediaItem) => Promise<void>;
   closeDetails: () => void;
   playStream: (stream: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => void;
@@ -1230,7 +1234,9 @@ export function AppProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProfileId]);
 
-  const refreshIptv = useCallback(async () => {
+  // `quiet` is the Home background load for the Favorite TV row: no status text, no
+  // error toast — Live TV reports playlist problems when the user opens it.
+  const refreshIptv = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
     const currentSettings = settingsRef.current;
     const profileId = activeProfileIdRef.current;
     const account = authClient.session?.userId;
@@ -1239,7 +1245,7 @@ export function AppProvider({
     if (iptvRefresh.current?.key === key) return iptvRefresh.current.promise;
     const isCurrent = () => activeProfileIdRef.current === profileId && authClient.session?.userId === account && iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + (settingsRef.current.iptvStalkerUrl ? JSON.stringify([settingsRef.current.iptvStalkerUrl, settingsRef.current.iptvStalkerMac]) : "") === signature;
     const run = (async () => {
-    setBusy("Loading TV");
+    if (!quiet) setBusy("Loading TV");
     try {
       const loadedIptv = await loadIptvSnapshot(
         currentSettings.iptvPlaylists,
@@ -1253,9 +1259,9 @@ export function AppProvider({
       // on re-entry instead of rebuilding ~139k channels every visit.
       if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature, scopeKey: `${account ?? "local"}:${profileId ?? "local"}` });
     } catch (error) {
-      if (isCurrent()) setToast(error instanceof Error ? error.message : "Failed to load Live TV");
+      if (isCurrent() && !quiet) setToast(error instanceof Error ? error.message : "Failed to load Live TV");
     } finally {
-      if (isCurrent()) setBusy("");
+      if (isCurrent() && !quiet) setBusy("");
     }
     })();
     iptvRefresh.current = { key, promise: run };
@@ -1276,6 +1282,39 @@ export function AppProvider({
     });
     return () => { cancelled = true; };
   }, [iptvSnapshot.allChannels, iptvSnapshot.channels, iptvSnapshot.signature, iptvSnapshot.identitiesLoaded, settings.iptvPlaylists, settings.iptvStalkerUrl, settings.iptvStalkerMac, settings.customUserAgent, activeProfileId]);
+
+  // Home "Favorite TV" row (see favoriteTv.ts): from the loaded playlist when Live TV
+  // has one, otherwise from the copy the last loaded playlist left behind.
+  const iptvScopeKey = `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`;
+  const iptvSourceSignature = iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "");
+  const currentIptvChannels = isCurrentIptvSnapshot(iptvSnapshot, iptvScopeKey, iptvSourceSignature) ? iptvSnapshot.allChannels ?? iptvSnapshot.channels : null;
+  const favoriteTvChannels = useMemo(() => {
+    const favorites = settings.favoriteChannelIds ?? [];
+    if (!settings.iptvFavoritesOnHome || !favorites.length) return [];
+    const source = currentIptvChannels?.length ? currentIptvChannels : cachedFavoriteChannels(iptvScopeKey, iptvSourceSignature)?.channels ?? [];
+    return resolveFavoriteChannels(favorites, accessibleChannels(source, [...(settings.hiddenGroupIds ?? []), ...(settings.lockedIptvGroupIds ?? [])]));
+  }, [currentIptvChannels, iptvScopeKey, iptvSourceSignature, settings.favoriteChannelIds, settings.iptvFavoritesOnHome, settings.hiddenGroupIds, settings.lockedIptvGroupIds]);
+  useEffect(() => {
+    // An empty (cold or failed) playlist says nothing about the favorites: keep the copy.
+    if (!currentIptvChannels?.length) return;
+    const favorites = settings.favoriteChannelIds ?? [];
+    saveFavoriteChannels(iptvScopeKey, iptvSourceSignature, favorites, resolveFavoriteChannels(favorites, currentIptvChannels));
+  }, [currentIptvChannels, iptvScopeKey, iptvSourceSignature, settings.favoriteChannelIds]);
+  // Without a usable copy, load the playlist once in the background so the row can appear.
+  const favoriteTvLoadKey = useRef("");
+  useEffect(() => {
+    const favorites = settings.favoriteChannelIds ?? [];
+    if (view !== "app" || section !== "home" || !settings.iptvFavoritesOnHome || !favorites.length || currentIptvChannels?.length) return;
+    if (!settings.iptvPlaylists.some((playlist) => playlist.enabled && playlist.m3uUrl.trim()) && !settings.iptvStalkerUrl) return;
+    const key = `${iptvScopeKey}:${iptvSourceSignature}`;
+    if (favoriteTvLoadKey.current === key || !favoriteCopyIsStale(cachedFavoriteChannels(iptvScopeKey, iptvSourceSignature), favorites)) return;
+    // Home's own rows go first.
+    const timer = setTimeout(() => {
+      favoriteTvLoadKey.current = key;
+      void refreshIptv({ quiet: true });
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [view, section, currentIptvChannels, iptvScopeKey, iptvSourceSignature, refreshIptv, settings.favoriteChannelIds, settings.iptvFavoritesOnHome, settings.iptvPlaylists, settings.iptvStalkerUrl]);
 
   const loadIptvGuide = useCallback(async (channels: IptvChannel[]) => {
     if (!channels.length) return;
@@ -2707,6 +2746,7 @@ export function AppProvider({
     refreshData,
     refreshIptv,
     loadIptvGuide,
+    favoriteTvChannels,
     openDetails,
     closeDetails,
     playStream,
@@ -2743,7 +2783,7 @@ export function AppProvider({
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, addonsReady, iptvSnapshot, query, results, searchState, settingsSyncState, settings, auth, traktConnected, mdblistConnected, simklConnected, trackingPreferences, deviceCode, simklDeviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, recordChannelPlayback, playCatchup, closePlayer,
-    refreshIptv, loadIptvGuide,
+    refreshIptv, loadIptvGuide, favoriteTvChannels,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt,
     connectMdblist, disconnectMdblist, beginSimkl, pollSimkl, disconnectSimkl, updateTrackingPreferences,
     loadTraktLists, loadTraktListItems, loadTrackerLibrary,

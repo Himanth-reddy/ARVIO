@@ -499,6 +499,8 @@ export interface AppSettings {
   oledBlack: boolean;
   clockFormat: "12h" | "24h";
   showBudget: boolean;
+  /** Settings > IPTV "Favorite channels on Home" (Android `iptvFavoritesOnHome`). */
+  iptvFavoritesOnHome: boolean;
   smoothScrolling: boolean;
   spoilerBlur: boolean;
   accentColor: string;

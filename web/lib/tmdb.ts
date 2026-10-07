@@ -259,20 +259,8 @@ export async function loadCatalog(
     };
   }
 
-  if (catalog.sourceType === "preinstalled" && catalog.id === "favorite_tv") {
-    const response = await tmdb<TmdbList>("discover/tv", {
-      language,
-      sort_by: "vote_average.desc",
-      "vote_count.gte": 500
-    });
-    return {
-      id: catalog.id,
-      title: catalog.name,
-      items: response.results.map((x) => mapTmdbItem(x, "tv")),
-      sourceLabel: "TMDB",
-      layout: catalog.layout ?? "landscape"
-    };
-  }
+  // Favorite TV is the profile's IPTV favorites; Home renders it from the channel list.
+  if (catalog.sourceType === "preinstalled" && catalog.id === "favorite_tv") return null;
 
   if (catalog.sourceType === "trakt" && catalog.sourceUrl) {
     const refs = await loadTraktPublicList(catalog.sourceUrl) as Array<{ type: MediaType; id: number }>;
