@@ -29,10 +29,15 @@ class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @Applic
 
     suspend fun peek(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
         diskMutex.withLock {
-            if (cached.isNotEmpty()) cached else runCatching {
-                if (disk.exists() && System.currentTimeMillis() - disk.lastModified() < 86_400_000 && disk.length() <= 6_000_000)
-                    parseSportsMetadata(disk.readText()).also { cached = it; lastSuccess = disk.lastModified() } else emptyList()
-            }.getOrDefault(emptyList())
+            if (cached.isNotEmpty()) cached else try {
+                if (disk.exists() && System.currentTimeMillis() - disk.lastModified() < 86_400_000 && disk.length() <= 6_000_000) {
+                    parseSportsMetadata(disk.readText()).also { cached = it; lastSuccess = disk.lastModified() }
+                } else emptyList()
+            } catch (e: java.io.IOException) {
+                emptyList()
+            } catch (e: IllegalStateException) {
+                emptyList()
+            }
         }
     }
 
@@ -43,7 +48,7 @@ class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @Applic
             val endpoint = BuildConfig.SPORTS_METADATA_URL.ifBlank {
                 "${Constants.NETLIFY_BACKEND_URL.ifBlank { "https://auth.arvio.tv/.netlify/functions" }}/sports-metadata"
             }
-            val result = runCatching {
+            val result = try {
                 http.newCall(Request.Builder().url(endpoint).get().build()).execute().use { response ->
                     check(response.isSuccessful)
                     val body = response.body ?: error("Empty sports metadata")
@@ -52,10 +57,16 @@ class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @Applic
                     check(!body.source().request(6_000_001L))
                     val json = body.source().readUtf8()
                     val parsed = parseSportsMetadata(json)
-                    if (parsed.isNotEmpty()) diskMutex.withLock { runCatching { disk.writeText(json) } }
+                    if (parsed.isNotEmpty()) diskMutex.withLock {
+                        try { disk.writeText(json) } catch (e: java.io.IOException) { }
+                    }
                     parsed
                 }
-            }.getOrNull()
+            } catch (e: java.io.IOException) {
+                null
+            } catch (e: IllegalStateException) {
+                null
+            }
             if (result != null) { cached = result; lastSuccess = System.currentTimeMillis() }
             else if (System.currentTimeMillis() - lastSuccess > 86_400_000) cached = emptyList()
             retryAfter = now + if (result.isNullOrEmpty()) 60_000 else 120_000

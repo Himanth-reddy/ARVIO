@@ -10,10 +10,14 @@ internal enum class HomeServerLoginFailure {
         fun detect(status: Int, body: String): HomeServerLoginFailure? {
             if (status == 404 || status == 405 || body.trimStart().startsWith("<")) return ENDPOINT
             if (status != 401) return null
-            val message = runCatching {
-                JsonParser.parseString(body).asJsonObject.get("Message")?.asString
-                    ?: JsonParser.parseString(body).asJsonObject.get("message")?.asString
-            }.getOrNull()?.lowercase().orEmpty()
+            val message = try {
+                val json = JsonParser.parseString(body).asJsonObject
+                json.get("Message")?.asString ?: json.get("message")?.asString
+            } catch (e: com.google.gson.JsonSyntaxException) {
+                null
+            } catch (e: IllegalStateException) {
+                null
+            }?.lowercase().orEmpty()
             return when {
                 "profile pin" in message || "profile is pin protected" in message || "password#pin" in message -> PIN
                 "username#profile" in message || "profile not found" in message || "profile name is ambiguous" in message -> PROFILE

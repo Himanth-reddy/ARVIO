@@ -52,7 +52,7 @@ internal object StalkerPortalSupport {
     fun isRoutableStreamAddress(url: String): Boolean {
         val trimmed = url.trim()
         if (trimmed.isBlank()) return false
-        val host = runCatching { URI(trimmed).host }.getOrNull().orEmpty().lowercase(Locale.US)
+        val host = try { URI(trimmed).host } catch (e: java.net.URISyntaxException) { null }.orEmpty().lowercase(Locale.US)
         if (host.isBlank()) return false
         return host !in UNROUTABLE_STREAM_HOSTS
     }
@@ -178,33 +178,32 @@ internal object StalkerPortalSupport {
         portal: StalkerPortalEntry,
         index: Int
     ): StalkerPortalEntry? {
-        val portalUrl = runCatching { portal.portalUrl }.getOrNull().orEmpty().trim().trimEnd('/')
-        val macAddress = runCatching { portal.macAddress }.getOrNull().orEmpty().trim().uppercase()
+        val portalUrl = try { portal.portalUrl } catch (e: ClassCastException) { null }.orEmpty().trim().trimEnd('/')
+        val macAddress = try { portal.macAddress } catch (e: ClassCastException) { null }.orEmpty().trim().uppercase()
         if (portalUrl.isBlank() || macAddress.isBlank()) return null
         return StalkerPortalEntry(
-            id = runCatching { portal.id }.getOrNull().orEmpty().trim().ifBlank { "stalker${index + 1}" },
-            name = runCatching { portal.name }.getOrNull().orEmpty().trim().ifBlank { "Portal ${index + 1}" },
+            id = try { portal.id } catch (e: ClassCastException) { null }.orEmpty().trim().ifBlank { "stalker${index + 1}" },
+            name = try { portal.name } catch (e: ClassCastException) { null }.orEmpty().trim().ifBlank { "Portal ${index + 1}" },
             portalUrl = portalUrl,
             macAddress = macAddress,
-            enabled = runCatching { portal.enabled }.getOrDefault(true),
-            // Same guard as `enabled` above, plus the `?: true` fallback: portals
-            // written before these fields existed carry no value for them, and
-            // "no value" has to mean "on" - see [StalkerPortalEntry].
-            importLiveTv = runCatching { portal.importLiveTv }.getOrDefault(true) ?: true,
-            importVod = runCatching { portal.importVod }.getOrDefault(true) ?: true,
-            importSeries = runCatching { portal.importSeries }.getOrDefault(true) ?: true
+            enabled = try { portal.enabled } catch (e: ClassCastException) { true },
+            importLiveTv = try { portal.importLiveTv ?: true } catch (e: ClassCastException) { true },
+            importVod = try { portal.importVod ?: true } catch (e: ClassCastException) { true },
+            importSeries = try { portal.importSeries ?: true } catch (e: ClassCastException) { true }
         )
     }
 
     fun decodeStalkerPortals(raw: String, maxPortals: Int): List<StalkerPortalEntry> {
         if (raw.isBlank()) return emptyList()
-        return runCatching {
+        return try {
             val type = TypeToken.getParameterized(List::class.java, StalkerPortalEntry::class.java).type
             normalizeStalkerPortals(
                 gson.fromJson<List<StalkerPortalEntry>>(raw, type).orEmpty(),
                 maxPortals,
             )
-        }.getOrDefault(emptyList())
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            emptyList()
+        }
     }
 
     fun normalizeStalkerPortals(
