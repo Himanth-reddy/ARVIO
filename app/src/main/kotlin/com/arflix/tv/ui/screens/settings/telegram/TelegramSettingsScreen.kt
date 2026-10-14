@@ -67,6 +67,7 @@ import com.arflix.tv.data.telegram.TelegramConfig
 import com.arflix.tv.ui.components.LoadingIndicator
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundElevated
+import com.arflix.tv.ui.theme.ErrorRed
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.SuccessGreen
 import com.arflix.tv.ui.theme.TextPrimary
@@ -223,14 +224,14 @@ private fun IdleContent(onConnect: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.72f)
-                    .background(Color(0xFF331A1A), RoundedCornerShape(10.dp))
-                    .border(1.dp, Color(0xFFFF5252).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                    .background(ErrorRed.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                    .border(1.dp, ErrorRed.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Text(
                     text = stringResource(R.string.telegram_not_configured),
                     style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                    color = Color(0xFFFF8A80),
+                    color = ErrorRed,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
