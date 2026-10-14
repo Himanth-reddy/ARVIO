@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
@@ -1081,12 +1082,14 @@ private fun SidebarRow(
     var longPressTriggered by remember { mutableStateOf(false) }
     var longPressJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
+    val isTouch = LocalDeviceType.current.isTouchDevice()
     val bg = when {
         focused -> Color.White
+        active && isTouch -> Color.White
         active -> LiveColors.FocusBg
         else -> Color.Transparent
     }
-    val foreground = if (focused) Color.Black else if (active) LiveColors.Fg else LiveColors.FgDim
+    val foreground = if (focused) Color.Black else if (active && isTouch) Color.Black else if (active) LiveColors.Fg else LiveColors.FgDim
     val secondary = if (focused) Color.Black.copy(alpha = .7f) else LiveColors.FgDim
     Box(
         modifier = Modifier
@@ -1104,7 +1107,7 @@ private fun SidebarRow(
                     if (it.isFocused) onFocused?.invoke()
                 }
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(if (active && isTouch) CircleShape else RoundedCornerShape(8.dp))
                 .drawBehind { drawRect(bg) }
                 .onPreviewKeyEvent { ev ->
                     val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter

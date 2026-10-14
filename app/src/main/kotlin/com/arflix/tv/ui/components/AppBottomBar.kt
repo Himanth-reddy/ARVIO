@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.ripple
+import androidx.compose.material3.Text
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.RectangleShape
@@ -253,12 +254,24 @@ fun AppBottomBar(
                         .then(if (isFocused) Modifier.border(1.dp, accent, CircleShape) else Modifier),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = item.icon,
-                        contentDescription = label,
-                        tint = iconColor,
-                        modifier = Modifier.size(spec.iconSizeDp.dp)
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Icon(
+                            imageVector = item.icon,
+                            contentDescription = label,
+                            tint = iconColor,
+                            modifier = Modifier.size(spec.iconSizeDp.dp)
+                        )
+                        Text(
+                            text = label.uppercase(),
+                            color = iconColor,
+                            fontSize = spec.labelFontSizeSp.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }
