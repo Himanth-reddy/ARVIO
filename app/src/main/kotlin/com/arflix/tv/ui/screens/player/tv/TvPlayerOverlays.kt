@@ -89,14 +89,14 @@ fun TvVolumeIndicator(
                 modifier = Modifier
                     .width(8.dp)
                     .height(100.dp)
-                    .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+                    .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
             ) {
                 val volFrac = if (maxVolume > 0) (currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f) else 0f
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .fillMaxHeight(volFrac)
-                        .background(playerAccent, RoundedCornerShape(4.dp))
+                        .background(playerAccent, RoundedCornerShape(8.dp))
                         .align(Alignment.BottomCenter)
                 )
             }
@@ -124,7 +124,7 @@ fun TvAspectIndicator(
     ) {
         Box(
             modifier = Modifier
-                .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+                .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
                 .padding(horizontal = 24.dp, vertical = 14.dp)
         ) {
             Text(
@@ -195,13 +195,13 @@ fun TvSkipOverlay(
                         modifier = Modifier
                             .weight(1f)
                             .height(5.dp)
-                            .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
+                            .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(previewProgress)
                                 .height(5.dp)
-                                .background(Color.White, RoundedCornerShape(3.dp))
+                                .background(Color.White, RoundedCornerShape(8.dp))
                         )
                     }
                     Text(

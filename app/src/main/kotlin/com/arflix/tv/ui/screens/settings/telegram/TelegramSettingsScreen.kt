@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -208,8 +209,8 @@ private fun IdleContent(onConnect: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth(0.72f)
-                .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+                .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(12.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Text(
@@ -224,8 +225,8 @@ private fun IdleContent(onConnect: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.72f)
-                    .background(ErrorRed.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
-                    .border(1.dp, ErrorRed.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                    .background(ErrorRed.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+                    .border(1.dp, ErrorRed.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Text(
@@ -405,8 +406,8 @@ private fun CodeContent(codeLength: Int, onSubmit: (String) -> Unit) {
         Spacer(modifier = Modifier.height(40.dp))
         Row(
             modifier = Modifier
-                .background(SuccessGreen.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
-                .border(1.dp, SuccessGreen.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                .background(SuccessGreen.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                .border(1.dp, SuccessGreen.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
@@ -649,8 +650,8 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
 private fun ActionButton(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
-            .border(1.dp, Pink.copy(alpha = 0.4f), RoundedCornerShape(999.dp))
+            .background(Pink.copy(alpha = 0.15f), CircleShape)
+            .border(1.dp, Pink.copy(alpha = 0.4f), CircleShape)
             .clickable { onClick() }
             .padding(horizontal = 24.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center

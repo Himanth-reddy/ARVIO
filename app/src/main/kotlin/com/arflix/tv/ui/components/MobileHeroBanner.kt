@@ -247,7 +247,7 @@ private fun BannerMeta(year: String, rating: String) {
                 modifier = Modifier
                     .width(28.dp)
                     .height(14.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(2.dp))
             )
             Text(
                 text = rating,

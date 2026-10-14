@@ -693,14 +693,14 @@ fun YouTubeTrailerModal(
                             .fillMaxWidth()
                             .height(4.dp)
                             .alpha(barAlpha)
-                            .clip(RoundedCornerShape(2.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(Color.White.copy(alpha = 0.25f))
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(fraction = progress)
                                 .height(4.dp)
-                                .clip(RoundedCornerShape(2.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(ArvioSkin.colors.focusOutline)
                         )
                     }
@@ -831,7 +831,7 @@ private fun YouTubeStripButton(
 ) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(
                 if (isFocused) ArvioSkin.colors.focusOutline else Color.White.copy(alpha = 0.12f)
             )

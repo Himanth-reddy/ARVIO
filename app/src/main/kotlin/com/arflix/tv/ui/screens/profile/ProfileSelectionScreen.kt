@@ -703,7 +703,7 @@ private fun ManageProfilesButton(
                 if (isTouchDevice) Modifier.clickable { onClick() } else Modifier
             )
             .onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
-        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(4.dp)),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
             focusedContainerColor = Color.White.copy(alpha = 0.1f)
@@ -711,11 +711,11 @@ private fun ManageProfilesButton(
         border = ClickableSurfaceDefaults.border(
             border = androidx.tv.material3.Border(
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(4.dp)
+                shape = RoundedCornerShape(8.dp)
             ),
             focusedBorder = androidx.tv.material3.Border(
                 border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                shape = RoundedCornerShape(4.dp)
+                shape = RoundedCornerShape(8.dp)
             )
         )
     ) {
@@ -740,7 +740,7 @@ private fun CloudConnectButton(
     if (isTouchDevice) {
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(
                     brush = Brush.horizontalGradient(
                         colors = listOf(
@@ -749,7 +749,7 @@ private fun CloudConnectButton(
                         )
                     )
                 )
-                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
                 .clickable { onClick() }
                 .padding(horizontal = 24.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -772,7 +772,7 @@ private fun CloudConnectButton(
         Surface(
             onClick = onClick,
             modifier = Modifier.onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
-            shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(24.dp)),
+            shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(16.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.White.copy(alpha = 0.06f),
                 focusedContainerColor = Color.White.copy(alpha = 0.18f)
@@ -780,11 +780,11 @@ private fun CloudConnectButton(
             border = ClickableSurfaceDefaults.border(
                 border = androidx.tv.material3.Border(
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                    shape = RoundedCornerShape(24.dp)
+                    shape = RoundedCornerShape(16.dp)
                 ),
                 focusedBorder = androidx.tv.material3.Border(
                     border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.6f)),
-                    shape = RoundedCornerShape(24.dp)
+                    shape = RoundedCornerShape(16.dp)
                 )
             )
         ) {

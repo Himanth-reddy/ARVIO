@@ -218,7 +218,7 @@ fun LoadingOverlay(
                 .padding(48.dp)
                 .background(
                     BackgroundElevated,
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
                 )
                 .padding(1.dp)
         ) {

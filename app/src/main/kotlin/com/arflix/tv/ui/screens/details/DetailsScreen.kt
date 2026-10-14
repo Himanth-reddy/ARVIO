@@ -2061,7 +2061,7 @@ private fun DetailsContent(
                     if (showInCinema) {
                         Box(
                             modifier = Modifier
-                                .background(inCinemaColor, RoundedCornerShape(6.dp))
+                                .background(inCinemaColor, RoundedCornerShape(8.dp))
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
@@ -3645,9 +3645,9 @@ internal fun MdbExternalRatingsRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(Color.Black.copy(alpha = 0.62f))
-                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(4.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 7.dp, vertical = 4.dp)
             ) {
                 Text(
@@ -3687,7 +3687,7 @@ private fun MobileScoreBadge(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
-            .background(backgroundColor, RoundedCornerShape(3.dp))
+            .background(backgroundColor, RoundedCornerShape(8.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp)
     ) {
         Text(
@@ -3793,7 +3793,7 @@ private fun MobileIconActionButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(16.dp)
     val targetBackgroundColor = when {
         !enabled -> Color.White.copy(alpha = 0.04f)
         isActive -> Color.White.copy(alpha = 0.18f)
@@ -4101,7 +4101,7 @@ internal fun EpisodeCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                 ) {
                     Text(
@@ -4125,7 +4125,7 @@ internal fun EpisodeCard(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(horizontal = 8.dp, vertical = 8.dp)
-                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                 ) {
                     DetailsImdbSvgRatingBadge(
@@ -4200,13 +4200,13 @@ internal fun EpisodeCard(
                         .fillMaxWidth()
                         .padding(horizontal = 10.dp, vertical = 7.dp)
                         .height(4.dp)
-                        .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(2.dp))
+                        .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(playbackProgress.percent / 100f)
                             .height(4.dp)
-                            .background(Pink, RoundedCornerShape(2.dp))
+                            .background(Pink, RoundedCornerShape(8.dp))
                     )
                 }
             }
@@ -4252,7 +4252,7 @@ internal fun SeasonButton(
     onClick: () -> Unit = {},
     onLongClick: (() -> Unit)? = null
 ) {
-    val shape = RoundedCornerShape(6.dp)
+    val shape = CircleShape
     val targetBackgroundColor = when {
         isFocused -> Color.White
         else -> Color.Transparent
@@ -4667,8 +4667,8 @@ private fun ReviewCard(
 private fun MetaPill(text: String) {
     Box(
         modifier = Modifier
-            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(6.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
         Text(
@@ -4684,7 +4684,7 @@ private fun MetaPill(text: String) {
 private fun ImdbBadge(rating: String) {
     Box(
         modifier = Modifier
-            .background(Color(0xFFF5C518), RoundedCornerShape(6.dp))
+            .background(Color(0xFFF5C518), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Row(
@@ -4713,8 +4713,8 @@ private fun OngoingBadge() {
 
     Row(
         modifier = Modifier
-            .background(cyanColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-            .border(1.dp, cyanColor.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+            .background(cyanColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+            .border(1.dp, cyanColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -4738,8 +4738,8 @@ private fun OngoingBadge() {
 private fun GenreBadge(genre: String) {
     Box(
         modifier = Modifier
-            .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-            .border(1.dp, Pink.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+            .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+            .border(1.dp, Pink.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
@@ -4758,8 +4758,8 @@ private fun LanguageBadge(language: String) {
 
     Box(
         modifier = Modifier
-            .background(purpleColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-            .border(1.dp, purpleColor.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+            .background(purpleColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+            .border(1.dp, purpleColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
@@ -4778,8 +4778,8 @@ private fun BudgetBadge(budget: String) {
 
     Box(
         modifier = Modifier
-            .background(greenColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-            .border(1.dp, greenColor.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+            .background(greenColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+            .border(1.dp, greenColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
@@ -4803,8 +4803,8 @@ private fun StatusBadge(status: String) {
 
     Box(
         modifier = Modifier
-            .background(bgColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-            .border(1.dp, bgColor.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+            .background(bgColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+            .border(1.dp, bgColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(

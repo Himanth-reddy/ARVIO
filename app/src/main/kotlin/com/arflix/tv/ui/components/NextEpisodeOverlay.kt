@@ -182,9 +182,9 @@ fun NextEpisodeOverlay(
                                 BackgroundElevated.copy(alpha = 0.98f)
                             )
                         ),
-                        shape = RoundedCornerShape(20.dp)
+                        shape = RoundedCornerShape(16.dp)
                     )
-                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
                     .padding(24.dp)
             ) {
                 Column {

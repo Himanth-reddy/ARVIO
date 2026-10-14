@@ -234,7 +234,7 @@ fun PinEntryDialog(
                             Box(
                                 modifier = Modifier
                                     .size(46.dp)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(BackgroundElevated)
                                     .border(
                                         width = if (isFilled || isCurrentSlot) 2.dp else 1.dp,
@@ -243,7 +243,7 @@ fun PinEntryDialog(
                                             isCurrentSlot -> Color.White.copy(alpha = 0.85f)
                                             else -> Color.White.copy(alpha = 0.2f)
                                         },
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {

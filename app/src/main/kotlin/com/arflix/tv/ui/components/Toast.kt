@@ -101,16 +101,16 @@ fun Toast(
                     .padding(bottom = 48.dp)
                     .shadow(
                         elevation = 18.dp,
-                        shape = RoundedCornerShape(18.dp),
+                        shape = RoundedCornerShape(16.dp),
                         ambientColor = Color.Black.copy(alpha = 0.32f),
                         spotColor = Color.Black.copy(alpha = 0.32f)
                     )
-                    .clip(RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xE61A1E28))
                     .border(
                         width = 1.dp,
                         color = accentColor.copy(alpha = 0.55f),
-                        shape = RoundedCornerShape(18.dp)
+                        shape = RoundedCornerShape(16.dp)
                     )
                     .widthIn(max = 560.dp)
                     .padding(horizontal = 18.dp, vertical = 13.dp),

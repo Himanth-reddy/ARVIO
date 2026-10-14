@@ -691,9 +691,9 @@ fun MobilePlayerBottomSection(
                 Box(
                     modifier = Modifier
                         .offset { IntOffset(needleOffsetPx.roundToInt(), 0) }
-                        .shadow(if (isScrubbing) 6.dp else 2.dp, RoundedCornerShape(8.dp))
+                        .shadow(if (isScrubbing) 6.dp else 2.dp, RoundedCornerShape(2.dp))
                         .size(width = needleWidth, height = needleHeight)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(2.dp))
                         .background(Color.White)
                 )
 

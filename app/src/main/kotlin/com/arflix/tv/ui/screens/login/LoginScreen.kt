@@ -221,12 +221,12 @@ fun LoginScreen(
             Column(
                 modifier = Modifier
                     .width(420.dp)
-                    .clip(RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFF151520))
                     .border(
                         1.dp,
                         Color.White.copy(alpha = 0.08f),
-                        RoundedCornerShape(18.dp)
+                        RoundedCornerShape(16.dp)
                     )
                     .padding(32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -422,7 +422,7 @@ private fun PremiumTextField(
                 }
             )
             .padding(2.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(backgroundColor)
     ) {
         BasicTextField(

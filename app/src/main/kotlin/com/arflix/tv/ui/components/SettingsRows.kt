@@ -228,7 +228,7 @@ fun SettingsToggleRow(
                 .height(24.dp)
                 .background(
                     color = if (isEnabled) SuccessGreen else if (isFocused) Color.Black.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.2f),
-                    shape = RoundedCornerShape(13.dp)
+                    shape = RoundedCornerShape(16.dp)
                 )
                 .padding(3.dp),
             contentAlignment = if (isEnabled) Alignment.CenterEnd else Alignment.CenterStart
@@ -238,7 +238,7 @@ fun SettingsToggleRow(
                     .size(18.dp)
                     .background(
                         color = Color.White,
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
             )
         }
@@ -363,7 +363,7 @@ fun MobileSettingsRow(
                             .height(24.dp)
                             .background(
                                 color = if (checked) SuccessGreen else Color.White.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(13.dp)
+                                shape = RoundedCornerShape(16.dp)
                             )
                             .padding(3.dp),
                         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
@@ -373,7 +373,7 @@ fun MobileSettingsRow(
                                 .size(18.dp)
                                 .background(
                                     color = Color.White,
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                         )
                     }

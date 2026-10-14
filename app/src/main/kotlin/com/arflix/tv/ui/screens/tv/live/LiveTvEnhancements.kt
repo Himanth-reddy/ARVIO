@@ -325,7 +325,7 @@ fun ProviderSelector(
                 Box(
                     modifier = Modifier
                         .defaultMinSize(minWidth = 110.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(CircleShape)
                         .background(
                             when {
                                 selected -> liveAccent().copy(alpha = 0.18f)
@@ -340,7 +340,7 @@ fun ProviderSelector(
                                 selected -> liveAccent()
                                 else -> LiveColors.Divider
                             },
-                            shape = RoundedCornerShape(999.dp),
+                            shape = CircleShape,
                         )
                         .then(if (selected && focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                         .onFocusChanged { if (it.hasFocus) focusedId = provider.id }
@@ -690,12 +690,12 @@ private fun VariantRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(if (focused) LiveColors.Panel else LiveColors.PanelDeep)
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused) LiveColors.FocusRing else LiveColors.Divider,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
             )
             .onFocusChanged { focused = it.hasFocus }
             .focusable()
@@ -740,7 +740,7 @@ private fun VariantRow(
             text = channel.quality.label,
             style = LiveType.Badge.copy(color = LiveColors.Fg),
             modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(LiveColors.PanelRaised)
                 .padding(horizontal = 8.dp, vertical = 3.dp),
         )
@@ -748,7 +748,7 @@ private fun VariantRow(
             text = channel.lang,
             style = LiveType.Badge.copy(color = LiveColors.FgMute),
             modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(LiveColors.PanelRaised)
                 .padding(horizontal = 8.dp, vertical = 3.dp),
         )

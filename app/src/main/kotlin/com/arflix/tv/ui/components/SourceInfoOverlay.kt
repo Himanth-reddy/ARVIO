@@ -176,7 +176,7 @@ fun PlayerInfoBar(
         if (isLive) {
             Row(
                 modifier = Modifier
-                    .background(ErrorRed, RoundedCornerShape(4.dp))
+                    .background(ErrorRed, RoundedCornerShape(8.dp))
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

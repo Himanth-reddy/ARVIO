@@ -84,6 +84,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentPaste
@@ -3519,7 +3520,7 @@ private fun QualityFiltersModal(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp))
+                                    .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(12.dp))
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -3600,7 +3601,7 @@ private fun SettingsChip(
     val chipFocusColor = resolveAccentColor(fallback = Color.White)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(
                 when {
                     !enabled -> Color.White.copy(alpha = 0.06f)
@@ -3611,7 +3612,7 @@ private fun SettingsChip(
             .border(
                 width = if (isFocused) 1.dp else 0.dp,
                 color = if (isFocused) chipFocusColor else Color.Transparent,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(12.dp)
             )
             .clickable(enabled = enabled) { onClick() }
             .padding(vertical = 12.dp),
@@ -4169,7 +4170,7 @@ private fun CloudPairModal(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(Color.White)
                                 .padding(10.dp),
                             contentAlignment = Alignment.Center
@@ -4231,10 +4232,10 @@ private fun CloudPairModal(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(
                                     color = SuccessGreen,
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { onUseEmailPassword() }
                                 .padding(vertical = 14.dp),
@@ -4259,10 +4260,10 @@ private fun CloudPairModal(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(
                                     color = Color.White.copy(alpha = 0.1f),
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { onDismiss() }
                                 .padding(vertical = 12.dp),
@@ -4285,12 +4286,12 @@ private fun CloudPairModal(
                             modifier = Modifier
                                 .background(
                                     color = if (isCancelFocused) Color.White.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.1f),
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .border(
                                     width = if (isCancelFocused) 2.dp else 0.dp,
                                     color = if (isCancelFocused) Pink else Color.Transparent,
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { onDismiss() }
                                 .padding(vertical = 12.dp, horizontal = 14.dp),
@@ -4317,12 +4318,12 @@ private fun CloudPairModal(
                             modifier = Modifier
                                 .background(
                                     color = if (isFallbackFocused) SuccessGreen else Pink.copy(alpha = 0.6f),
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .border(
                                     width = if (isFallbackFocused) 2.dp else 0.dp,
                                     color = if (isFallbackFocused) SuccessGreen.copy(alpha = 0.5f) else Color.Transparent,
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { onUseEmailPassword() }
                                 .padding(vertical = 12.dp, horizontal = 14.dp),
@@ -4538,7 +4539,7 @@ internal fun TraktActivationModal(
                             Box(
                                 modifier = Modifier
                                     .size(qrContainerSize)
-                                    .background(Color.White, RoundedCornerShape(14.dp))
+                                    .background(Color.White, RoundedCornerShape(16.dp))
                                     .padding(12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -4670,7 +4671,7 @@ internal fun TraktActivationModal(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(accentColor, RoundedCornerShape(10.dp))
+                            .background(accentColor, RoundedCornerShape(12.dp))
                             .clickable { onOpenUrl() }
                             .padding(vertical = 13.dp, horizontal = 18.dp),
                         contentAlignment = Alignment.Center
@@ -4688,8 +4689,8 @@ internal fun TraktActivationModal(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
-                                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
                                 .clickable { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(userCode)) }
                                 .padding(vertical = 12.dp, horizontal = 18.dp),
                             contentAlignment = Alignment.Center
@@ -4709,8 +4710,8 @@ internal fun TraktActivationModal(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
-                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
                             .clickable { onSecondaryAction() }
                             .padding(vertical = 12.dp, horizontal = 18.dp),
                         contentAlignment = Alignment.Center
@@ -4754,7 +4755,7 @@ internal fun TraktActivationModal(
                         modifier = Modifier
                             .background(
                                 if (isMobile && onOpenUrl != null) Color.White.copy(alpha = 0.08f) else accentColor,
-                                RoundedCornerShape(10.dp)
+                                RoundedCornerShape(12.dp)
                             )
                             .then(if (isMobile && onOpenUrl != null) Modifier.fillMaxWidth() else Modifier)
                             .clickable { onDismiss() }
@@ -4795,7 +4796,7 @@ private fun ActivationDialogButton(
             .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .then(
                 if (isFocused) {
-                    Modifier.border(3.dp, Color.White, RoundedCornerShape(13.dp))
+                    Modifier.border(3.dp, Color.White, RoundedCornerShape(16.dp))
                 } else {
                     Modifier
                 }
@@ -4807,7 +4808,7 @@ private fun ActivationDialogButton(
                 .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
                 .background(
                     if (isPrimary) accentColor else Color.White.copy(alpha = 0.08f),
-                    RoundedCornerShape(10.dp)
+                    RoundedCornerShape(12.dp)
                 )
                 .then(
                     if (isPrimary) {
@@ -4816,7 +4817,7 @@ private fun ActivationDialogButton(
                         Modifier.border(
                             1.dp,
                             Color.White.copy(alpha = 0.14f),
-                            RoundedCornerShape(10.dp)
+                            RoundedCornerShape(12.dp)
                         )
                     }
                 )
@@ -4934,8 +4935,8 @@ private fun DiscordActivationModal(
                 Column(
                     modifier = Modifier
                         .width(580.dp)
-                        .background(BackgroundElevated, RoundedCornerShape(18.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+                        .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
                         .pointerInput(Unit) {
                             detectTapGestures { /* consume tap events to prevent scrim dismissal */ }
                         }
@@ -4945,7 +4946,7 @@ private fun DiscordActivationModal(
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(accentColor.copy(alpha = 0.18f), RoundedCornerShape(10.dp)),
+                                .background(accentColor.copy(alpha = 0.18f), RoundedCornerShape(12.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -4987,7 +4988,7 @@ private fun DiscordActivationModal(
                             Box(
                                 modifier = Modifier
                                     .size(qrContainerSize)
-                                    .background(Color.White, RoundedCornerShape(14.dp))
+                                    .background(Color.White, RoundedCornerShape(16.dp))
                                     .padding(12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -6501,7 +6502,7 @@ private fun UnknownSourcesModal(
                         if (LocalDeviceType.current.isTouchDevice()) Modifier.fillMaxWidth(0.92f).widthIn(max = 600.dp)
                         else Modifier.width(620.dp)
                     )
-                    .background(BackgroundElevated, RoundedCornerShape(18.dp))
+                    .background(BackgroundElevated, RoundedCornerShape(16.dp))
                     .padding(if (LocalDeviceType.current.isTouchDevice()) 20.dp else 28.dp)
                     .focusRequester(focusRequester)
                     .focusable()
@@ -6568,12 +6569,12 @@ private fun UpdateActionButton(
 
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(background, RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(background, RoundedCornerShape(12.dp))
             .border(
                 width = if (isFocused || highlighted) 1.5.dp else 1.dp,
                 color = borderColor,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(12.dp)
             )
             .clickable(enabled = enabled) { onClick() }
             .padding(horizontal = 18.dp, vertical = 12.dp),
@@ -6649,7 +6650,7 @@ private fun SettingsSectionItem(
                 .size(28.dp)
                 .background(
                     if (isSelected || isFocused) accentColor.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.05f),
-                    RoundedCornerShape(9.dp)
+                    RoundedCornerShape(12.dp)
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -6674,7 +6675,7 @@ private fun SettingsSectionItem(
                 modifier = Modifier
                     .width(3.dp)
                     .height(20.dp)
-                    .background(accentColor, RoundedCornerShape(99.dp))
+                    .background(accentColor, CircleShape)
             )
         }
     }
@@ -6733,15 +6734,15 @@ private fun TvSettingsStatusPill(label: String) {
     Row(
         modifier = Modifier
             .height(26.dp)
-            .background(Color.White.copy(alpha = 0.065f), RoundedCornerShape(999.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(999.dp))
+            .background(Color.White.copy(alpha = 0.065f), CircleShape)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
                 .size(6.dp)
-                .background(resolveAccentColor(fallback = Pink), RoundedCornerShape(99.dp))
+                .background(resolveAccentColor(fallback = Pink), CircleShape)
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
@@ -6765,9 +6766,9 @@ private fun TvSettingsInsightPanel(
     val help = tvSettingsFocusedHelp(section, focusedIndex)
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(Color(0xFF050505))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
             .padding(22.dp)
     ) {
         Text(
@@ -7918,7 +7919,7 @@ private fun AiModelDialog(
                             containerColor = if (isSelected) Pink.copy(alpha = 0.15f) else BackgroundElevated,
                             focusedContainerColor = Pink.copy(alpha = 0.25f)
                         ),
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp))
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp))
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -8531,8 +8532,8 @@ private fun IptvSettings(
                                 )
                                 Spacer(modifier = Modifier.width(16.dp))
                                 // Toggle chip
-                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (playlist.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onTogglePlaylist(index) }.padding(3.dp), contentAlignment = if (playlist.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
-                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (playlist.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(16.dp)).clickable { onTogglePlaylist(index) }.padding(3.dp), contentAlignment = if (playlist.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(12.dp)))
                                 }
                             }
                         }
@@ -8584,8 +8585,8 @@ private fun IptvSettings(
                                         .padding(6.dp)
                                 )
                                 Spacer(modifier = Modifier.width(16.dp))
-                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (portal.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onToggleStalkerPortal(portal.id) }.padding(3.dp), contentAlignment = if (portal.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
-                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (portal.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(16.dp)).clickable { onToggleStalkerPortal(portal.id) }.padding(3.dp), contentAlignment = if (portal.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(12.dp)))
                                 }
                             }
                         }
@@ -8658,8 +8659,8 @@ private fun IptvSettings(
             }
             if (isLoading && !progressText.isNullOrBlank()) {
                 Text(stringResource(R.string.settings_progress_format, progressText, progressPercent.coerceIn(0, 100)), style = ArflixTypography.caption, color = TextSecondary)
-                Box(modifier = Modifier.fillMaxWidth().height(8.dp).background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(999.dp))) {
-                    Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(progressPercent.coerceIn(0, 100) / 100f).background(Pink, RoundedCornerShape(999.dp)))
+                Box(modifier = Modifier.fillMaxWidth().height(8.dp).background(Color.White.copy(alpha = 0.12f), CircleShape)) {
+                    Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(progressPercent.coerceIn(0, 100) / 100f).background(Pink, CircleShape))
                 }
             }
         }
@@ -8842,12 +8843,12 @@ private fun IptvSettings(
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(stringResource(R.string.settings_progress_format, progressText, progressPercent.coerceIn(0, 100)), style = ArflixTypography.caption, color = TextSecondary)
                 Spacer(modifier = Modifier.height(6.dp))
-                Box(modifier = Modifier.fillMaxWidth().height(8.dp).background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(999.dp))) { Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(progressPercent.coerceIn(0, 100) / 100f).background(Pink, RoundedCornerShape(999.dp))) }
+                Box(modifier = Modifier.fillMaxWidth().height(8.dp).background(Color.White.copy(alpha = 0.12f), CircleShape)) { Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(progressPercent.coerceIn(0, 100) / 100f).background(Pink, CircleShape)) }
             }
             if (!statusMessage.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(16.dp))
                 val statusColor = when (statusType) { ToastType.SUCCESS -> SuccessGreen; ToastType.ERROR -> Color(0xFFFF8A8A); ToastType.INFO -> TextSecondary }
-                Box(modifier = Modifier.fillMaxWidth().background(statusColor.copy(alpha = 0.12f), RoundedCornerShape(10.dp)).border(1.dp, statusColor.copy(alpha = 0.35f), RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) { Text(statusMessage, style = ArflixTypography.caption, color = statusColor) }
+                Box(modifier = Modifier.fillMaxWidth().background(statusColor.copy(alpha = 0.12f), RoundedCornerShape(12.dp)).border(1.dp, statusColor.copy(alpha = 0.35f), RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) { Text(statusMessage, style = ArflixTypography.caption, color = statusColor) }
             }
         }
     }
@@ -8932,9 +8933,9 @@ internal fun CatalogDiscoveryModal(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(16.dp))
                             .background(Color.Black.copy(alpha = 0.32f))
-                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
                             .padding(10.dp)
                     ) {
                         CatalogDiscoveryInputButton(
@@ -9313,17 +9314,17 @@ private fun CatalogDiscoveryResultRow(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .onFocusChanged { isFocused = it.isFocused || it.hasFocus }
                 .clickable(onClick = { if (!isAdded) onAdd() })
                 .background(
                     if (isFocused) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.38f),
-                    RoundedCornerShape(14.dp)
+                    RoundedCornerShape(16.dp)
                 )
                 .border(
                     width = if (isFocused) 3.dp else 1.dp,
                     color = if (isFocused) compactFocusColor else Color.White.copy(alpha = 0.08f),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(16.dp)
                 )
                 .padding(12.dp)
         ) {
@@ -9339,7 +9340,7 @@ private fun CatalogDiscoveryResultRow(
                         Box(
                             modifier = Modifier
                                 .size(width = 52.dp, height = 78.dp)
-                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(7.dp))
+                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
                         )
                     }
                 } else {
@@ -9350,7 +9351,7 @@ private fun CatalogDiscoveryResultRow(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(width = 52.dp, height = 78.dp)
-                                .clip(RoundedCornerShape(7.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(Color.White.copy(alpha = 0.08f))
                         )
                     }
@@ -9426,17 +9427,17 @@ private fun CatalogDiscoveryResultRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .onFocusChanged { isFocused = it.isFocused || it.hasFocus }
             .clickable(onClick = { if (!isAdded) onAdd() })
             .background(
                 if (isFocused) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.38f),
-                RoundedCornerShape(14.dp)
+                RoundedCornerShape(16.dp)
             )
             .border(
                 width = if (isFocused) 3.dp else 1.dp,
                 color = if (isFocused) resultFocusColor else Color.White.copy(alpha = 0.08f),
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(16.dp)
             )
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -9453,7 +9454,7 @@ private fun CatalogDiscoveryResultRow(
                     Box(
                         modifier = Modifier
                             .size(width = 60.dp, height = 90.dp)
-                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(7.dp))
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
                     )
                 }
             } else {
@@ -9464,7 +9465,7 @@ private fun CatalogDiscoveryResultRow(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .size(width = 60.dp, height = 90.dp)
-                            .clip(RoundedCornerShape(7.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(Color.White.copy(alpha = 0.08f))
                     )
                 }
@@ -9571,12 +9572,12 @@ private fun CatalogDiscoveryAddPill(
     Box(
         modifier = modifier
             .widthIn(min = 112.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color.Black.copy(alpha = 0.46f), RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.46f), RoundedCornerShape(12.dp))
             .border(
                 width = 1.dp,
                 color = Color.White.copy(alpha = 0.74f),
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(12.dp)
             )
             .padding(horizontal = 22.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center
@@ -9619,12 +9620,12 @@ private fun SourceChip(
         modifier = Modifier
             .background(
                 if (active) Color.Black.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.06f),
-                RoundedCornerShape(999.dp)
+                CircleShape
             )
             .border(
                 width = 1.dp,
                 color = if (active) Color.White.copy(alpha = 0.48f) else Color.White.copy(alpha = 0.12f),
-                shape = RoundedCornerShape(999.dp)
+                shape = CircleShape
             )
             .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 3.dp else 5.dp)
     )
@@ -9644,7 +9645,7 @@ private fun DiscoveryActionButton(
     Box(
         modifier = modifier
             .widthIn(min = if (label.length <= 5) 112.dp else 132.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(
                 when {
                     !enabled -> Color.Black.copy(alpha = 0.18f)
@@ -9652,7 +9653,7 @@ private fun DiscoveryActionButton(
                     highlighted -> Color.Black.copy(alpha = 0.46f)
                     else -> Color.Black.copy(alpha = 0.36f)
                 },
-                RoundedCornerShape(10.dp)
+                RoundedCornerShape(12.dp)
             )
             .border(
                 width = if (isFocused) 2.dp else 1.dp,
@@ -9662,7 +9663,7 @@ private fun DiscoveryActionButton(
                     highlighted -> Color.White.copy(alpha = 0.74f)
                     else -> Color.White.copy(alpha = 0.55f)
                 },
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(12.dp)
             )
             .onFocusChanged { isFocused = it.isFocused }
             .clickable(enabled = enabled, onClick = onClick)
@@ -10207,8 +10208,8 @@ private fun StremioAddonsSettings(
                                 }
                             } else {
                                 // Toggle switch
-                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
-                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(16.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(12.dp)))
                                 }
                             }
                             if (settingsUrl != null && !needsSetup) {
@@ -10321,7 +10322,7 @@ private fun AddonStatusChip(
 ) {
     Box(
         modifier = Modifier
-            .background(background, RoundedCornerShape(999.dp))
+            .background(background, CircleShape)
             .padding(horizontal = 8.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -10432,7 +10433,7 @@ private fun AddonRow(
                     .border(
                         width = if (isToggleFocused) 2.dp else 0.dp,
                         color = if (isToggleFocused) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(13.dp)
+                        shape = RoundedCornerShape(16.dp)
                     )
                     .padding(2.dp)
             ) {
@@ -10442,7 +10443,7 @@ private fun AddonRow(
                         .height(24.dp)
                         .background(
                             color = if (isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(13.dp)
+                            shape = RoundedCornerShape(16.dp)
                         )
                         .padding(3.dp),
                     contentAlignment = if (isEnabled) Alignment.CenterEnd else Alignment.CenterStart
@@ -10452,7 +10453,7 @@ private fun AddonRow(
                             .size(18.dp)
                             .background(
                                 color = Color.White,
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                     )
                 }
@@ -10845,12 +10846,12 @@ private fun AccountActionRow(
             modifier = Modifier
                 .background(
                     if (isEnabled) Pink.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
-                    RoundedCornerShape(999.dp)
+                    CircleShape
                 )
                 .border(
                     1.dp,
                     if (isEnabled) Pink.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.15f),
-                    RoundedCornerShape(999.dp)
+                    CircleShape
                 )
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center
@@ -11543,7 +11544,7 @@ private fun AccountRow(
                 Spacer(modifier = Modifier.width(10.dp))
                 Box(
                     modifier = Modifier
-                        .background(foreground.copy(alpha = 0.08f), RoundedCornerShape(4.dp))
+                        .background(foreground.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
@@ -12007,8 +12008,8 @@ private fun InputModal(
                     .navigationBarsPadding()
                     .imePadding()
                     .heightIn(max = maxDialogHeight)
-                    .background(BackgroundElevated, RoundedCornerShape(14.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+                    .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
                     .padding(horizontal = if (isTouchDevice) 16.dp else 20.dp, vertical = 18.dp)
                     .focusRequester(modalFocusRequester)
                     .focusable()
@@ -12124,12 +12125,12 @@ private fun InputModal(
                                         .size(22.dp)
                                         .background(
                                             if (isFocused) Pink.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.08f),
-                                            RoundedCornerShape(11.dp)
+                                            RoundedCornerShape(12.dp)
                                         )
                                         .border(
                                             1.dp,
                                             if (isFocused) Pink else Color.White.copy(alpha = 0.12f),
-                                            RoundedCornerShape(11.dp)
+                                            RoundedCornerShape(12.dp)
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -12162,11 +12163,11 @@ private fun InputModal(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color.White.copy(alpha = if (isFocused) 0.12f else 0.05f), RoundedCornerShape(10.dp))
+                                    .background(Color.White.copy(alpha = if (isFocused) 0.12f else 0.05f), RoundedCornerShape(12.dp))
                                     .border(
                                         width = if (isFocused) 2.dp else 1.dp,
                                         color = if (isFocused) regexFieldFocusColor else Color.White.copy(alpha = 0.2f),
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     )
                                     .padding(2.dp)
                             ) {
@@ -12294,12 +12295,12 @@ private fun InputModal(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color.White.copy(alpha = if (isFocused) 0.12f else 0.05f), RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = if (isFocused) 0.12f else 0.05f), RoundedCornerShape(12.dp))
                                 .border(
                                     width = if (isFocused) 2.dp else 1.dp,
                                     color = if (isFocused) resolveAccentColor(fallback = Pink) else Color.White.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { toggle.onValueChange(!toggle.value) }
                                 .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -12317,12 +12318,12 @@ private fun InputModal(
                                     .height(24.dp)
                                     .background(
                                         color = if (toggle.value) SuccessGreen else Color.White.copy(alpha = 0.2f),
-                                        shape = RoundedCornerShape(13.dp)
+                                        shape = RoundedCornerShape(16.dp)
                                     )
                                     .padding(3.dp),
                                 contentAlignment = if (toggle.value) Alignment.CenterEnd else Alignment.CenterStart
                             ) {
-                                Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(12.dp)))
                             }
                         }
                         if (toggleIndex < toggleFields.size - 1) {
@@ -12343,15 +12344,15 @@ private fun InputModal(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(
                             color = if (isPasteFocused) Color.White else Color.Black.copy(alpha = 0.82f),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(12.dp)
                         )
                         .border(
                             width = 1.dp,
                             color = if (isPasteFocused) Color.White else Color.White.copy(alpha = 0.14f),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(12.dp)
                         )
                         .clickable {
                             pasteClipboardIntoTarget()
@@ -12386,15 +12387,15 @@ private fun InputModal(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
                                 color = if (isCancelFocused) Color.White else Color.Black.copy(alpha = 0.82f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .border(
                                 width = 1.dp,
                                 color = if (isCancelFocused) Color.White else Color.White.copy(alpha = 0.14f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .clickable {
                                 hideKeyboardAll()
@@ -12414,15 +12415,15 @@ private fun InputModal(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
                                 color = if (isConfirmFocused) Color.White else Color.Black.copy(alpha = 0.82f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .border(
                                 width = 1.dp,
                                 color = if (isConfirmFocused) Color.White else Color.White.copy(alpha = 0.14f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .clickable {
                                 hideKeyboardAll()
@@ -12541,15 +12542,15 @@ private fun SubtitlePickerModal(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(
                                     if (isFocused) Color.White.copy(alpha = 0.12f) else Color.Transparent,
-                                    RoundedCornerShape(10.dp)
+                                    RoundedCornerShape(12.dp)
                                 )
                                 .border(
                                     width = if (isFocused) 2.dp else 1.dp,
                                     color = if (isFocused) optionFocusColor else Color.White.copy(alpha = 0.1f),
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { onSelect(option) }
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -13681,7 +13682,7 @@ private fun CatalogPackImportDialog(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(Color.White)
                                 .clickable { onDismiss() }
                                 .padding(vertical = 12.dp),
@@ -13771,15 +13772,15 @@ private fun CatalogPackImportDialog(
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(
                                         color = if (isConfirmFocused) Color.White else Color.Black.copy(alpha = 0.82f),
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     )
                                     .border(
                                         width = 1.dp,
                                         color = if (isConfirmFocused) Color.White else Color.White.copy(alpha = 0.14f),
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     )
                                     .clickable { onConfirm(pendingPack) }
                                     .padding(vertical = 12.dp),
@@ -13796,15 +13797,15 @@ private fun CatalogPackImportDialog(
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(
                                         color = if (isCancelFocused) Color.White else Color.Black.copy(alpha = 0.82f),
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     )
                                     .border(
                                         width = 1.dp,
                                         color = if (isCancelFocused) Color.White else Color.White.copy(alpha = 0.14f),
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     )
                                     .clickable { onDismiss() }
                                     .padding(vertical = 12.dp),
@@ -13902,15 +13903,15 @@ private fun CatalogPackDeleteConfirmDialog(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
                                 color = if (isConfirmFocused) Color.White else Color.Black.copy(alpha = 0.82f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .border(
                                 width = 1.dp,
                                 color = if (isConfirmFocused) Color.White else Color.White.copy(alpha = 0.14f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .clickable { onConfirm() }
                             .padding(vertical = 12.dp),
@@ -13927,15 +13928,15 @@ private fun CatalogPackDeleteConfirmDialog(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
                                 color = if (isCancelFocused) Color.White else Color.Black.copy(alpha = 0.82f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .border(
                                 width = 1.dp,
                                 color = if (isCancelFocused) Color.White else Color.White.copy(alpha = 0.14f),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .clickable { onDismiss() }
                             .padding(vertical = 12.dp),

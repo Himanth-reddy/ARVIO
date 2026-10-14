@@ -134,14 +134,14 @@ private fun MobileStreamIntegrationsContent(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(9.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (isParallel) accentColor.copy(alpha = 0.22f) else Color.Transparent
                         )
                         .border(
                             width = if (isParallel) 1.dp else 0.dp,
                             color = if (isParallel) accentColor.copy(alpha = 0.55f) else Color.Transparent,
-                            shape = RoundedCornerShape(9.dp)
+                            shape = RoundedCornerShape(12.dp)
                         )
                         .clickable { onSearchModeChange(StreamSearchMode.PARALLEL) },
                     contentAlignment = Alignment.Center
@@ -162,14 +162,14 @@ private fun MobileStreamIntegrationsContent(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(9.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (isSequential) accentColor.copy(alpha = 0.22f) else Color.Transparent
                         )
                         .border(
                             width = if (isSequential) 1.dp else 0.dp,
                             color = if (isSequential) accentColor.copy(alpha = 0.55f) else Color.Transparent,
-                            shape = RoundedCornerShape(9.dp)
+                            shape = RoundedCornerShape(12.dp)
                         )
                         .clickable { onSearchModeChange(StreamSearchMode.SEQUENTIAL) },
                     contentAlignment = Alignment.Center
@@ -319,7 +319,7 @@ private fun ProviderRowMobile(
                 .height(24.dp)
                 .background(
                     color = if (item.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f),
-                    shape = RoundedCornerShape(13.dp)
+                    shape = RoundedCornerShape(16.dp)
                 )
                 .clickable { onToggle() }
                 .padding(3.dp),
@@ -328,7 +328,7 @@ private fun ProviderRowMobile(
             Box(
                 modifier = Modifier
                     .size(18.dp)
-                    .background(Color.White, RoundedCornerShape(10.dp))
+                    .background(Color.White, RoundedCornerShape(12.dp))
             )
         }
 
@@ -415,8 +415,8 @@ private fun TvStreamIntegrationsContent(
                 .fillMaxWidth()
                 .height(64.dp)
                 .settingsFocusSlot(0)
-                .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(14.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(16.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
                 .padding(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -428,7 +428,7 @@ private fun TvStreamIntegrationsContent(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .background(
                         when {
                             isParallelFocused -> accentColor.copy(alpha = 0.3f)
@@ -443,7 +443,7 @@ private fun TvStreamIntegrationsContent(
                             isParallelSelected -> accentColor.copy(alpha = 0.5f)
                             else -> Color.Transparent
                         },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
                     .clickable { onSearchModeChange(StreamSearchMode.PARALLEL) }
                     .padding(horizontal = 14.dp, vertical = 6.dp),
@@ -479,7 +479,7 @@ private fun TvStreamIntegrationsContent(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .background(
                         when {
                             isSequentialFocused -> accentColor.copy(alpha = 0.3f)
@@ -494,7 +494,7 @@ private fun TvStreamIntegrationsContent(
                             isSequentialSelected -> accentColor.copy(alpha = 0.5f)
                             else -> Color.Transparent
                         },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
                     .clickable { onSearchModeChange(StreamSearchMode.SEQUENTIAL) }
                     .padding(horizontal = 14.dp, vertical = 6.dp),
@@ -544,9 +544,9 @@ private fun TvStreamIntegrationsContent(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(Color.White.copy(alpha = 0.04f))
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
         ) {
             if (items.isEmpty()) {
                 Text(
@@ -672,7 +672,7 @@ private fun ProviderRowTV(
                     .border(
                         width = if (isToggleFocused) 2.dp else 0.dp,
                         color = if (isToggleFocused) accentColor else Color.Transparent,
-                        shape = RoundedCornerShape(13.dp)
+                        shape = RoundedCornerShape(16.dp)
                     )
                     .padding(2.dp)
             ) {
@@ -682,7 +682,7 @@ private fun ProviderRowTV(
                         .height(24.dp)
                         .background(
                             color = if (isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(13.dp)
+                            shape = RoundedCornerShape(16.dp)
                         )
                         .clickable { onToggle() }
                         .padding(3.dp),
@@ -691,7 +691,7 @@ private fun ProviderRowTV(
                     Box(
                         modifier = Modifier
                             .size(18.dp)
-                            .background(Color.White, RoundedCornerShape(10.dp))
+                            .background(Color.White, RoundedCornerShape(12.dp))
                     )
                 }
             }
