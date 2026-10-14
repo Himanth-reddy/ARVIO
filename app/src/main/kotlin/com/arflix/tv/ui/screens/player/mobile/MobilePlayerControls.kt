@@ -655,7 +655,7 @@ fun MobilePlayerBottomSection(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(trackHeight)
-                        .clip(RoundedCornerShape(3.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(MobilePlayerTokens.TrackBg)
                 )
 
@@ -665,7 +665,7 @@ fun MobilePlayerBottomSection(
                         modifier = Modifier
                             .fillMaxWidth(bufferedFraction)
                             .height(trackHeight)
-                            .clip(RoundedCornerShape(3.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(MobilePlayerTokens.TrackBuffered)
                     )
                 }
@@ -676,7 +676,7 @@ fun MobilePlayerBottomSection(
                         modifier = Modifier
                             .fillMaxWidth(progressFraction)
                             .height(trackHeight)
-                            .clip(RoundedCornerShape(3.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(MobilePlayerTokens.TrackFill)
                     )
                 }
@@ -691,9 +691,9 @@ fun MobilePlayerBottomSection(
                 Box(
                     modifier = Modifier
                         .offset { IntOffset(needleOffsetPx.roundToInt(), 0) }
-                        .shadow(if (isScrubbing) 6.dp else 2.dp, RoundedCornerShape(2.dp))
+                        .shadow(if (isScrubbing) 6.dp else 2.dp, RoundedCornerShape(8.dp))
                         .size(width = needleWidth, height = needleHeight)
-                        .clip(RoundedCornerShape(2.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Color.White)
                 )
 
