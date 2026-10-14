@@ -81,6 +81,10 @@ import com.arflix.tv.ui.components.AvatarRegistry
 import com.arflix.tv.ui.components.avatarCategoryLabel
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.ProfileAvatarFiles
+import com.arflix.tv.ui.theme.BackgroundCard
+import com.arflix.tv.ui.theme.BackgroundElevated
+import com.arflix.tv.ui.theme.ErrorRed
+import com.arflix.tv.ui.theme.TextSecondary
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
@@ -282,7 +286,7 @@ private fun ProfileDialogContent(
                         .fillMaxWidth()
                         .heightIn(max = (configuration.screenHeightDp - 24).dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF141414))
+                        .background(BackgroundCard)
                         .verticalScroll(rememberScrollState())
                         .padding(20.dp),
                     horizontalAlignment = Alignment.Start
@@ -324,7 +328,7 @@ private fun ProfileDialogContent(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF222222))
+                            .background(BackgroundElevated)
                             .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
                             .clickable {
                                 editTextRef?.let { et ->
@@ -391,7 +395,7 @@ private fun ProfileDialogContent(
                                 text = stringResource(R.string.profile_lock),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFB0B0B0),
+                                color = TextSecondary,
                                 modifier = Modifier.weight(1f)
                             )
                             Row(
@@ -523,7 +527,7 @@ private fun ProfileDialogContent(
                     modifier = Modifier
                         .padding(horizontal = 48.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFF141414))
+                        .background(BackgroundCard)
                         .padding(start = 28.dp, top = 28.dp, bottom = 28.dp, end = 12.dp),
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(28.dp)
@@ -570,7 +574,7 @@ private fun ProfileDialogContent(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF222222))
+                                .background(BackgroundElevated)
                                 .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
                                 .clickable {
                                     editTextRef?.let { et ->
@@ -637,7 +641,7 @@ private fun ProfileDialogContent(
                                     text = stringResource(R.string.profile_lock),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFFB0B0B0),
+                                    color = TextSecondary,
                                     modifier = Modifier.padding(start = 4.dp)
                                 )
                                 Row(
@@ -813,7 +817,7 @@ private fun ProfileAvatarPreview(
             modifier = Modifier
                 .size(size)
                 .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF222222))
+                .background(BackgroundElevated)
         )
         return
     }
@@ -1016,7 +1020,7 @@ private fun DialogButton(
     }
     val focusedContainerColor = Color.White
     val contentColor = when {
-        isDestructive -> if (isFocused > 0) Color(0xFFB21E32) else Color(0xFFFF6B75)
+        isDestructive -> if (isFocused > 0) ErrorRed else ErrorRed
         isPrimary || isFocused > 0 -> Color.Black
         else -> Color.White
     }.copy(alpha = if (enabled) 1f else 0.4f)

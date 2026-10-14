@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.unit.sp
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.ui.theme.BackgroundCard
+import com.arflix.tv.ui.theme.BackgroundElevated
+import com.arflix.tv.ui.theme.BorderLight
 import androidx.tv.foundation.lazy.list.TvLazyRow
 
 /**
@@ -62,9 +65,9 @@ object ShimmerState {
 
         return Brush.linearGradient(
             colors = listOf(
-                Color(0xFF151520),
-                Color(0xFF1F1F2A),
-                Color(0xFF151520)
+                BackgroundCard,
+                BackgroundElevated,
+                BackgroundCard
             ),
             start = Offset(translateAnim - 500f, 0f),
             end = Offset(translateAnim, 0f)
@@ -513,8 +516,8 @@ fun SkeletonMobileHeroBanner(
     Box(
         modifier = modifier
             .clip(bannerShape)
-            .background(Color(0xFF141419))
-            .border(width = 1.dp, color = Color(0xFF2B2B2B), shape = bannerShape)
+            .background(BackgroundCard)
+            .border(width = 1.dp, color = BorderLight, shape = bannerShape)
     ) {
         SkeletonBox(
             modifier = Modifier.fillMaxSize(),

@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.arflix.tv.ui.theme.AccentGreen
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -137,7 +138,7 @@ fun MobilePlayerTopBar(
                 MobileIconButton(
                     iconRes = if (isCasting) R.drawable.ic_huge_cast_connected else R.drawable.ic_huge_cast,
                     contentDescription = "Cast",
-                    tint = if (isCasting) Color(0xFF66D9FF) else MobilePlayerTokens.InkPrimary,
+                    tint = if (isCasting) AccentGreen else MobilePlayerTokens.InkPrimary,
                     onClick = onCast
                 )
             }
