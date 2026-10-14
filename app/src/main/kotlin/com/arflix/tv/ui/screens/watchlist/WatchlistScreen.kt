@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -334,9 +335,12 @@ fun WatchlistScreen(
 internal fun OledControl(label: String, modifier: Modifier = Modifier, selected: Boolean = false, compact: Boolean = false, icon: ImageVector? = null, maxLines: Int = 1, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val accent = resolveAccentColor(Color.White)
-    val foreground = if(focused) { if(accent.luminance() > .4f) Color.Black else Color.White } else Color.White
-    val background by animateColorAsState(if(focused) accent else if(selected) BackgroundElevated else Color.Transparent, tween(120), label = "library-control")
-    Box(modifier.onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(7.dp))
+    // Phone/tablet (compact): selected tab is a white pill with black text.
+    // TV keeps the elevated dark treatment; focus uses the accent color.
+    val isPhoneSelected = selected && compact
+    val foreground = if(focused) { if(accent.luminance() > .4f) Color.Black else Color.White } else if(isPhoneSelected) Color.Black else Color.White
+    val background by animateColorAsState(if(focused) accent else if(isPhoneSelected) Color.White else if(selected) BackgroundElevated else Color.Transparent, tween(120), label = "library-control")
+    Box(modifier.onFocusChanged { focused = it.isFocused }.clip(if(compact) CircleShape else RoundedCornerShape(8.dp))
         .background(background)
         .clickable(onClick = onClick).padding(horizontal = if(compact) 8.dp else 12.dp, vertical = 11.dp), contentAlignment = Alignment.CenterStart) {
         if(label == "⌕") Icon(Icons.Outlined.Search, contentDescription = tr("Search library"), tint = foreground, modifier = Modifier.size(20.dp))
@@ -384,10 +388,10 @@ private fun OledSources(sources: List<WatchlistSourceItem>, selectedId: String, 
 private fun OledCollection(source: WatchlistSourceItem, cover: String?, width: Dp, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val accent = resolveAccentColor(Color.White)
-    Column(Modifier.width(width).onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick)) {
+    Column(Modifier.width(width).onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)) {
         Box(Modifier.fillMaxWidth().padding(top = 5.dp)) {
-            Box(Modifier.padding(horizontal = 10.dp).offset(y = (-5).dp).fillMaxWidth().height(8.dp).background(BackgroundElevated, RoundedCornerShape(5.dp)))
-            AsyncImage(cover, source.title, modifier = Modifier.fillMaxWidth().aspectRatio(2.2f).clip(RoundedCornerShape(6.dp)).background(BackgroundCard), contentScale = ContentScale.Crop)
+            Box(Modifier.padding(horizontal = 10.dp).offset(y = (-5).dp).fillMaxWidth().height(8.dp).background(BackgroundElevated, RoundedCornerShape(8.dp)))
+            AsyncImage(cover, source.title, modifier = Modifier.fillMaxWidth().aspectRatio(2.2f).clip(RoundedCornerShape(8.dp)).background(BackgroundCard), contentScale = ContentScale.Crop)
         }
         Column(Modifier.fillMaxWidth().background(if(focused) accent else Color.Black).padding(10.dp)) {
             val ink = if(focused && accent.luminance() > .4f) Color.Black else Color.White
