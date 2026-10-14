@@ -41,6 +41,8 @@ import coil.request.ImageRequest
 import coil.size.Precision
 import coil.size.Scale
 import com.arflix.tv.R
+import com.arflix.tv.ui.theme.BackgroundCard
+import com.arflix.tv.ui.theme.BackgroundElevated
 import com.arflix.tv.data.model.CollectionGroupKind
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
@@ -66,8 +68,8 @@ import androidx.compose.ui.platform.testTag
 
 private val missingArtworkBrush = Brush.linearGradient(
     colors = listOf(
-        Color(0xFF1F2333),
-        Color(0xFF0D0D14)
+        BackgroundElevated,
+        BackgroundCard
     )
 )
 

@@ -62,6 +62,7 @@ import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
+import com.arflix.tv.ui.theme.BackgroundElevated
 
 /**
  * Next episode overlay shown at the end of an episode
@@ -178,7 +179,7 @@ fun NextEpisodeOverlay(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
                                 Color.Black.copy(alpha = 0.95f),
-                                Color(0xFF1A1A1A).copy(alpha = 0.98f)
+                                BackgroundElevated.copy(alpha = 0.98f)
                             )
                         ),
                         shape = RoundedCornerShape(20.dp)
@@ -235,7 +236,7 @@ fun NextEpisodeOverlay(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .background(Color(0xFF222222)),
+                                        .background(BackgroundElevated),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(

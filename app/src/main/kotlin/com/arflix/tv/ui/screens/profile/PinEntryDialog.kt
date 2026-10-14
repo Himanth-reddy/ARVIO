@@ -176,7 +176,7 @@ fun PinEntryDialog(
                         else -> stringResource(R.string.enter_pin_to_unlock)
                     },
                     fontSize = 13.sp,
-                    color = Color(0xFFB0B0B0),
+                    color = TextSecondary,
                     textAlign = TextAlign.Center
                 )
 
