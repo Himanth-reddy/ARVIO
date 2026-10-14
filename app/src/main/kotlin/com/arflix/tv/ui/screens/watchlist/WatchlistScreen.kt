@@ -54,6 +54,9 @@ import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.tr
 import com.arflix.tv.ui.screens.watchlist.calendar.*
+import com.arflix.tv.ui.theme.BackgroundCard
+import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.BackgroundElevated
 import java.time.LocalDate
 
 internal enum class LibrarySection(val label: String) { WATCHLISTS("Watchlists"), LISTS("My lists"), SERVERS("Homeserver"), CALENDAR("Calendar") }
@@ -332,7 +335,7 @@ internal fun OledControl(label: String, modifier: Modifier = Modifier, selected:
     var focused by remember { mutableStateOf(false) }
     val accent = resolveAccentColor(Color.White)
     val foreground = if(focused) { if(accent.luminance() > .4f) Color.Black else Color.White } else Color.White
-    val background by animateColorAsState(if(focused) accent else if(selected) Color(0xFF242426) else Color.Transparent, tween(120), label = "library-control")
+    val background by animateColorAsState(if(focused) accent else if(selected) BackgroundElevated else Color.Transparent, tween(120), label = "library-control")
     Box(modifier.onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(7.dp))
         .background(background)
         .clickable(onClick = onClick).padding(horizontal = if(compact) 8.dp else 12.dp, vertical = 11.dp), contentAlignment = Alignment.CenterStart) {
@@ -383,8 +386,8 @@ private fun OledCollection(source: WatchlistSourceItem, cover: String?, width: D
     val accent = resolveAccentColor(Color.White)
     Column(Modifier.width(width).onFocusChanged { focused = it.isFocused }.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick)) {
         Box(Modifier.fillMaxWidth().padding(top = 5.dp)) {
-            Box(Modifier.padding(horizontal = 10.dp).offset(y = (-5).dp).fillMaxWidth().height(8.dp).background(Color(0xFF252528), RoundedCornerShape(5.dp)))
-            AsyncImage(cover, source.title, modifier = Modifier.fillMaxWidth().aspectRatio(2.2f).clip(RoundedCornerShape(6.dp)).background(Color(0xFF101012)), contentScale = ContentScale.Crop)
+            Box(Modifier.padding(horizontal = 10.dp).offset(y = (-5).dp).fillMaxWidth().height(8.dp).background(BackgroundElevated, RoundedCornerShape(5.dp)))
+            AsyncImage(cover, source.title, modifier = Modifier.fillMaxWidth().aspectRatio(2.2f).clip(RoundedCornerShape(6.dp)).background(BackgroundCard), contentScale = ContentScale.Crop)
         }
         Column(Modifier.fillMaxWidth().background(if(focused) accent else Color.Black).padding(10.dp)) {
             val ink = if(focused && accent.luminance() > .4f) Color.Black else Color.White
@@ -407,7 +410,7 @@ private fun OledDrawer(title: String, close: () -> Unit, content: @Composable Co
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().testTag("library-drawer-root").background(Color.Black.copy(alpha = .55f))) {
             Column(Modifier.align(Alignment.CenterEnd).fillMaxHeight().widthIn(max = 340.dp).fillMaxWidth()
-                .background(Color(0xFF0C0C0E)).padding(24.dp).verticalScroll(rememberScrollState())) {
+                .background(BackgroundDark).padding(24.dp).verticalScroll(rememberScrollState())) {
                 OledControl("${tr("Close")} ×", modifier = Modifier.focusRequester(initial), onClick = close)
                 Text(title, color = Color.White, fontSize = 24.sp, modifier = Modifier.padding(vertical = 12.dp))
                 content()
