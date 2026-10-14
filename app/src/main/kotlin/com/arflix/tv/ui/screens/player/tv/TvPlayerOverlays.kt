@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.sp
 import com.arflix.tv.R
 import com.arflix.tv.ui.skin.LocalAccentColorOverride
 import com.arflix.tv.ui.theme.ArflixTypography
+import com.arflix.tv.ui.theme.BackgroundElevated
+import com.arflix.tv.ui.theme.ErrorRed
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 
@@ -232,7 +234,7 @@ fun TvErrorOverlay(
         exit = fadeOut(androidx.compose.animation.core.tween(200)),
         modifier = modifier
     ) {
-        val accentColor = if (isSetupError) Color(0xFF3B82F6) else Color(0xFFEF4444)
+        val accentColor = if (isSetupError) Color(0xFF3B82F6) else ErrorRed
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -242,7 +244,7 @@ fun TvErrorOverlay(
             Column(
                 modifier = Modifier
                     .width(480.dp)
-                    .background(Color(0xFF1A1A1A), RoundedCornerShape(16.dp))
+                    .background(BackgroundElevated, RoundedCornerShape(16.dp))
                     .border(1.dp, accentColor.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
                     .padding(32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -336,7 +338,7 @@ fun TvErrorButton(
             .background(
                 color = when {
                     isFocused -> btnAccent
-                    isPrimary -> Color(0xFFE50914)
+                    isPrimary -> ErrorRed
                     else -> Color(0xFF2A2A2A)
                 },
                 shape = RoundedCornerShape(8.dp)
