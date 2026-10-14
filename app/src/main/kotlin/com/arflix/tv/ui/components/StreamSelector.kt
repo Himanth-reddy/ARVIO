@@ -1815,8 +1815,8 @@ private fun SourceMetadataChips(
             }
             Box(
                 modifier = Modifier
-                    .background(chipColor.copy(alpha = 0.12f), RoundedCornerShape(999.dp))
-                    .border(1.dp, chipColor.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
+                    .background(chipColor.copy(alpha = 0.12f), CircleShape)
+                    .border(1.dp, chipColor.copy(alpha = 0.18f), CircleShape)
                     .padding(horizontal = chipPadH, vertical = chipPadV)
             ) {
                 Text(
@@ -1903,7 +1903,7 @@ private fun SourceFilterChip(
 ) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
+            .clip(CircleShape)
             .background(
                 when {
                     isFocused -> Color.White
@@ -1918,7 +1918,7 @@ private fun SourceFilterChip(
                     isSelected -> Color.White.copy(alpha = 0.28f)
                     else -> OledMutedBorder
                 },
-                RoundedCornerShape(999.dp)
+                CircleShape
             )
             .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 6.dp)
@@ -2054,14 +2054,14 @@ private fun AddonRailItem(
         modifier = Modifier
             .fillMaxWidth()
             .focusProperties { canFocus = false }
-            .clip(RoundedCornerShape(11.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(
                 when {
                     isFocused -> Color.White
                     isSelected -> OledPanelStrong
                     else -> Color.Transparent
                 },
-                RoundedCornerShape(11.dp)
+                RoundedCornerShape(12.dp)
             )
             .border(
                 1.dp,
@@ -2069,7 +2069,7 @@ private fun AddonRailItem(
                     isFocused -> Color.White
                     else -> Color.Transparent
                 },
-                RoundedCornerShape(11.dp)
+                RoundedCornerShape(12.dp)
             )
             .clickable { onClick() }
             .padding(horizontal = 11.dp, vertical = 9.dp),
@@ -2128,8 +2128,8 @@ private fun SourceEmptyState(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
-                .background(OledPanel, RoundedCornerShape(18.dp))
-                .border(1.dp, OledMutedBorder, RoundedCornerShape(18.dp))
+                .background(OledPanel, RoundedCornerShape(16.dp))
+                .border(1.dp, OledMutedBorder, RoundedCornerShape(16.dp))
                 .padding(horizontal = 42.dp, vertical = 34.dp)
         ) {
             val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0) || pluginScrapersLoading
@@ -2261,7 +2261,7 @@ private fun OledSourceRow(
 private fun RecentlyPlayedChip(inverted: Boolean = false) {
     Row(
         modifier = Modifier
-            .background(if (inverted) Color.Black.copy(alpha = 0.08f) else Color.White, RoundedCornerShape(4.dp))
+            .background(if (inverted) Color.Black.copy(alpha = 0.08f) else Color.White, RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2309,7 +2309,7 @@ private fun SourceLanguageBadge(
         modifier = Modifier
             .background(
                 if (inverted) Color.Transparent else Color.Black.copy(alpha = 0.9f),
-                RoundedCornerShape(6.dp)
+                RoundedCornerShape(8.dp)
             )
             .padding(
                 horizontal = if (compact) 6.dp else 8.dp,
@@ -2339,7 +2339,7 @@ private fun SourceSizeBadge(
         modifier = Modifier
             .background(
                 if (inverted) Color.Transparent else Color.Black.copy(alpha = 0.9f),
-                RoundedCornerShape(6.dp)
+                RoundedCornerShape(8.dp)
             )
             .padding(
                 horizontal = if (compact) 6.dp else 8.dp,
@@ -2426,7 +2426,7 @@ private fun OledTextBadge(
         modifier = Modifier
             .background(
                 if (inverted) Color.Transparent else Color.Black.copy(alpha = 0.9f),
-                RoundedCornerShape(6.dp)
+                RoundedCornerShape(8.dp)
             )
             .padding(horizontal = 7.dp, vertical = 3.dp)
     ) {
@@ -2596,7 +2596,7 @@ private fun GlassyStreamCard(
                         colors = listOf(Color.White.copy(alpha = 0.05f), Color.White.copy(alpha = 0.05f))
                     )
                 },
-                RoundedCornerShape(14.dp)
+                RoundedCornerShape(16.dp)
             )
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
@@ -2610,7 +2610,7 @@ private fun GlassyStreamCard(
                     .fillMaxHeight(0.75f)
                     .background(
                         if (isFocused) Color.White else Color.White.copy(alpha = 0.45f),
-                        RoundedCornerShape(6.dp)
+                        RoundedCornerShape(8.dp)
                     )
             )
         }
@@ -2624,7 +2624,7 @@ private fun GlassyStreamCard(
                     .size(36.dp)
                     .background(
                         if (isFocused) Color.White else Color.Gray.copy(alpha = 0.25f),
-                        RoundedCornerShape(10.dp)
+                        RoundedCornerShape(12.dp)
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -2776,7 +2776,7 @@ private fun CompactQualityBadge(stream: StreamSource) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(
             modifier = Modifier
-                .background(color.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                .background(color.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                 .padding(horizontal = 6.dp, vertical = 2.dp)
         ) {
             Text(
@@ -2792,7 +2792,7 @@ private fun CompactQualityBadge(stream: StreamSource) {
         if (isHDR) {
             Box(
                 modifier = Modifier
-                    .background(AccentPurple.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                    .background(AccentPurple.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
                 Text(
@@ -2809,7 +2809,7 @@ private fun CompactQualityBadge(stream: StreamSource) {
         if (isDV) {
             Box(
                 modifier = Modifier
-                    .background(Color(0xFFEC4899).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                    .background(Color(0xFFEC4899).copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
                 Text(
@@ -2829,7 +2829,7 @@ private fun CompactQualityBadge(stream: StreamSource) {
             // since users scan the source list for IMAX-tagged releases.
             Box(
                 modifier = Modifier
-                    .background(Color(0xFF06B6D4).copy(alpha = 0.18f), RoundedCornerShape(4.dp))
+                    .background(Color(0xFF06B6D4).copy(alpha = 0.18f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
                 Text(
