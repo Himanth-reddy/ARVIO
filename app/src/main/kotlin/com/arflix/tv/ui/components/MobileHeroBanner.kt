@@ -41,7 +41,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 
-private val BannerShape = RoundedCornerShape(24.dp)
+private val BannerShape = RoundedCornerShape(16.dp)
 private val CardBorder = BorderLight
 private val BottomScrim = Brush.verticalGradient(
     colorStops = arrayOf(
@@ -234,7 +234,7 @@ private fun BannerMeta(year: String, rating: String) {
         if (hasYear) {
             Text(
                 text = year,
-                color = Color.White.copy(alpha = 0.55f),
+                color = ArvioSkin.colors.textSecondary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -247,11 +247,11 @@ private fun BannerMeta(year: String, rating: String) {
                 modifier = Modifier
                     .width(28.dp)
                     .height(14.dp)
-                    .clip(RoundedCornerShape(2.dp))
+                    .clip(RoundedCornerShape(8.dp))
             )
             Text(
                 text = rating,
-                color = Color.White.copy(alpha = 0.9f),
+                color = ArvioSkin.colors.textPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -264,8 +264,8 @@ private fun BannerMeta(year: String, rating: String) {
 private fun BannerGenres(genres: List<String>, compact: Boolean) {
     if (genres.isEmpty()) return
     Text(
-        text = genres.joinToString("  •  "),
-        color = Color.LightGray,
+        text = genres.joinToString(" · "),
+        color = ArvioSkin.colors.textSecondary,
         fontSize = 12.sp,
         fontWeight = FontWeight.Normal,
         textAlign = TextAlign.Center,

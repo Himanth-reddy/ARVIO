@@ -401,7 +401,7 @@ fun MediaCard(
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 6.dp)
                             .height(5.dp)
-                            .clip(RoundedCornerShape(999.dp))
+                            .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.48f))
                     ) {
                         Box(
@@ -528,22 +528,21 @@ fun MediaCard(
             )
 
             if (showSubtitle) {
-                // Prefer release date (or year) under the title. Fall back to the
-                // explicit subtitle or media-type label only when neither is set.
+                // Standardized metadata format: "{type} · {year}" (e.g. "Movie · 2024").
+                // Falls back to explicit subtitle only when type/year are both missing.
                 val tvSeriesLabel = stringResource(R.string.component_label_tv_series)
                 val movieLabel = stringResource(R.string.movie)
                 val mediaLabel = stringResource(R.string.component_label_media)
                 val subtitle = remember(item.subtitle, item.releaseDate, item.year, item.mediaType, tvSeriesLabel, movieLabel, mediaLabel) {
-                    val release = item.releaseDate?.takeIf { it.isNotBlank() }
+                    val typeLabel = when (item.mediaType) {
+                        MediaType.TV -> tvSeriesLabel
+                        MediaType.MOVIE -> movieLabel
+                        else -> mediaLabel
+                    }
+                    val year = item.releaseDate?.takeIf { it.isNotBlank() }
                         ?: item.year.takeIf { it.isNotBlank() }
-                    release
-                        ?: item.subtitle.ifBlank {
-                            when (item.mediaType) {
-                                MediaType.TV -> tvSeriesLabel
-                                MediaType.MOVIE -> movieLabel
-                                else -> mediaLabel
-                            }
-                        }
+                    if (year != null) "$typeLabel · $year"
+                    else item.subtitle.ifBlank { typeLabel }
                 }
                 Text(
                     text = subtitle,
