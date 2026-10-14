@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.exoplayer.ExoPlayer
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvNowNext
+import com.arflix.tv.ui.theme.AccentGreen
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.TextPrimary
 
@@ -280,7 +281,7 @@ private fun QuickAccessGrid(
                 title = stringResource(R.string.live_quick_sports),
                 subtitle = if (sportsCount > 0) stringResource(R.string.live_channels_count, sportsCount) else stringResource(R.string.live_sports_live_and_upcoming),
                 icon = Icons.Default.SportsSoccer,
-                iconTint = Color(0xFF4ADE80),
+                iconTint = AccentGreen,
                 onClick = onOpenSports,
                 modifier = Modifier.weight(1f),
             )
