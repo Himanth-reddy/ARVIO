@@ -931,7 +931,7 @@ private fun AvatarGridItem(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(Color.Black.copy(alpha = 0.35f)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -968,7 +968,7 @@ private fun AvatarGridItem(
                 .size(54.dp)
                 .scale(scale)
                 .onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
-            shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(10.dp)),
+            shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(12.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.Transparent,
                 focusedContainerColor = Color.Transparent
@@ -977,17 +977,17 @@ private fun AvatarGridItem(
                 border = if (isSelected) {
                     androidx.tv.material3.Border(
                         border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
                 } else {
                     androidx.tv.material3.Border(
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
                 },
                 focusedBorder = androidx.tv.material3.Border(
                     border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(12.dp)
                 )
             )
         ) {
@@ -1047,14 +1047,14 @@ private fun DialogButton(
     if (isTouchDevice) {
         Box(
             modifier = modifier
-                .clip(RoundedCornerShape(6.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(containerColor)
                 .then(
                     if (!isPrimary) {
                         Modifier.border(
                             width = 1.dp,
                             color = Color.White.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(8.dp)
                         )
                     } else {
                         Modifier
@@ -1070,7 +1070,7 @@ private fun DialogButton(
             onClick = { if (enabled) onClick() },
             enabled = enabled,
             modifier = modifier.onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
-            shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(6.dp)),
+            shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = containerColor,
                 focusedContainerColor = focusedContainerColor
@@ -1079,18 +1079,18 @@ private fun DialogButton(
                 ClickableSurfaceDefaults.border(
                     border = androidx.tv.material3.Border(
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ),
                     focusedBorder = androidx.tv.material3.Border(
                         border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(8.dp)
                     )
                 )
             } else {
                 ClickableSurfaceDefaults.border(
                     focusedBorder = androidx.tv.material3.Border(
                         border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(8.dp)
                     )
                 )
             }
