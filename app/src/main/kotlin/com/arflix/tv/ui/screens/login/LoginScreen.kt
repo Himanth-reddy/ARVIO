@@ -246,13 +246,13 @@ fun LoginScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF3D1515))
+                            .background(ErrorRed.copy(alpha = 0.15f))
                             .padding(12.dp)
                     ) {
                         Text(
                             text = uiState.error!!,
                             fontSize = 13.sp,
-                            color = Color(0xFFEF4444)
+                            color = ErrorRed
                         )
                     }
                     Spacer(modifier = Modifier.height(20.dp))
