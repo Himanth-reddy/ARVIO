@@ -7,6 +7,10 @@ import com.arflix.tv.data.model.CollectionTileShape
 import java.util.Locale
 
 /** ARVIO-authored queries. Artwork is TMDB metadata, not an imported creator's pack. */
+private object ArvioCollectionsRegexes {
+    val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
+}
+
 internal object ArvioCollections {
     const val DISABLED_MARKER = "collection_defaults_disabled"
     private const val SCIENCE = "/8sNiAPPYU14PUepFNeSNGUTiHW.jpg"
@@ -127,5 +131,5 @@ internal object ArvioCollections {
             discoverParams = mapOf("include_adult" to "false") + filters.toMap())
 
     private fun slug(title: String) = title.lowercase(Locale.US).replace("+", "plus")
-        .replace("&", "and").replace(Regex("[^a-z0-9]+"), "_").trim('_')
+        .replace("&", "and").replace(ArvioCollectionsRegexes.NON_ALPHA_NUM_REGEX, "_").trim('_')
 }
