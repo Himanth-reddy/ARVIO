@@ -79,11 +79,22 @@ fun StremioMetaPreview.toSportsAddonEvent(addon: Addon, catalog: AddonCatalog, n
     if (id.startsWith("leaf:") || id.startsWith("recap:") || releaseInfo == "24/7" ||
         terminal.containsMatchIn("$title ${releaseInfo.orEmpty()}")) return null
     if (description.orEmpty().lineSequence().any { terminalLine.containsMatchIn(cleanSportsStatus(it)) }) return null
-    val date = released?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
-        ?: utcSchedule.find("${releaseInfo.orEmpty()}\n${description.orEmpty()}")?.let { match ->
-            runCatching { LocalDateTime.parse("${match.groupValues[1]} ${match.groupValues[2]}",
-                utcScheduleFormat).toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrNull()
+    val date = released?.let {
+        try {
+            Instant.parse(it).toEpochMilli()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
         }
+    } ?: utcSchedule.find("${releaseInfo.orEmpty()}\n${description.orEmpty()}")?.let { match ->
+        try {
+            LocalDateTime.parse("${match.groupValues[1]} ${match.groupValues[2]}", utcScheduleFormat)
+                .toInstant(ZoneOffset.UTC).toEpochMilli()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
+    }
     val live = liveStatus.matches(cleanSportsStatus(releaseInfo.orEmpty())) ||
         livePrefix.containsMatchIn(cleanSportsStatus(name.orEmpty())) ||
         description.orEmpty().lineSequence().any { liveStatus.matches(cleanSportsStatus(it)) }

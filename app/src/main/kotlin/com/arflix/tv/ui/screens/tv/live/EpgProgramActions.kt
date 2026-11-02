@@ -170,13 +170,13 @@ internal fun epgChannelAllowsVodSearch(
     // Exact title matching remains the final guard against false positives.
     val channelTokens = channelName
         .lowercase()
-        .split(Regex("[^a-z0-9]+"))
+        .split(EPG_TITLE_NON_ALPHANUMERIC)
         .filterTo(mutableSetOf()) { it.isNotBlank() }
     if (channelTokens.any { it in NON_VOD_EPG_CHANNEL_TERMS }) return false
 
     val groupTokens = channelGroup
         .lowercase()
-        .split(Regex("[^a-z0-9]+"))
+        .split(EPG_TITLE_NON_ALPHANUMERIC)
         .filterTo(mutableSetOf()) { it.isNotBlank() }
     val dedicatedNonVodGroup =
         groupTokens.any { it in NON_VOD_EPG_CHANNEL_TERMS } &&
